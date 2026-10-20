@@ -1,4 +1,4 @@
-const DEFAULT_REMOTE = 'https://houdini-bet.ivanmarrtin2703.workers.dev';
+const DEFAULT_REMOTE = 'https://houdini-bet.pages.dev';
 
 /**
  * Prefer production Worker unless HOUDINI_LOCAL=1 (MySQL local).

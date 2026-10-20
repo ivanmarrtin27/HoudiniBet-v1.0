@@ -4,7 +4,8 @@
 App de predicciones de fútbol (Poisson).
 
 ## Runtime de producción (Cloudflare)
-- Worker + assets: `https://houdini-bet.ivanmarrtin2703.workers.dev`
+- URL pública (Pages): `https://houdini-bet.pages.dev`
+- Worker + assets (origen): `https://houdini-bet.ivanmarrtin2703.workers.dev`
 - D1: `houdini-bet-db` (ID `b6ee98e6-2397-45e5-83cb-33d1370656ae`) — **aislado del proyecto QR**
 - Cron sync: `0 6 * * *`
 - Código: carpeta [`cloudflare/`](cloudflare/)
@@ -29,4 +30,5 @@ HTML/JS en `cloudflare/public` (mínima). Pulir con `frontend-design` / `web-des
 - Nunca mezclar D1/DB con proyecto QR
 - Memory ≤100 líneas (ideal ≤70)
 - Secrets fuera del repo
-- Deploy: `cd cloudflare && npx wrangler deploy`
+- Deploy Worker: `cd cloudflare && npx wrangler deploy`
+- Deploy alias Pages: `cd cloudflare && npx wrangler pages deploy pages --project-name houdini-bet --branch main`

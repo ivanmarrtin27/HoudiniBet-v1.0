@@ -3,12 +3,12 @@
 Predicciones de fútbol con modelo **Poisson** (shrinkage + Dixon–Coles).  
 Producción en **Cloudflare Workers + D1** con UI estática (PWA).
 
-[![Live](https://img.shields.io/badge/live-houdini--bet-DC2626?style=flat-square)](https://houdini-bet.ivanmarrtin2703.workers.dev)
+[![Live](https://img.shields.io/badge/live-houdini--bet-DC2626?style=flat-square)](https://houdini-bet.pages.dev)
 [![Stack](https://img.shields.io/badge/stack-Workers%20%2B%20D1-0A0A0A?style=flat-square)](./cloudflare)
 
 ## Demo
 
-**App:** https://houdini-bet.ivanmarrtin2703.workers.dev  
+**App:** https://houdini-bet.pages.dev  
 
 | | |
 |---|---|
@@ -74,7 +74,7 @@ Secrets (Wrangler): `SYNC_SECRET`, opcional `API_FOOTBALL_KEY`.
 
 ```bash
 cd backend
-# API_BASE_URL=https://houdini-bet.ivanmarrtin2703.workers.dev
+# API_BASE_URL=https://houdini-bet.pages.dev
 npm install && npm run cli
 ```
 
