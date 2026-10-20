@@ -1,86 +1,89 @@
 # Houdini Bet
 
-Predicciones de fútbol (Poisson). **Producción en Cloudflare** (Workers + D1 + UI estática). CLI local opcional.
+Predicciones de fútbol con modelo **Poisson** (shrinkage + Dixon–Coles).  
+Producción en **Cloudflare Workers + D1** con UI estática (PWA).
 
-## URL en vivo
+[![Live](https://img.shields.io/badge/live-houdini--bet-DC2626?style=flat-square)](https://houdini-bet.ivanmarrtin2703.workers.dev)
+[![Stack](https://img.shields.io/badge/stack-Workers%20%2B%20D1-0A0A0A?style=flat-square)](./cloudflare)
 
-https://houdini-bet.ivanmarrtin2703.workers.dev
+## Demo
 
-- UI: misma URL  
-- API: `/api/v1/...`  
-- Health: `/health`  
-- D1: `houdini-bet-db` (**aislado del proyecto QR**)  
-- Cron sync: `0 6 * * *` (UTC)
+**App:** https://houdini-bet.ivanmarrtin2703.workers.dev  
 
-## Stack Cloudflare (`cloudflare/`)
+| | |
+|---|---|
+| UI | Misma URL |
+| API | `/api/v1/...` |
+| Health | `/health` |
+
+## Qué hace
+
+- Lista de partidos **día a día** (ligas top EU + Segunda + UEFA)
+- Tips por partido: **1X2 · O/U · BTTS · córners / tarjetas / tiros**
+- **Top 3** del día ordenado por valor book (≥5%)
+- Sync automático (FixtureDownload + FotMob; enrich opcional con API-Football)
+- Stats de aciertos y panel de análisis
+
+## Stack
+
+| Pieza | Detalle |
+|-------|---------|
+| Runtime | Cloudflare Worker `houdini-bet` |
+| DB | D1 `houdini-bet-db` |
+| Front | `cloudflare/public` (HTML/CSS/JS) |
+| Cron | sync `0 6 * * *` · enrich `30 6 * * *` |
+| Ligas | `LEAGUE_IDS=140,141,39,135,78,61,5,2,3` |
+
+Código de producción: carpeta [`cloudflare/`](./cloudflare).
+
+## Desarrollo
 
 ```bash
 cd cloudflare
 npm install
+npx wrangler d1 migrations apply houdini-bet-db --local
+npx wrangler dev
+```
+
+Deploy:
+
+```bash
+cd cloudflare
 npx wrangler deploy
 ```
 
-| Recurso | Nombre |
-|---------|--------|
-| Worker | `houdini-bet` |
-| D1 | `houdini-bet-db` |
-| Secret | `SYNC_SECRET` (ya puesto) |
-| Secret opcional | `API_FOOTBALL_KEY` (stats/odds premium; no obligatorio) |
-| Var | `LEAGUE_IDS=140,141,39,135,78,61,5` (incl. Nations League) |
-
-Migraciones D1: `npx wrangler d1 migrations apply houdini-bet-db --remote`
-
-### Partidos reales (sin API key)
-
-Por defecto Sync / auto-sync (si `last_sync_at` > 12h) usa [FixtureDownload](https://fixturedownload.com/): La Liga, Premier, Serie A, Bundesliga, Ligue 1 y Nations League, ventana **hoy + 14 días**. Segunda no tiene feed estable aún.
-
-1. Pulsa **Sync** en la UI (header `x-sync-secret`) o:
+Migraciones remotas:
 
 ```bash
-curl -X POST https://houdini-bet.ivanmarrtin2703.workers.dev/api/v1/sync/manual \
-  -H "x-sync-secret: TU_SYNC_SECRET"
+npx wrangler d1 migrations apply houdini-bet-db --remote
 ```
 
-2. Comprueba: `GET /api/v1/status` → `"source":"fixturedownload"`, `"mode":"live"`.
+Secrets (Wrangler): `SYNC_SECRET`, opcional `API_FOOTBALL_KEY`.
 
-Opcional — más datos/odds con API-Football:
-
-```bash
-cd cloudflare
-npx wrangler secret put API_FOOTBALL_KEY
-```
-
-Con key, Sync prioriza API-Football.
-
-## API
+## API (resumen)
 
 | Método | Ruta |
 |--------|------|
-| GET | `/api/v1/status` (demo vs live) |
+| GET | `/api/v1/status` |
 | GET | `/api/v1/matches/today?days=0\|14` |
-| GET | `/api/v1/matches/best-bets?days=0\|14` |
+| GET | `/api/v1/matches/best-bets` |
 | GET | `/api/v1/matches/:id/prediction` |
-| GET | `/api/v1/teams/search?q=` |
-| GET | `/api/v1/teams/:id` |
-| GET | `/api/v1/leagues` |
-| POST | `/api/v1/sync/manual` (header `x-sync-secret`) |
+| POST | `/api/v1/sync/manual` (`x-sync-secret`) |
 
-## CLI (opcional)
+## CLI opcional
 
 ```bash
 cd backend
-copy .env.example .env
 # API_BASE_URL=https://houdini-bet.ivanmarrtin2703.workers.dev
-npm install
-npm run cli
+npm install && npm run cli
 ```
 
-Con `API_BASE_URL` el CLI habla con Cloudflare (no necesita MySQL). Sin esa var, usa MySQL local legacy.
+Sin `API_BASE_URL` usa MySQL local (legacy).
 
-## Legacy local
+## Autor
 
-`backend/` (Express) + `database/schema.sql` (MySQL) siguen disponibles para desarrollo offline. No es el runtime de producción.
+[Iván Martín Molina](https://ivanmartin.pages.dev/) · [@ivanmarrtin2703](https://github.com/ivanmarrtin2703)
 
-## Agente
+## Licencia
 
-Ver `AGENTS.md` y `Memory.md`.
+Uso personal / portfolio. Sin licencia open-source publicada de momento.

@@ -1,4 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Houdini Bet">
-  <rect width="512" height="512" rx="96" fill="#0a0a0a"/>
-  <text x="256" y="310" text-anchor="middle" font-family="Arial Black, Impact, sans-serif" font-size="220" font-weight="700" fill="#00e676">H</text>
+  <rect width="512" height="512" rx="96" fill="#0A0A0A"/>
+  <path fill="#DC2626" d="M256 48c-18 0-34 8-44 22l-18 26c-8 12-22 18-36 18H128c-22 0-40 18-40 40v40c0 14-6 28-18 36l-26 18c-14 10-22 26-22 44s8 34 22 44l26 18c12 8 18 22 18 36v40c0 22 18 40 40 40h30c14 0 28 6 36 18l18 26c10 14 26 22 44 22s34-8 44-22l18-26c8-12 22-18 36-18h30c22 0 40-18 40-40v-40c0-14 6-28 18-36l26-18c14-10 22-26 22-44s-8-34-22-44l-26-18c-12-8-18-22-18-36v-40c0-22-18-40-40-40h-30c-14 0-28-6-36-18l-18-26c-10-14-26-22-44-22z"/>
+  <circle cx="210" cy="250" r="28" fill="#DC2626"/>
+  <circle cx="302" cy="250" r="28" fill="#DC2626"/>
+  <path fill="#F5F5F5" d="M188 300c18 48 40 88 68 120 28-32 50-72 68-120-22 18-46 28-68 28s-46-10-68-28z"/>
 </svg>

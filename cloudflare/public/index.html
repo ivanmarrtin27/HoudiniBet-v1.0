@@ -3,27 +3,39 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#0a0a0a" />
+    <meta name="theme-color" content="#0A0A0A" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Houdini Bet" />
-    <meta
-      name="description"
-      content="Tips de fútbol con modelo Poisson: mejores apuestas, partidos y aciertos."
-    />
-    <title>HOUDINI BET</title>
+    <meta name="description" content="Pronósticos de fútbol con modelo Poisson: tip, probabilidad y cuota por partido. Top 3 del día y ligas europeas." />
+    <meta name="author" content="Iván Martín Molina" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Houdini Bet" />
+    <meta property="og:description" content="Predicciones de fútbol (Poisson) — tips 1X2, O/U, BTTS y value." />
+    <meta property="og:url" content="https://houdini-bet.ivanmarrtin2703.workers.dev/" />
+    <meta property="og:image" content="https://houdini-bet.ivanmarrtin2703.workers.dev/brand/houdini-bet-logo.png" />
+    <meta property="og:locale" content="es_ES" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Houdini Bet" />
+    <meta name="twitter:description" content="Predicciones de fútbol (Poisson) en Cloudflare Workers + D1." />
+    <meta name="twitter:image" content="https://houdini-bet.ivanmarrtin2703.workers.dev/brand/houdini-bet-logo.png" />
+    <link rel="canonical" href="https://houdini-bet.ivanmarrtin2703.workers.dev/" />
+    <title>Houdini Bet</title>
     <link rel="manifest" href="/manifest.webmanifest" />
-    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
-    <link rel="apple-touch-icon" href="/icon-192.png" />
-    <link rel="stylesheet" href="/styles.css" />
+    <link rel="icon" href="/favicon-32.png?v=hb1" type="image/png" sizes="32x32" />
+    <link rel="icon" href="/favicon-48.png?v=hb1" type="image/png" sizes="48x48" />
+    <link rel="icon" href="/icon-192.png?v=hb1" type="image/png" sizes="192x192" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=hb1" />
+    <link rel="preload" href="/brand/houdini-bet-logo.png?v=bm15" as="image" type="image/png" />
+    <link rel="stylesheet" href="/styles.css?v=hb9" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Figtree:wght@400;600;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap"
       rel="stylesheet"
     />
   </head>
-  <body class="boot-pending">
+  <body class="boot-pending tipster browse-layout">
     <div
       id="boot-splash"
       class="boot-splash"
@@ -33,143 +45,227 @@
     >
       <div class="boot-splash__mark">
         <span class="boot-splash__ring" aria-hidden="true"></span>
-        <img class="boot-splash__icon" src="/icon.svg" width="88" height="88" alt="" />
+        <img
+          class="boot-splash__icon"
+          src="/brand/houdini-bet-logo.png?v=bm15"
+          width="768"
+          height="776"
+          alt="Houdini Bet"
+          decoding="async"
+          fetchpriority="high"
+        />
       </div>
-      <p class="boot-splash__brand">
-        <span class="boot-splash__houdini">Houdini</span>
-        <span class="boot-splash__bet">Bet</span>
-      </p>
-      <p class="boot-splash__label">Cargando tips…</p>
+      <p class="boot-splash__label">Cargando partidos y datos…</p>
     </div>
 
-    <header class="top">
-      <div class="top__inner">
-        <div class="top__row top__row--brand">
-          <a class="brand" href="#mejores" aria-label="Houdini Bet — inicio">
-            <span class="brand__houdini">Houdini</span>
-            <span class="brand__bet">Bet</span>
-          </a>
-          <div class="top__center">
-            <span id="today-label" class="top-date"></span>
-            <span id="sync-label" class="top-sync muted" hidden></span>
-          </div>
-          <div class="top__right">
-            <span id="mode-badge" class="mode-badge hidden"></span>
-            <button
-              type="button"
-              id="hit-badge"
-              class="hit-badge"
-              title="Ver aciertos"
-              aria-label="Ver aciertos"
-            >
-              <span class="hit-badge__value">—</span>
-              <span class="hit-badge__hint">Aciertos</span>
-            </button>
-          </div>
-        </div>
-
-        <nav class="site-nav" aria-label="Secciones">
-          <a class="nav-link is-active" href="#mejores" data-view="mejores">Mejores</a>
-          <a class="nav-link" href="#partidos" data-view="partidos">Partidos</a>
-          <a class="nav-link" href="#aciertos" data-view="aciertos">Aciertos</a>
-          <a class="nav-link" href="#cuotas" data-view="cuotas">Cuotas</a>
+    <header class="v2-header">
+      <div class="shell v2-header-inner">
+        <a class="brand" href="#partidos" aria-label="Houdini Bet — inicio">
+          <img
+            class="brand__icon"
+            src="/brand/houdini-bet-logo.png?v=bm15"
+            width="140"
+            height="48"
+            alt="Houdini Bet"
+          />
+        </a>
+        <nav class="v2-nav" aria-label="Secciones">
+          <a class="v2-nav__link is-active" href="#partidos" data-view="partidos">Partidos</a>
+          <a class="v2-nav__link" href="#top3" data-view="top3">Top 3</a>
+          <a class="v2-nav__link" href="#stats" data-view="stats">Stats</a>
+          <a class="v2-nav__link" href="#ligas" data-view="ligas">Ligas</a>
         </nav>
-
-        <div class="search-dock" role="search">
-          <div class="search-dock__shell">
-            <div class="search-field">
-              <span class="search-field__icon" aria-hidden="true">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-                  <circle cx="11" cy="11" r="6.5" stroke="currentColor" stroke-width="1.75" />
-                  <path d="M16.2 16.2L20 20" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" />
-                </svg>
-              </span>
-              <label class="visually-hidden" for="team-search">Buscar equipo</label>
-              <input
-                id="team-search"
-                type="search"
-                placeholder="Buscar club o selección"
-                autocomplete="off"
-                enterkeyhint="search"
-              />
+        <div class="v2-header__right">
+          <div class="search-dock" role="search">
+            <div class="search-dock__shell">
+              <div class="search-field">
+                <span class="search-field__icon" aria-hidden="true">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                    <circle cx="11" cy="11" r="6.5" stroke="currentColor" stroke-width="1.75" />
+                    <path d="M16.2 16.2L20 20" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" />
+                  </svg>
+                </span>
+                <label class="visually-hidden" for="team-search">Buscar equipo</label>
+                <input
+                  id="team-search"
+                  type="search"
+                  placeholder="Buscar equipo"
+                  autocomplete="off"
+                  enterkeyhint="search"
+                />
+              </div>
+              <div id="search-results" class="search-panel hidden" role="listbox" aria-label="Resultados"></div>
             </div>
-            <div id="search-results" class="search-panel hidden" role="listbox" aria-label="Resultados"></div>
           </div>
+          <span id="mode-badge" class="mode-badge hidden"></span>
+          <button
+            type="button"
+            id="hit-badge"
+            class="hit-badge"
+            title="Ver aciertos"
+            aria-label="Ver aciertos"
+          >
+            <span class="hit-badge__value">—</span>
+            <span class="hit-badge__hint">Aciertos</span>
+          </button>
+          <a class="premium-chip" href="#premium" data-view="premium">Premium</a>
         </div>
       </div>
     </header>
 
     <div id="global-banner" class="banner hidden" role="status" aria-live="polite"></div>
 
-    <main class="views" id="views" data-view="mejores">
+    <main class="v2-main shell" id="views" data-view="partidos">
       <div class="views-track" id="views-track">
-        <section id="mejores" class="view" aria-label="Mejores apuestas">
-          <h2 id="best-title">Mejores predicciones</h2>
-          <p class="section-lead">
-            Partidos con más confianza: % 1X2 / O-U / BTTS y tip Houdini marcado.
-          </p>
-          <p id="filter-chip" class="filter-chip muted"></p>
-          <div id="best-bets" class="stack stack--matches" role="list"></div>
-        </section>
-
-        <section id="partidos" class="view" aria-label="Partidos">
-          <h2 id="list-title">Partidos</h2>
-          <p class="section-lead">
-            Calendario por día, ventana o liga. Misma selección para Mejores y Cuotas.
-          </p>
-
-          <div class="control-deck" role="group" aria-label="Filtros de partidos">
-            <div class="control-deck__grid">
-              <div class="control-block control-block--when">
-                <p class="control-block__label control-block__label--desk">Cuándo</p>
-                <div class="seg seg--track seg--when" role="group" aria-label="Ventana">
-                  <button type="button" class="seg__btn active" id="chip-hoy" data-window="hoy">Hoy</button>
-                  <button type="button" class="seg__btn" id="chip-5d" data-window="5d">5d</button>
-                  <button type="button" class="seg__btn" id="chip-all" data-window="all">14d</button>
-                  <button type="button" class="seg__btn seg__btn--date" id="chip-date" aria-label="Elegir fecha">
-                    <span class="date-chip__icon" aria-hidden="true">📅</span>
-                    <input id="match-date" type="date" class="date-chip__input" tabindex="-1" aria-hidden="true" />
+        <section id="partidos" class="view view--partidos" aria-label="Partidos">
+          <div class="browse-split">
+            <div class="browse-col browse-col--list" id="listScreen">
+              <div id="browseChrome" class="browse-chrome">
+                <div class="date-bar">
+                  <button class="btn-day" id="prevDayBtn" type="button" title="Día anterior" aria-label="Día anterior">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                      <path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
+                  </button>
+                  <div class="date-center" id="dateCenter" role="button" tabindex="0" aria-label="Elegir fecha">
+                    <span id="dateCenterLabel">—</span>
+                    <input id="match-date" type="date" class="date-bar__input" tabindex="-1" aria-hidden="true" />
+                  </div>
+                  <button class="btn-day" id="nextDayBtn" type="button" title="Día siguiente" aria-label="Día siguiente">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                      <path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
+                  </button>
+                </div>
+                <div class="browse-chips browse-chips--dates" role="group" aria-label="Atajos de fecha">
+                  <button type="button" class="browse-chip" id="yesterdayBtn" data-copy="yesterday" aria-pressed="false">Ayer</button>
+                  <button type="button" class="browse-chip is-active" id="todayBtn" data-copy="today" aria-pressed="true">Hoy</button>
+                  <button type="button" class="browse-chip" id="tomorrowBtn" data-copy="tomorrow" aria-pressed="false">Mañana</button>
+                </div>
+                <div class="browse-chips browse-chips--status match-status-filters" id="matchStatusFilters" role="group" aria-label="Estado del partido"></div>
+                <div class="browse-chips browse-chips--scope" role="group" aria-label="Tipo de competición">
+                  <button
+                    type="button"
+                    class="browse-chip is-active"
+                    data-scope="all"
+                    title="Todas las competiciones del día"
+                  >
+                    Todas
+                  </button>
+                  <button
+                    type="button"
+                    class="browse-chip"
+                    data-scope="clubs"
+                    title="Solo ligas domésticas de clubes (LaLiga, Premier, Serie A…)"
+                  >
+                    Ligas de clubes
+                  </button>
+                  <button
+                    type="button"
+                    class="browse-chip"
+                    data-scope="intl"
+                    title="Competiciones internacionales (Champions, Europa League, Nations League…)"
+                  >
+                    Internacionales
                   </button>
                 </div>
               </div>
-
-              <div class="control-block control-block--scope">
-                <p class="control-block__label control-block__label--desk">Competición</p>
-                <div class="seg seg--track seg--wide" role="group" aria-label="Ámbito">
-                  <button type="button" class="seg__btn active" data-scope="all">Todas</button>
-                  <button type="button" class="seg__btn" data-scope="clubs">Clubes</button>
-                  <button type="button" class="seg__btn" data-scope="intl">Selecciones</button>
-                  <button type="button" class="seg__btn" id="chip-live" data-live="1" aria-pressed="false">En vivo</button>
-                </div>
+              <div id="matches" class="matches-league-list" role="list"></div>
+              <span id="today-label" class="visually-hidden"></span>
+              <span id="sync-label" class="visually-hidden" hidden></span>
+              <span id="match-count" class="visually-hidden" aria-live="polite"></span>
+              <span id="filter-chip" class="visually-hidden"></span>
+            </div>
+            <div class="browse-col browse-col--panel" id="browsePanel" aria-label="Análisis">
+              <div id="browsePanelBody" class="browse-panel-body">
+                <div class="browse-panel-empty muted">Selecciona un partido para ver el análisis</div>
               </div>
             </div>
-
-            <div class="control-block control-block--leagues" id="league-block" hidden>
-              <button type="button" class="league-toggle" id="league-toggle" aria-expanded="true">
-                <span class="league-toggle__label" id="league-block-label">Ligas</span>
-                <span class="league-toggle__chev" aria-hidden="true"></span>
-              </button>
-              <div id="league-cats" class="league-cats" role="listbox" aria-label="Categorías de liga"></div>
-            </div>
           </div>
-
-          <p id="match-count" class="match-count"></p>
-          <div id="matches" class="stack stack--matches"></div>
         </section>
 
-        <section id="aciertos" class="view" aria-label="Aciertos">
-          <h2>Aciertos</h2>
-          <p class="section-lead">
-            Historial de tips ya cerrados. Modelo Poisson — no garantiza resultados.
+        <section id="top3" class="view view--top3" aria-label="Top 3">
+          <header class="aciertos-bar">
+            <h2 class="aciertos-bar__title">Top 3 · mejor valor</h2>
+          </header>
+          <p class="muted top3-lead">
+            Mejores tips del día por relación probabilidad del modelo / precio de la casa (valor).
           </p>
-          <div id="perf-summary" class="perf-summary"></div>
-          <div id="perf-recent" class="stack"></div>
+          <div id="top3-list" class="sheet sheet--top3" role="list"></div>
         </section>
 
-        <section id="cuotas" class="view" aria-label="Cuotas">
-          <h2>Cuotas</h2>
-          <p class="section-lead">
-            Cortas = tips individuales. Bandas 2–5 = combinadas (acierto si salen todas las piernas). Contador e historial siguen el calendario de Partidos.
+        <section id="stats" class="view view--aciertos" aria-label="Stats">
+          <header class="aciertos-bar">
+            <h2 class="aciertos-bar__title">Stats · Aciertos</h2>
+            <a class="aciertos-bar__link" href="#bandas">Combinadas →</a>
+          </header>
+          <div id="perf-summary" class="perf-summary"></div>
+          <div id="perf-recent" class="perf-recent"></div>
+        </section>
+
+        <section id="ligas" class="view view--ligas" aria-label="Ligas">
+          <header class="aciertos-bar">
+            <h2 class="aciertos-bar__title">Ligas</h2>
+            <a class="aciertos-bar__link" href="#partidos">← Partidos</a>
+          </header>
+          <div class="ligas-tabs" role="tablist" aria-label="Tipo de competición">
+            <button type="button" class="ligas-tabs__btn is-active" role="tab" data-ligas-scope="clubs" aria-selected="true">
+              Clubes
+            </button>
+            <button type="button" class="ligas-tabs__btn" role="tab" data-ligas-scope="intl" aria-selected="false">
+              Naciones / UEFA
+            </button>
+            <button type="button" class="ligas-tabs__btn" role="tab" data-ligas-scope="all" aria-selected="false">
+              Todas
+            </button>
+          </div>
+          <div class="ligas-actions">
+            <button type="button" class="tb-chip" id="ligas-apply">Ver en Partidos</button>
+            <button type="button" class="tb-chip" id="ligas-clear">Limpiar filtro</button>
+          </div>
+          <div id="ligas-list" class="ligas-list" role="listbox" aria-label="Ligas disponibles"></div>
+          <div class="control-block control-block--leagues" id="league-block" hidden>
+            <div id="league-cats" class="league-cats" role="listbox" aria-label="Categorías de liga"></div>
+          </div>
+          <p class="muted privacy-lead">
+            Ligas agrupadas por país. Toca el país para marcar todas sus ligas, o elige una a una. Luego
+            «Ver en Partidos». Clubes = domésticas; Naciones / UEFA = Champions, Europa League, Nations
+            League, etc.
+          </p>
+        </section>
+
+        <section id="premium" class="view" aria-label="Premium">
+          <h2>Premium</h2>
+          <div class="premium-grid">
+            <article class="premium-card">
+              <h3 class="premium-card__name">Free</h3>
+              <p class="premium-card__price">0 €</p>
+              <ul>
+                <li>Top 10 tips</li>
+                <li>1X2 · Más/Menos · Ambos marcan</li>
+                <li>Valor top 5</li>
+              </ul>
+            </article>
+            <article class="premium-card premium-card--pro">
+              <h3 class="premium-card__name">Premium</h3>
+              <p class="premium-card__price">Pronto</p>
+              <ul>
+                <li>Tips sin límite</li>
+                <li>Valor completo</li>
+                <li>Alertas</li>
+              </ul>
+              <button type="button" class="primary premium-cta" id="premium-cta" disabled>
+                Sin pago aún
+              </button>
+            </article>
+          </div>
+          <p class="premium-note">Acceso completo activo · pago más adelante</p>
+        </section>
+
+        <section id="bandas" class="view" aria-label="Bandas">
+          <h2>Combinadas</h2>
+          <p class="aciertos-sub">
+            <a class="aciertos-sub__link" href="#stats">← Stats</a>
           </p>
           <div id="odds-band-stats" class="odds-stats-wrap" aria-label="Aciertos por cuota"></div>
           <div id="odds-band-history" aria-label="Historial por banda"></div>
@@ -178,28 +274,76 @@
             <div id="odds-band-bets" class="combo-board" role="list"></div>
           </div>
         </section>
+
+        <section id="ajustes" class="view view--ajustes" aria-label="Ajustes de privacidad">
+          <header class="ajustes-bar">
+            <h2 class="ajustes-bar__title">Ajustes</h2>
+            <a class="ajustes-bar__link" href="#partidos">← Partidos</a>
+          </header>
+          <p class="privacy-lead">
+            Los tips son informativos. Usamos datos de partidos y cuotas para calcular predicciones.
+            No vendemos datos personales con fines publicitarios. Aún no hay cuentas de usuario.
+          </p>
+          <div class="privacy-toggles" role="group" aria-label="Preferencias locales">
+            <label class="privacy-row">
+              <span class="privacy-row__text">
+                <span class="privacy-row__title">Analytics / telemetría</span>
+                <span class="privacy-row__hint">Desactivado por defecto. No enviamos telemetría de terceros.</span>
+              </span>
+              <input id="pref-analytics" type="checkbox" class="privacy-switch" role="switch" />
+            </label>
+            <label class="privacy-row">
+              <span class="privacy-row__text">
+                <span class="privacy-row__title">Guardar búsqueda reciente</span>
+                <span class="privacy-row__hint">Recuerda el último equipo buscado en este dispositivo.</span>
+              </span>
+              <input id="pref-save-search" type="checkbox" class="privacy-switch" role="switch" />
+            </label>
+            <label class="privacy-row">
+              <span class="privacy-row__text">
+                <span class="privacy-row__title">Recordar filtros</span>
+                <span class="privacy-row__hint">Conserva fecha y ámbito entre sesiones.</span>
+              </span>
+              <input id="pref-remember-filters" type="checkbox" class="privacy-switch" role="switch" />
+            </label>
+          </div>
+          <div class="privacy-data">
+            <h3 class="privacy-data__title">Qué se guarda</h3>
+            <ul class="privacy-data__list">
+              <li><strong>En este dispositivo</strong> — preferencias de privacidad y, si lo activas, búsqueda/filtros.</li>
+              <li><strong>En el servidor (D1)</strong> — partidos, tips y resultados agregados. Sin perfil personal.</li>
+            </ul>
+          </div>
+          <p class="privacy-responsible">
+            Juega con responsabilidad. Si apuestas, hazlo solo con dinero que puedas permitirte perder.
+          </p>
+          <details class="admin-fold hidden" id="admin-fold">
+            <summary>Admin</summary>
+            <div id="admin-status" class="admin-status muted" aria-live="polite">Cargando cobertura…</div>
+            <div class="admin-actions">
+              <button id="btn-sync" type="button" class="btn-refresh btn-refresh--footer" title="Actualizar calendario">
+                <span>Calendario</span>
+              </button>
+              <button id="btn-enrich" type="button" class="btn-refresh btn-refresh--footer" title="Actualizar cuotas y stats AF">
+                <span>Cuotas + stats</span>
+              </button>
+              <button id="btn-backtest" type="button" class="btn-refresh btn-refresh--footer" title="Backtest shrinkage vs Kalman">
+                <span>Backtest</span>
+              </button>
+            </div>
+          </details>
+        </section>
       </div>
     </main>
 
     <footer class="site-footer">
-      <p class="site-footer__disclaimer">
-        Tips orientativos con modelo Poisson. Las apuestas implican riesgo.
-      </p>
-      <details class="admin-fold">
-        <summary>Administración</summary>
-        <button id="btn-sync" type="button" class="btn-refresh btn-refresh--footer" title="Actualizar calendario">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path
-              d="M4.5 12a7.5 7.5 0 0 1 12.7-5.4M19.5 12a7.5 7.5 0 0 1-12.7 5.4"
-              stroke="currentColor"
-              stroke-width="1.8"
-              stroke-linecap="round"
-            />
-            <path d="M17 3.5v4h-4M7 20.5v-4h4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
-          </svg>
-          <span>Actualizar calendario</span>
-        </button>
-      </details>
+      <div class="site-footer__inner">
+        <span class="site-footer__brand">Houdini Bet</span>
+        <span class="site-footer__dot" aria-hidden="true"></span>
+        <a class="site-footer__link" href="#ajustes" data-view="ajustes">Privacidad</a>
+        <span class="site-footer__dot" aria-hidden="true"></span>
+        <span class="site-footer__note">Juega con responsabilidad</span>
+      </div>
     </footer>
 
     <div id="panel-backdrop" class="panel-backdrop" aria-hidden="true"></div>
@@ -211,6 +355,6 @@
       <div id="panel-body"></div>
     </aside>
 
-    <script src="/app.js"></script>
+    <script src="/app.js?v=hb9"></script>
   </body>
 </html>
