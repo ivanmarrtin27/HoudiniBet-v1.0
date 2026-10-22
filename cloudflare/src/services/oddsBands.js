@@ -37,6 +37,25 @@ function familyKey(label) {
   ) {
     return 'cards';
   }
+  if (
+    ['SHOTS_OVER_225', 'SHOTS_UNDER_225', 'SHOTS_OVER_255', 'SHOTS_UNDER_255'].includes(
+      bet
+    )
+  ) {
+    return 'shots';
+  }
+  if (
+    [
+      'SOT_OVER_75',
+      'SOT_UNDER_75',
+      'SOT_OVER_85',
+      'SOT_UNDER_85',
+      'SOT_OVER_95',
+      'SOT_UNDER_95',
+    ].includes(bet)
+  ) {
+    return 'shots_on_target';
+  }
   return 'otros';
 }
 
@@ -67,8 +86,34 @@ const BOOK_ODDS_FIELD = {
   HOME_WIN: 'home_odds',
   DRAW: 'draw_odds',
   AWAY_WIN: 'away_odds',
+  OVER_15: 'over15_odds',
+  UNDER_15: 'under15_odds',
   OVER_25: 'over25_odds',
   UNDER_25: 'under25_odds',
+  OVER_35: 'over35_odds',
+  UNDER_35: 'under35_odds',
+  BTTS_YES: 'btts_yes_odds',
+  BTTS_NO: 'btts_no_odds',
+  SHOTS_OVER_225: 'shots_over225_odds',
+  SHOTS_UNDER_225: 'shots_under225_odds',
+  SHOTS_OVER_255: 'shots_over255_odds',
+  SHOTS_UNDER_255: 'shots_under255_odds',
+  SOT_OVER_75: 'sot_over75_odds',
+  SOT_UNDER_75: 'sot_under75_odds',
+  SOT_OVER_85: 'sot_over85_odds',
+  SOT_UNDER_85: 'sot_under85_odds',
+  SOT_OVER_95: 'sot_over95_odds',
+  SOT_UNDER_95: 'sot_under95_odds',
+  CORNERS_OVER_85: 'corners_over85_odds',
+  CORNERS_UNDER_85: 'corners_under85_odds',
+  CORNERS_OVER_95: 'corners_over95_odds',
+  CORNERS_UNDER_95: 'corners_under95_odds',
+  CORNERS_OVER_105: 'corners_over105_odds',
+  CORNERS_UNDER_105: 'corners_under105_odds',
+  CARDS_OVER_35: 'cards_over35_odds',
+  CARDS_UNDER_35: 'cards_under35_odds',
+  CARDS_OVER_45: 'cards_over45_odds',
+  CARDS_UNDER_45: 'cards_under45_odds',
 };
 
 const MODEL_PROB_FIELD = {
@@ -109,6 +154,16 @@ const MODEL_PROB_FIELD = {
   CARDS_UNDER_35: 'cards_under35_prob',
   CARDS_OVER_45: 'cards_over45_prob',
   CARDS_UNDER_45: 'cards_under45_prob',
+  SHOTS_OVER_225: 'shots_over225_prob',
+  SHOTS_UNDER_225: 'shots_under225_prob',
+  SHOTS_OVER_255: 'shots_over255_prob',
+  SHOTS_UNDER_255: 'shots_under255_prob',
+  SOT_OVER_75: 'sot_over75_prob',
+  SOT_UNDER_75: 'sot_under75_prob',
+  SOT_OVER_85: 'sot_over85_prob',
+  SOT_UNDER_85: 'sot_under85_prob',
+  SOT_OVER_95: 'sot_over95_prob',
+  SOT_UNDER_95: 'sot_under95_prob',
 };
 
 /** Combinada filter bands (Cuotas chips). */
@@ -227,12 +282,27 @@ export function pickMarketForOddsBand(predictionRow, oddsRow, band, preferredBet
     };
   }
 
+  const CORE_SCAN = [
+    'HOME_WIN',
+    'DRAW',
+    'AWAY_WIN',
+    'OVER_25',
+    'UNDER_25',
+    'BTTS_YES',
+    'BTTS_NO',
+    'OVER_15',
+    'UNDER_15',
+    'OVER_35',
+    'UNDER_35',
+  ];
   let best = null;
-  for (const [label] of Object.entries(MODEL_PROB_FIELD)) {
+  for (const label of CORE_SCAN) {
     if (TRIVIAL_GOAL_TIPS.has(label)) continue;
     const p = modelProbForBet(predictionRow, label);
     if (p == null || p < 0.16 || p > 0.7) continue;
     const resolved = resolveTipOdds(label, predictionRow, oddsRow);
+    // Prefer book; skip model-implied for mid bands (avoids fake band fit)
+    if (resolved.oddsSource !== 'book') continue;
     if (resolved.oddsBand !== band || resolved.tipOdds == null) continue;
     const dist = Math.abs(resolved.tipOdds - center);
     const score = p * calibBoost(calib, label, resolved.tipOdds);
@@ -280,43 +350,51 @@ export function pickLegForCombo(predictionRow, oddsRow, preferredBets = [], opts
   const P_MIN = 0.42;
   const P_MAX = 0.84;
   const calib = opts.calib || null;
+  /** Combinadas only use book odds — no fake 1/p legs. */
+  const bookOnly = opts.bookOnly !== false;
+
+  const CORE = new Set([
+    'HOME_WIN',
+    'DRAW',
+    'AWAY_WIN',
+    'OVER_25',
+    'UNDER_25',
+    'BTTS_YES',
+    'BTTS_NO',
+    'OVER_15',
+    'UNDER_15',
+    'OVER_35',
+    'UNDER_35',
+  ]);
 
   const candidates = [];
 
-  for (const bet of preferredBets) {
-    if (!bet || TRIVIAL_GOAL_TIPS.has(String(bet))) continue;
+  function consider(bet, preferred) {
+    if (!bet || TRIVIAL_GOAL_TIPS.has(String(bet))) return;
+    if (!CORE.has(String(bet))) return;
     const resolved = resolveTipOdds(bet, predictionRow, oddsRow);
-    if (resolved.tipOdds == null) continue;
-    if (resolved.tipOdds < LEG_MIN || resolved.tipOdds > LEG_MAX) continue;
+    if (resolved.tipOdds == null) return;
+    if (bookOnly && resolved.oddsSource !== 'book') return;
+    if (resolved.tipOdds < LEG_MIN || resolved.tipOdds > LEG_MAX) return;
     const p = modelProbForBet(predictionRow, bet) ?? 1 / resolved.tipOdds;
-    if (p < P_MIN || p > P_MAX) continue;
+    if (p < P_MIN || p > P_MAX) return;
     candidates.push({
       label: String(bet),
       tipOdds: resolved.tipOdds,
       oddsSource: resolved.oddsSource,
       prob: p,
-      preferred: true,
+      preferred: Boolean(preferred),
     });
   }
 
-  for (const [label] of Object.entries(MODEL_PROB_FIELD)) {
-    if (TRIVIAL_GOAL_TIPS.has(label)) continue;
-    const p = modelProbForBet(predictionRow, label);
-    if (p == null || p < P_MIN || p > P_MAX) continue;
-    const resolved = resolveTipOdds(label, predictionRow, oddsRow);
-    if (resolved.tipOdds == null || resolved.tipOdds < LEG_MIN || resolved.tipOdds > LEG_MAX) continue;
-    candidates.push({
-      label,
-      tipOdds: resolved.tipOdds,
-      oddsSource: resolved.oddsSource,
-      prob: p,
-      preferred: false,
-    });
-  }
+  for (const bet of preferredBets) consider(bet, true);
+  for (const label of CORE) consider(label, false);
 
   if (!candidates.length) return null;
-  // Highest (calibrated) score first; preferred tip wins tiny ties.
   candidates.sort((a, b) => {
+    const bookA = a.oddsSource === 'book' ? 1 : 0;
+    const bookB = b.oddsSource === 'book' ? 1 : 0;
+    if (bookB !== bookA) return bookB - bookA;
     const sa = a.prob * calibBoost(calib, a.label, a.tipOdds);
     const sb = b.prob * calibBoost(calib, b.label, b.tipOdds);
     if (sb !== sa) return sb - sa;

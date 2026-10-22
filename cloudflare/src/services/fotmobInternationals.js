@@ -188,28 +188,85 @@ export async function fetchInternationalFixtures(fromOffset = 0, toOffset = WIND
 }
 
 /**
- * Live/finished snapshot for today — UNL / UCL / UEL / Friendlies only (status updates on FD rows).
+ * League-agnostic view of a FotMob match (no league context needed).
  */
-export async function fetchFotmobLiveSnapshot() {
-  const ymd = dateOffsets(0, 0)[0];
-  const errors = [];
-  let data;
-  try {
-    data = await fetchDay(ymd);
-  } catch (err) {
-    return { fixtures: [], errors: [{ date: ymd, error: err.message }] };
-  }
-  const fixtures = [];
-  for (const league of data?.leagues || []) {
-    const lname = String(league?.name || '');
-    if (SKIP_NAME.test(lname)) continue;
-    if (!isAllowedCompetition(lname, 'World') && !SKIP_COVERED.test(lname)) continue;
-    for (const match of league.matches || []) {
-      const mapped = mapMatch(league, match);
-      if (!mapped) continue;
-      if (mapped.status !== 'live' && mapped.status !== 'finished') continue;
-      fixtures.push(mapped);
+function mapAnyLiveMatch(match) {
+  const status = mapStatus(match);
+  if (status !== 'live' && status !== 'finished') return null;
+  const homeName = String(match.home?.name || '').trim();
+  const awayName = String(match.away?.name || '').trim();
+  if (!homeName || !awayName) return null;
+  const fmId = Number(match.id);
+  if (!Number.isFinite(fmId) || fmId <= 0) return null;
+
+  let rawHome = match.home?.score;
+  let rawAway = match.away?.score;
+  if ((rawHome == null || rawAway == null) && match.status?.scoreStr) {
+    const parts = String(match.status.scoreStr).split(/\s*-\s*/);
+    if (parts.length === 2) {
+      rawHome = parts[0];
+      rawAway = parts[1];
     }
   }
-  return { fixtures, errors };
+  const homeGoals =
+    rawHome != null && rawHome !== '' && !Number.isNaN(Number(rawHome)) ? Number(rawHome) : null;
+  const awayGoals =
+    rawAway != null && rawAway !== '' && !Number.isNaN(Number(rawAway)) ? Number(rawAway) : null;
+
+  return {
+    fotmobId: fmId,
+    homeName,
+    awayName,
+    status,
+    homeGoals,
+    awayGoals,
+    elapsed: status === 'live' ? parseElapsedMinute(match.status || {}) : null,
+  };
+}
+
+/**
+ * Live/finished snapshots — UNL / UCL / UEL / Friendlies only (status updates on FD rows).
+ * Accepts a small date range so yesterday can still be closed after midnight.
+ *
+ * With `includeAll` the `all` list also carries every live/finished match of the
+ * day feed, whatever the league. That is how rows coming from other feeds
+ * (FixtureDownload domestic leagues) get a FotMob match id, and with it the
+ * live score, the minute and the incident timeline.
+ */
+export async function fetchFotmobLiveSnapshot(fromOffset = 0, toOffset = 0, { includeAll = false } = {}) {
+  const dates = dateOffsets(fromOffset, toOffset);
+  const errors = [];
+  const fixtures = [];
+  const all = [];
+  for (const ymd of dates) {
+    let data;
+    try {
+      data = await fetchDay(ymd);
+    } catch (err) {
+      errors.push({ date: ymd, error: err.message });
+      continue;
+    }
+    for (const league of data?.leagues || []) {
+      const lname = String(league?.name || '');
+      if (includeAll) {
+        for (const match of league.matches || []) {
+          const any = mapAnyLiveMatch(match);
+          if (any) all.push(any);
+        }
+      }
+      if (SKIP_NAME.test(lname)) continue;
+      if (!isAllowedCompetition(lname, 'World') && !SKIP_COVERED.test(lname)) continue;
+      for (const match of league.matches || []) {
+        const mapped = mapMatch(league, match);
+        if (!mapped) continue;
+        if (mapped.status !== 'live' && mapped.status !== 'finished') continue;
+        fixtures.push(mapped);
+      }
+    }
+  }
+  const byId = new Map();
+  for (const fx of fixtures) byId.set(fx.api_id, fx);
+  const allById = new Map();
+  for (const fx of all) allById.set(fx.fotmobId, fx);
+  return { fixtures: [...byId.values()], all: [...allById.values()], errors };
 }

@@ -189,14 +189,14 @@ export async function fetchAllWindowFixtures() {
   };
 }
 
-/** Solo partidos de hoy (para refresh live / cierre). */
-export async function fetchTodayFixtures() {
+/** Partidos recientes para refresh live / cierre. Por defecto, solo hoy. */
+export async function fetchTodayFixtures(fromOffset = 0, toOffset = 0) {
   const errors = [];
   const settled = await Promise.all(
     FEEDS.map(async (feed) => {
       try {
         const rows = await fetchFeed(feed.slug);
-        return filterWindow(rows, feed, 0, 0);
+        return filterWindow(rows, feed, fromOffset, toOffset);
       } catch (err) {
         errors.push({ slug: feed.slug, error: err.message });
         return [];

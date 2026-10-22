@@ -7,6 +7,9 @@ import { resolveTeamLogoUrl } from './services/teamLogos.js';
 import { resolveTipOdds, parseOddsBandParam, pickLegForCombo, BAND_META } from './services/oddsBands.js';
 import { buildCombos, comboOptsForBand } from './services/combos.js';
 import { loadTipCalibration, fitTipCalibration } from './services/calibration.js';
+import { runBacktestSuite } from './services/backtestService.js';
+import { backfillRatings } from './services/ratingsService.js';
+import { buildLiveBlock } from './services/liveModel.js';
 
 const STALE_MS = 12 * 60 * 60 * 1000;
 const SYNC_LOCK_MS = 5 * 60 * 1000;
@@ -176,13 +179,33 @@ async function handleApi(request, env, ctx) {
     const oddsCount = await store.countOddsRows(db);
     const cornersCount = await store.countStatsWithCorners(db);
     const yellowsCount = await store.countStatsWithYellows(db);
+    const shotsOnTargetCount = await store.countStatsWithShotsOnTarget(db);
+    const upcoming = await store.countUpcomingInWindow(db, WINDOW_DAYS);
+    const upcomingWithOdds = await store.countUpcomingWithOdds(db, WINDOW_DAYS);
+    const oddsCoveragePct =
+      upcoming > 0 ? Number(((100 * upcomingWithOdds) / upcoming).toFixed(1)) : null;
+    const lastEnrichAt = await store.getMeta(db, 'last_enrich_at');
+    let lastEnrichSummary = null;
+    try {
+      const rawSum = await store.getMeta(db, 'last_enrich_summary');
+      lastEnrichSummary = rawSum ? JSON.parse(rawSum) : null;
+    } catch (_) {
+      lastEnrichSummary = null;
+    }
+    let calibDecided = null;
+    try {
+      const calib = await loadTipCalibration(db);
+      calibDecided = calib?.decided ?? null;
+    } catch (_) {
+      calibDecided = null;
+    }
     let mode = 'demo';
     let message =
       'Modo demo (seed). Auto-sync o Sync manual trae calendario real (FixtureDownload).';
     if (fdCount > 0) {
       mode = 'live';
       message = hasKey
-        ? `FD + API-Football: ${oddsCount} con cuota · corners=${cornersCount} · amarillas=${yellowsCount}.`
+        ? `FD + API-Football: ${upcomingWithOdds}/${upcoming} con cuota (${oddsCoveragePct ?? 0}%) · corners=${cornersCount} · amarillas=${yellowsCount}.`
         : `Calendario FD (${fdCount} partidos). Sin API_FOOTBALL_KEY → sin value, corners ni amarillas.`;
     } else if (auto.syncing) {
       message = 'Sincronizando calendario real en segundo plano… recarga en unos segundos.';
@@ -197,9 +220,16 @@ async function handleApi(request, env, ctx) {
       oddsMatchCount: oddsCount,
       cornersMatchCount: cornersCount,
       yellowsMatchCount: yellowsCount,
+      shotsOnTargetMatchCount: shotsOnTargetCount,
+      upcomingCount: upcoming,
+      upcomingWithOdds,
+      oddsCoveragePct,
       fixtureDownloadCount: fdCount,
       windowDays: WINDOW_DAYS,
       lastSyncAt: auto.lastSyncAt,
+      lastEnrichAt: lastEnrichAt || null,
+      lastEnrichSummary,
+      calibrationDecided: calibDecided,
       syncing: auto.syncing,
       leagues: env.LEAGUE_IDS || '',
       message,
@@ -236,6 +266,7 @@ async function handleApi(request, env, ctx) {
         oddsBand: oddsMeta.oddsBand,
         oddsSource: oddsMeta.oddsSource,
         markets: marketsFromPrediction(p),
+        live: buildLiveBlock(m, p),
       };
     });
     const hasKey = Boolean(env.API_FOOTBALL_KEY && String(env.API_FOOTBALL_KEY).trim());
@@ -324,6 +355,8 @@ async function handleApi(request, env, ctx) {
         combinedOdds: c.combinedOdds,
         oddsBand: c.oddsBand,
         avgConfidence: c.avgConfidence,
+        // Only a fully book-priced combo counts towards profitability.
+        oddsSource: c.legs.every((l) => l.oddsSource === 'book') ? 'book' : 'model',
         legs: c.legs,
       }));
       try {
@@ -357,6 +390,22 @@ async function handleApi(request, env, ctx) {
     });
   }
 
+  if (method === 'GET' && path === '/api/v1/tips/summary') {
+    const win = parseMatchWindow(url);
+    const summary = await store.getTipSummary(db, win);
+    return json({
+      hits: summary.hits,
+      misses: summary.misses,
+      pending: summary.pending,
+      voids: summary.voids,
+      decided: summary.decided,
+      hitRate: summary.hitRate,
+      windowLabel: summary.windowLabel || null,
+      windowMode: win.mode,
+      windowDays: win.mode === 'all' || win.mode === 'days' ? win.days : 0,
+    });
+  }
+
   if (method === 'GET' && path === '/api/v1/tips/performance') {
     const win = parseMatchWindow(url);
     const perf = await store.getTipPerformance(db, win);
@@ -381,6 +430,8 @@ async function handleApi(request, env, ctx) {
       windowDays: win.mode === 'all' || win.mode === 'days' ? win.days : 0,
       byFamily: perf.byFamily,
       byOddsBand: perf.byOddsBand,
+      roi: perf.roi || null,
+      roiByFamily: perf.roiByFamily || {},
       calibration: calib
         ? {
             updatedAt: calib.updatedAt || null,
@@ -394,6 +445,7 @@ async function handleApi(request, env, ctx) {
         confidenceScore: r.confidence_score != null ? Number(r.confidence_score) : null,
         tipOdds: r.tip_odds != null ? Number(r.tip_odds) : null,
         oddsBand: r.odds_band || null,
+        oddsSource: r.odds_source || null,
         outcome: r.outcome,
         homeGoals: r.home_goals,
         awayGoals: r.away_goals,
@@ -412,6 +464,23 @@ async function handleApi(request, env, ctx) {
     const force = url.searchParams.get('force') === '1';
     const result = await runLiveStatusRefresh(env, db, { force });
     return json(result);
+  }
+
+  const liveMatch = path.match(/^\/api\/v1\/matches\/(\d+)\/live$/);
+  if (method === 'POST' && liveMatch) {
+    const matchId = Number(liveMatch[1]);
+    const match = await store.findMatchById(db, matchId);
+    if (!match) return json({ error: 'Partido no encontrado' }, 404);
+    const force = url.searchParams.get('force') === '1';
+    // Shares the cooldown of the global refresh: it stays cheap on repeated calls.
+    await runLiveStatusRefresh(env, db, { force });
+    const fresh = (await store.findMatchById(db, matchId)) || match;
+    const prediction = await store.getPredictionByMatchId(db, matchId);
+    return json({
+      ok: true,
+      match: fresh,
+      live: buildLiveBlock(fresh, prediction),
+    });
   }
 
   const predMatch = path.match(/^\/api\/v1\/matches\/(\d+)\/prediction$/);
@@ -466,7 +535,16 @@ async function handleApi(request, env, ctx) {
     }
     await store.setMeta(db, 'sync_started_at', new Date().toISOString());
     const result = await runDailySync(env, db);
-    return json(result);
+    // Chain AF enrich when key present so manual sync also fills book odds.
+    let enrich = null;
+    if (env.API_FOOTBALL_KEY && String(env.API_FOOTBALL_KEY).trim()) {
+      try {
+        enrich = await runAfEnrichOnly(env, db);
+      } catch (err) {
+        enrich = { ok: false, error: err.message || String(err) };
+      }
+    }
+    return json({ ...result, enrich });
   }
 
   if (method === 'POST' && path === '/api/v1/sync/enrich') {
@@ -477,6 +555,71 @@ async function handleApi(request, env, ctx) {
     }
     const result = await runAfEnrichOnly(env, db);
     return json(result, result.ok ? 200 : 400);
+  }
+
+  if (method === 'POST' && path === '/api/v1/admin/backtest') {
+    const secret = env.SYNC_SECRET || 'change-me-houdini';
+    const header = request.headers.get('x-sync-secret');
+    if (!header || header !== secret) {
+      return json({ error: 'No autorizado. Header x-sync-secret requerido.' }, 401);
+    }
+    let body = {};
+    try {
+      body = await request.json();
+    } catch (_) {
+      body = {};
+    }
+    const days = Math.min(180, Math.max(7, Number(body.days) || 60));
+    const limit = Math.min(800, Math.max(50, Number(body.limit) || 400));
+    const holdoutDays = Math.min(60, Math.max(3, Number(body.holdoutDays) || 14));
+    const suiteOpts = { days, limit, holdoutDays };
+    if (Array.isArray(body.modes) && body.modes.length) {
+      // runBacktestSuite always compares core engines; modes reserved for future filter
+      suiteOpts.modes = body.modes;
+    }
+    if (body.tune === true || body.tune === 1 || body.tune === '1') {
+      suiteOpts.tune = true;
+    }
+    if (body.kalman && typeof body.kalman === 'object') {
+      suiteOpts.kalman = body.kalman;
+    }
+    const result = await runBacktestSuite(db, suiteOpts);
+    return json(result);
+  }
+
+  if (method === 'POST' && path === '/api/v1/admin/ratings/backfill') {
+    const secret = env.SYNC_SECRET || 'change-me-houdini';
+    const header = request.headers.get('x-sync-secret');
+    if (!header || header !== secret) {
+      return json({ error: 'No autorizado. Header x-sync-secret requerido.' }, 401);
+    }
+    let body = {};
+    try {
+      body = await request.json();
+    } catch (_) {
+      body = {};
+    }
+    const days = Math.min(180, Math.max(7, Number(body.days) || 60));
+    const limit = Math.min(800, Math.max(50, Number(body.limit) || 400));
+    const result = await backfillRatings(db, { days, limit });
+    return json({ ok: true, ...result });
+  }
+
+  if (method === 'POST' && path === '/api/v1/admin/ratings/live') {
+    const secret = env.SYNC_SECRET || 'change-me-houdini';
+    const header = request.headers.get('x-sync-secret');
+    if (!header || header !== secret) {
+      return json({ error: 'No autorizado. Header x-sync-secret requerido.' }, 401);
+    }
+    let body = {};
+    try {
+      body = await request.json();
+    } catch (_) {
+      body = {};
+    }
+    const enable = body.enable === true || body.enable === 1 || body.enable === '1';
+    await store.setMeta(db, 'ratings_live', enable ? '1' : '0');
+    return json({ ok: true, ratings_live: enable ? '1' : '0' });
   }
 
   if (method === 'GET' && path === '/health') {
@@ -506,7 +649,7 @@ export default {
   async scheduled(event, env, ctx) {
     const db = createDb(env.DB);
     const cron = event.cron || '';
-    if (cron === '30 6 * * *') {
+    if (cron === '30 6 * * *' || cron === '0 12 * * *') {
       ctx.waitUntil(
         runAfEnrichOnly(env, db).then((r) => console.log('cron af-enrich', JSON.stringify(r)))
       );

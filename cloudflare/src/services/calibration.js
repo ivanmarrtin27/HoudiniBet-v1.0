@@ -62,6 +62,25 @@ export function tipFamily(label) {
   ) {
     return 'cards';
   }
+  if (
+    ['SHOTS_OVER_225', 'SHOTS_UNDER_225', 'SHOTS_OVER_255', 'SHOTS_UNDER_255'].includes(
+      bet
+    )
+  ) {
+    return 'shots';
+  }
+  if (
+    [
+      'SOT_OVER_75',
+      'SOT_UNDER_75',
+      'SOT_OVER_85',
+      'SOT_UNDER_85',
+      'SOT_OVER_95',
+      'SOT_UNDER_95',
+    ].includes(bet)
+  ) {
+    return 'shots_on_target';
+  }
   return 'otros';
 }
 
@@ -116,7 +135,8 @@ function finalizeBucket(acc) {
  */
 export async function fitTipCalibration(db, sampleDays = CALIBRATION_SAMPLE_DAYS, opts = {}) {
   const days = Math.max(14, Math.min(180, Number(sampleDays) || CALIBRATION_SAMPLE_DAYS));
-  const includeMidBands = opts.includeMidBands !== false;
+  // Mid-band synthetic fill off by default (was circular with band-chasing).
+  const includeMidBands = opts.includeMidBands === true;
   const windowSql = `DATE(m.match_date) >= DATE('now', ?)`;
   const windowParams = [`-${days} days`];
 
