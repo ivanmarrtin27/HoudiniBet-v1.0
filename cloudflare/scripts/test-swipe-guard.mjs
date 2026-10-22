@@ -92,7 +92,7 @@ check('date swipe is cancelled on touchcancel',
   /zone\.addEventListener\([\s\S]*?'touchcancel'[\s\S]*?tracking = false;/.test(src));
 
 const cssRules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)];
-for (const selector of ['.market-tabs', '.mp-tabs', '.ladder-table-wrap', '.odds-stats', '.perf-families--bands']) {
+for (const selector of ['.market-tabs', '.mp-tabs', '.odds-stats', '.perf-families--bands']) {
   const hasContain = cssRules.some(
     ([, selectors, declarations]) =>
       selectors.includes(selector) && declarations.includes('overscroll-behavior-x: contain')

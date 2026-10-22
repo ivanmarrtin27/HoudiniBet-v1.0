@@ -59,6 +59,7 @@
 - Tests PWA: `node cloudflare/scripts/test-pwa.mjs` (21)
 - Tests contexto F5: `node cloudflare/scripts/test-analysis-context.mjs` (23)
 - Tests rojas en vivo F6: `node cloudflare/scripts/test-live-red-cards.mjs` (16)
+- F7 limpieza: sin ladder-table muerta (`marketLadderPanel`, `ladderTableHtml`, `toneFromPct` y sus CSS borrados), skip-link a `#views`, legacy Express+MySQL archivado en `legacy/backend` y `legacy/database` (historial preservado, referencias actualizadas en README/AGENTS); notas: no quedan '…' huerfanos en UI; `cloudflare/pages/_worker.js` restaurado (faltaba en disco) y el proxy pages.dev sigue vivo.
 - Tests guard swipe: `node cloudflare/scripts/test-swipe-guard.mjs` (19 checks)
 - Tests UI móvil: `node cloudflare/scripts/test-mobile-ui.mjs` (17 checks)
 - Tests cuota/proveedor F1: `node cloudflare/scripts/test-af-free-budget.mjs` (10) + `node cloudflare/scripts/test-api-football-odds.mjs` (5)

@@ -17,7 +17,7 @@ App de predicciones de fútbol (Poisson).
 - En vivo: `POST /api/v1/matches/refresh-live` (cooldown 45 s) + `POST /api/v1/matches/:id/live`; proyección en `src/services/liveModel.js`
 
 ## Stack local (legacy / CLI)
-- Express + MySQL en [`backend/`](backend/)
+- Express + MySQL en [`legacy/backend/`](legacy/backend/) (archivado)
 - CLI: `API_BASE_URL` → usa API Cloudflare; sin URL → MySQL local
 
 ## UI

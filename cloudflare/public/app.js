@@ -964,15 +964,6 @@ function avgStatCard(title, value, scale, leagueAvg = null) {
   });
 }
 
-function toneFromPct(p01) {
-  const p = Number(p01);
-  if (!Number.isFinite(p)) return 'muted';
-  const pctVal = p <= 1 ? p * 100 : p;
-  if (pctVal >= 60) return 'hi';
-  if (pctVal >= 40) return 'mid';
-  return 'lo';
-}
-
 function expectedCardHtml({ title, homeName, awayName, homeLogo, awayLogo, homeExp, awayExp, matchExp }) {
   if (homeExp == null && awayExp == null && matchExp == null) return '';
   const pill = (v) => {
@@ -997,80 +988,6 @@ function expectedCardHtml({ title, homeName, awayName, homeLogo, awayLogo, homeE
         </div>
       </div>
     </div>`;
-}
-
-function ladderTableHtml(homeName, awayName, ladderHome, ladderAway, ladderMatch) {
-  const hMap = new Map((ladderHome || []).map((r) => [Number(r.line), r.over]));
-  const aMap = new Map((ladderAway || []).map((r) => [Number(r.line), r.over]));
-  const mMap = new Map((ladderMatch || []).map((r) => [Number(r.line), r.over]));
-  const lines = [...new Set([
-    ...[...hMap.keys()],
-    ...[...aMap.keys()],
-    ...[...mMap.keys()],
-  ])].sort((a, b) => a - b);
-  if (!lines.length) return '';
-  const cell = (over) => {
-    if (over == null) return '<td><span class="ladder-badge ladder-badge--muted">—</span></td>';
-    const pctVal = Math.round(Number(over) * 100);
-    return `<td><span class="ladder-badge ladder-badge--${toneFromPct(over)}">${pctVal}%</span></td>`;
-  };
-  const rows = lines
-    .map((line) => {
-      const label = `Más de ${String(line).replace('.', ',')}`;
-      return `<tr>
-        <th scope="row">${escapeHtml(label)}</th>
-        ${cell(hMap.get(line))}
-        ${cell(aMap.get(line))}
-        ${cell(mMap.get(line))}
-      </tr>`;
-    })
-    .join('');
-  return `
-    <div class="ladder-table-wrap">
-      <table class="ladder-table">
-        <thead>
-          <tr>
-            <th scope="col">Métrica</th>
-            <th scope="col">${escapeHtml(homeName || 'Local')}</th>
-            <th scope="col">${escapeHtml(awayName || 'Visitante')}</th>
-            <th scope="col">Partido</th>
-          </tr>
-        </thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </div>`;
-}
-
-function marketLadderPanel({
-  label,
-  homeName,
-  awayName,
-  homeLogo,
-  awayLogo,
-  expected,
-  ladders,
-  fallbackHtml,
-}) {
-  if (!expected && !ladders) return fallbackHtml || '';
-  return `
-    ${expectedCardHtml({
-      title: label,
-      homeName,
-      awayName,
-      homeLogo,
-      awayLogo,
-      homeExp: expected?.home,
-      awayExp: expected?.away,
-      matchExp: expected?.match,
-    })}
-    ${ladderTableHtml(
-      homeName,
-      awayName,
-      ladders?.home,
-      ladders?.away,
-      ladders?.match
-    )}
-  `;
 }
 
 /** Map<line, over> from a ladder side ([{ line, over }]). */

@@ -70,15 +70,15 @@ Secrets (Wrangler): `SYNC_SECRET`, opcional `API_FOOTBALL_KEY`.
 | GET | `/api/v1/matches/:id/prediction` |
 | POST | `/api/v1/sync/manual` (`x-sync-secret`) |
 
-## CLI opcional
+## CLI opcional (legacy)
 
 ```bash
-cd backend
+cd legacy/backend
 # API_BASE_URL=https://houdini-bet.pages.dev
 npm install && npm run cli
 ```
 
-Sin `API_BASE_URL` usa MySQL local (legacy).
+Sin `API_BASE_URL` usa MySQL local (legacy, archivado en `legacy/`): el runtime de producción es Cloudflare (`cloudflare/`).
 
 ## Autor
 
