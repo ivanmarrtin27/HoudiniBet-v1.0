@@ -826,6 +826,12 @@ function livePanelHtml(live, homeName, awayName) {
       ? `${live.homeGoals}-${live.awayGoals}`
       : null;
   const minute = live.minute != null ? `${live.minute}'` : 'LIVE';
+  const reds = live.redCards || {};
+  const redChip =
+    Number(reds.home) > 0 || Number(reds.away) > 0
+      ? `<span class="mp-live__red" title="Roja(s) en vivo: la proyección ya las ajusta">${11 -
+        Math.min(Number(reds.home) || 0, 4)}v${11 - Math.min(Number(reds.away) || 0, 4)}</span>`
+      : '';
   const delta = (now, before) => {
     if (before == null) return '';
     const diff = Math.round((Number(now) - Number(before)) * 100);
@@ -844,6 +850,7 @@ function livePanelHtml(live, homeName, awayName) {
           minute
         )}</span>
         ${score ? `<span class="mp-live__score">${escapeHtml(score)}</span>` : ''}
+        ${redChip}
         <span class="mp-live__left">Quedan ~${Number(live.remaining || 0)}′</span>
       </div>
       <div class="mp-live__bar" role="img" aria-label="Probabilidades en vivo: local ${h}%, empate ${d}%, visitante ${a}%">

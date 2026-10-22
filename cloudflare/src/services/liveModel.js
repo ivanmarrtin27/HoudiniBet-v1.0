@@ -13,6 +13,9 @@
  * Assumptions (first order, documented on purpose):
  *  - Goals are distributed uniformly over the 90 minutes of regulation.
  *  - The pre-match strength does not change because of the current score.
+ *  - A red card shifts the strength of both teams for the time that is still
+ *    to be played (see RED_SIM_FACTOR / RED_OPP_FACTOR); score and minutes
+ *    already played keep the goals that already happened.
  */
 
 import {
@@ -36,6 +39,15 @@ const DIXON_COLES_RHO = -0.08;
 const SECURED_AT = 0.995;
 const ALIVE_AT = 0.1;
 const DEAD_AT = 0.01;
+/**
+ * First-order red-card effect on the remaining expected goals, documented on
+ * purpose: the team that lost a player scores ~25% less and the team with
+ * the extra man scores ~15% more for the minutes left. The factors apply
+ * only to the part of the match still to be played; a red in minute 85
+ * barely moves the projection, which follows from the math automatically.
+ */
+export const RED_SIM_FACTOR = 0.75;
+export const RED_OPP_FACTOR = 1.15;
 
 function clamp(value, min, max) {
   const n = Number(value);
@@ -81,10 +93,16 @@ export function liveSnapshot(match) {
 
   let goalHome = 0;
   let goalAway = 0;
+  let redsHome = 0;
+  let redsAway = 0;
   let lastEventMinute = 0;
   for (const ev of events) {
     const minute = Number(ev?.minute);
     if (Number.isFinite(minute) && minute > lastEventMinute) lastEventMinute = minute;
+    if (ev?.type === 'red') {
+      if (ev.isHome) redsHome += 1;
+      else redsAway += 1;
+    }
     if (ev?.type !== 'goal') continue;
     if (ev.isHome) goalHome += 1;
     else goalAway += 1;
@@ -108,11 +126,16 @@ export function liveSnapshot(match) {
     homeGoals: clamp(Math.round(homeGoals), 0, 30),
     awayGoals: clamp(Math.round(awayGoals), 0, 30),
     remaining: isLive ? remainingMinutes(minute) : 0,
+    redsHome: clamp(redsHome, 0, 4),
+    redsAway: clamp(redsAway, 0, 4),
   };
 }
 
 /**
  * Distribution of the final score given the current score and the minutes left.
+ * Red cards (players sent off during the match) shift the remaining expected
+ * goals of both teams: the side with a man less attacks less, the side with
+ * an extra man attacks more.
  * @returns {{markets: object, remaining: number, homeGoals: number, awayGoals: number}}
  */
 export function projectLive({
@@ -122,11 +145,21 @@ export function projectLive({
   awayGoals = 0,
   minute = 0,
   remaining = null,
+  redsHome = 0,
+  redsAway = 0,
 }) {
   const rem = remaining == null ? remainingMinutes(minute) : clamp(remaining, 0, 120);
   const frac = rem / TOTAL_MATCH_MINUTES;
-  const homeRem = Math.max(0, Number(homeXg) * frac);
-  const awayRem = Math.max(0, Number(awayXg) * frac);
+  const redH = clamp(redsHome, 0, 4);
+  const redA = clamp(redsAway, 0, 4);
+  const homeRem = Math.max(
+    0,
+    Number(homeXg) * frac * RED_SIM_FACTOR ** redH * RED_OPP_FACTOR ** redA
+  );
+  const awayRem = Math.max(
+    0,
+    Number(awayXg) * frac * RED_SIM_FACTOR ** redA * RED_OPP_FACTOR ** redH
+  );
 
   const maxGoals = clamp(
     Math.ceil(Math.max(homeRem, awayRem)) + 2,
@@ -360,6 +393,8 @@ export function buildLiveBlock(match, prediction) {
     awayGoals: snap.awayGoals,
     minute: snap.minute,
     remaining: snap.remaining,
+    redsHome: snap.redsHome,
+    redsAway: snap.redsAway,
   });
   const markets = projection.markets;
 
@@ -368,6 +403,7 @@ export function buildLiveBlock(match, prediction) {
     remaining: snap.remaining,
     homeGoals: snap.homeGoals,
     awayGoals: snap.awayGoals,
+    redCards: { home: snap.redsHome, away: snap.redsAway },
     homeWin: round4(markets.homeWin),
     draw: round4(markets.draw),
     awayWin: round4(markets.awayWin),

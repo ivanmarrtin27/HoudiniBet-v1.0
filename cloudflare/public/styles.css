@@ -4974,6 +4974,16 @@ body.browse-layout {
   font-weight: 700;
   letter-spacing: 0.04em;
 }
+.mp-live__red {
+  padding: 0.1rem 0.4rem;
+  border: 1px solid var(--signal);
+  border-radius: 999px;
+  color: var(--signal);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
 .mp-live__bar {
   display: flex;
   gap: 2px;

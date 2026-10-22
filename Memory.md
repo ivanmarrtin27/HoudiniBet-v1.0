@@ -26,6 +26,7 @@
 - F3 saneado: partidos 'live' con kickoff de hace >4h se cierran y sus tips se anulan (void) porque ningun feed ya los cubre y liquidarlos escribiria un marcador inventado.
 - F4 PWA: `public/sw.js` (shell con stale-while-revalidate, API con network-first + copia offline, admin/sync sin cachear, fallback SPA offline); aviso de "sin conexion" y refresco al volver la red. Version de assets `hb12` sincronizada con el precache.
 - F5 contexto: panel de partido con grid 5x5 de marcadores exactos (Poisson+Dixon-Coles), ultimos enfrentamientos (H2H por nombre entre ligas, excluye el propio partido y sin lookahead) y mini clasificacion desde partidos jugados (copas/selecciones >24 equipos sin pseudotabla). Sigue en root del bundle: `scoreGrid`, `topScores`, `h2h`, `leagueTable`.
+- F6 rojas en vivo: `liveSnapshot` cuenta rojas por lado de los incidentes (tipo `red` ya venia de AF/FotMob); `projectLive` escala los xg restantes con RED_SIM_FACTOR 0.75 (equipo con uno menos) y RED_OPP_FACTOR 1.15 (con ventaja), multiples rojas se componen; `buildLiveBlock` expone `redCards` y la UI muestra el marcador de hombres (10v11). Smoke en prod: roja local al 45 baja la prob local 27.9->19.5% y sube la visitante 33.8->42.7%, fila restaurada.
 
 ## Hecho
 - URL: https://houdini-bet.pages.dev (+ workers.dev origen)
@@ -57,6 +58,7 @@
 - Tests cron en vivo: `node cloudflare/scripts/test-live-cron.mjs` (24)
 - Tests PWA: `node cloudflare/scripts/test-pwa.mjs` (21)
 - Tests contexto F5: `node cloudflare/scripts/test-analysis-context.mjs` (23)
+- Tests rojas en vivo F6: `node cloudflare/scripts/test-live-red-cards.mjs` (16)
 - Tests guard swipe: `node cloudflare/scripts/test-swipe-guard.mjs` (19 checks)
 - Tests UI móvil: `node cloudflare/scripts/test-mobile-ui.mjs` (17 checks)
 - Tests cuota/proveedor F1: `node cloudflare/scripts/test-af-free-budget.mjs` (10) + `node cloudflare/scripts/test-api-football-odds.mjs` (5)
