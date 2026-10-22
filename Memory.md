@@ -39,6 +39,7 @@
 - Pagos Premium
 
 ## Notas
+- Repo bajo control de versiones: 3 commits por área (engine / ui / tooling) + `npm test` (13 suites) + CI en GitHub Actions (node 22) que corre la suite y el check de sintaxis
 - Deploy Worker: `cd cloudflare && npx wrangler deploy`
 - Deploy Pages: `cd cloudflare && npx wrangler pages deploy pages --project-name houdini-bet --branch main`
 - Admin: `?admin=1`; `x-sync-secret`
