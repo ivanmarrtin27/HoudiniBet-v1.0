@@ -1,21 +1,55 @@
 # Memory — Houdini Bet
 
 ## Decisiones
-- Producción Cloudflare Workers + D1 + Cron; D1 aislado del QR; ventana **14 días**
-- Sync: FD (top5 + UNL + UCL + UEL) + FotMob Friendlies + **Segunda** (LaLiga2 id 140 → api 141, namespace 850M)
-- Allowlist: domésticas + Segunda + UNL + Champions + Europa + Friendlies
-- UI: control-deck (ventana+fecha compacta | ámbito+En vivo | ligas snap); Cuotas bandas **sin @**
-- Mejores load `limit=30` + Ver más; GET listados solo missing preds ≤5; poll 60s = refresh-live + patch
-- Auto-sync si stale >12h; settle/backfill en sync
+- CF Worker + D1; FD + FotMob + AF enrich; tips book-first
+- UI browse Oddster-like: **Partidos día a día** (←→ / Ayer Hoy Mañana / swipe)
+- Header: Partidos · Top 3 · Stats · Ligas; **sin dock**
+- Brand `#0A0A0A` + `#DC2626`
+- **ratings_live=0**: prod tune 2026-10-21 holdout Brier 1X2 = shrinkage (0.657); no enable
+- Enrich: probe `/status`; surface 401/403 (key inválida hoy)
+- FotMob sin key: corners, amarillas, tiros totales y **SOT** (60d incremental)
+- Extras book-first secundaria: corners/cards/SOT; mínimo 4 partidos/equipo
+- **En vivo**: proyección Poisson+Dixon–Coles pre-partido escalada por minutos restantes (95 = 90+5); estado del tip `secured/alive/fading/dead/unknown` (≥0.995 / ≥0.10 / >0.01 / ≤0.01)
+- En vivo: `predictions.home_xg/away_xg` (mig 0022) para reutilizar el xG; fallback `inferLambdas()` si la fila es vieja
+- En vivo: partidos domésticos resueltos por nombre contra el feed FotMob (índice por token) → `matches.fotmob_match_id` (mig 0023)
+- UI en vivo: tira de 1X2 + chip de estado en la fila y en la card Top3; panel `.mp-live` con barra y delta vs pre-partido
+- Mercados (tiros/córners/tarjetas): pestañas con la **misma estructura que "Goles"** → tarjeta Expected + 3 `market-block` (partido/local/visitante) con filas Más/Menos; se derivan de `bundle.ladders.*` (no de `predictions.*`)
+- Mercados de conteo: fallback degradado con shrinkage a media de liga solo para `expected`/`ladders` de presentación; los tips guardados mantienen umbral estricto de 4 muestras. Bundle marca `degraded` y `samples` por ladder.
+- UI mercados de conteo: barras de probabilidad + promedio reciente local/visitante y media liga por equipo; badge de estimación degradada indica muestras.
+- Swipe móvil fase A: gesto de fecha solo con dirección horizontal clara (≥max 70px/18%, 2:1, ≤550ms), excluye controles/scrollers; gesto iniciado en lista no navega también vistas.
+- UI móvil fase B: header compacto 2 filas, targets principales ≥44px, safe areas/focus visible, scroll horizontal con inercia y overscroll de paneles contenido.
+- Tips fase C: 1X2 local/visitante usa ventana 44–85%; selección aplica cuota diaria 40% por etiqueta y rota empates (≤2pp) a familias menos usadas, secundarios de familia distinta; Top 3 limita repetición exacta a 1 si hay alternativas. Sync recomputa duplicados de menor confianza.
+- Fase cuotas F1: fuente autorizada elegida = API-Football Free (100 req/día; código existente). Enriquecimiento limitado según `/status`, 6.2s entre llamadas y reserva diaria; key vigente requerida. FotMob `matchOdds` descartado para polling porque `robots.txt` bloquea `/api/*`; response observada solo trae 1X2.
+- F1 budget: 15 odds + 5 stats por enrich como fallback; plan dinámico por cuota restante, 2× daily cron; intentos parciales cacheados 12h, placeholders sin cuota excluidos de cobertura. Prod aún sin precio: `API_FOOTBALL_KEY` responde 403.
+- F2 rentabilidad: `tip_results/combo_results.odds_source` (mig 0024) marca 'book' vs 'model'; el ROI (`src/services/roi.js`) solo cuenta cuotas reales (1 ud por apuesta, voids devuelven stake) y Tips/Stats muestran yield, aciertos y nº apostadas; con precio del modelo se rotula "sin cuota de casa".
 
 ## Hecho
-- Tips Poisson; Mejores; Partidos; Aciertos; Cuotas; PWA; escudos; tip_odds
-- URL: https://houdini-bet.ivanmarrtin2703.workers.dev
+- URL: https://houdini-bet.pages.dev (+ workers.dev origen)
+- Cierre hoy+ayer + liquidación; 20/10: 9 FT score + 7/9 tips
+- mig 0017–0021; SOT separado de tiros totales
+- SOT codes: `SOT_OVER/UNDER_75`, `_85`, `_95`; settle desde stats SOT
+- Prod 2026-10-22: 522/520/522 filas corners/yellows/SOT
+- admin backtest `tune:true`
+- Retune Kalman defaults Q=0.004 R=1.1 MIN_N_OBS=8
+- 2026-10-22: feature en vivo completa — mig 0022/0023 aplicadas, xG backfilled (570/570), Worker desplegado, `/matches/today` + `/matches/:id/live` con bloque `live`
+- Polling adaptativo: 50 s con partidos en vivo, 120 s sin ellos (cooldown servidor 45 s)
 
 ## Pendiente
-- Key AF: `wrangler secret put API_FOOTBALL_KEY`
-- Filtros estadísticos avanzados; share / favoritos
+- **API_FOOTBALL_KEY válida** (`wrangler secret put`) — sin cuotas (0% coverage)
+- Pagos Premium
 
 ## Notas
-- Deploy: `cd cloudflare && npx wrangler deploy`
-- Sync: POST `/api/v1/sync/manual` + `x-sync-secret`
+- Deploy Worker: `cd cloudflare && npx wrangler deploy`
+- Deploy Pages: `cd cloudflare && npx wrangler pages deploy pages --project-name houdini-bet --branch main`
+- Admin: `?admin=1`; `x-sync-secret`
+- Tests motor en vivo: `node cloudflare/scripts/test-live-model.mjs` (41 checks)
+- Tests HTML en vivo: `node cloudflare/scripts/test-live-ui.mjs` (16 checks)
+- Tests pestañas de mercados: `node cloudflare/scripts/test-market-panels.mjs` (32 checks: promedios, badge, fallbacks y ladders)
+- Tests modelos degradados de conteo: `node cloudflare/scripts/test-display-models.mjs` (41 checks; incluye no contaminación de tips y empaquetado del bundle)
+- Tests selección de tips: `node cloudflare/scripts/test-pick-bets.mjs` (10 checks); `node cloudflare/scripts/test-daily-tip-context.mjs` (7); `node cloudflare/scripts/test-daily-tip-diversity.mjs` (6); `node cloudflare/scripts/test-top3-diversity.mjs` (6)
+- Tests presupuesto/odds AF: `node cloudflare/scripts/test-af-free-budget.mjs` (10); `node cloudflare/scripts/test-api-football-odds.mjs` (5)
+- Tests rentabilidad: `node cloudflare/scripts/test-roi.mjs` (19)
+- Tests guard swipe: `node cloudflare/scripts/test-swipe-guard.mjs` (19 checks)
+- Tests UI móvil: `node cloudflare/scripts/test-mobile-ui.mjs` (17 checks)
+- Tests cuota/proveedor F1: `node cloudflare/scripts/test-af-free-budget.mjs` (10) + `node cloudflare/scripts/test-api-football-odds.mjs` (5)
+- Backfill xG: `node cloudflare/scripts/backfill-xg.mjs` (idempotente)

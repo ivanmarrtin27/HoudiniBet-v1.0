@@ -7,7 +7,8 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "db:local": "wrangler d1 migrations apply houdini-bet-db --local",
-    "db:remote": "wrangler d1 migrations apply houdini-bet-db --remote"
+    "db:remote": "wrangler d1 migrations apply houdini-bet-db --remote",
+    "test": "node scripts/test-live-model.mjs && node scripts/test-live-ui.mjs && node scripts/test-market-panels.mjs && node scripts/test-display-models.mjs && node scripts/test-pick-bets.mjs && node scripts/test-daily-tip-context.mjs && node scripts/test-daily-tip-diversity.mjs && node scripts/test-top3-diversity.mjs && node scripts/test-swipe-guard.mjs && node scripts/test-mobile-ui.mjs && node scripts/test-af-free-budget.mjs && node scripts/test-api-football-odds.mjs && node scripts/test-roi.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.40.0"
