@@ -27,7 +27,7 @@
     <link rel="icon" href="/icon-192.png?v=hb1" type="image/png" sizes="192x192" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=hb1" />
     <link rel="preload" href="/brand/houdini-bet-logo.png?v=bm15" as="image" type="image/png" />
-    <link rel="stylesheet" href="/styles.css?v=hb9" />
+    <link rel="stylesheet" href="/styles.css?v=hb11" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -350,11 +350,15 @@
     <aside id="panel" class="panel" aria-label="Análisis del partido" aria-hidden="true">
       <div class="panel-header">
         <p class="panel-header__title">Análisis</p>
-        <button id="close-panel" type="button" class="ghost">Cerrar</button>
+        <button id="close-panel" type="button" class="panel-header__close" aria-label="Cerrar análisis">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M7 7l10 10M17 7 7 17"></path>
+          </svg>
+        </button>
       </div>
       <div id="panel-body"></div>
     </aside>
 
-    <script src="/app.js?v=hb9"></script>
+    <script src="/app.js?v=hb11"></script>
   </body>
 </html>
