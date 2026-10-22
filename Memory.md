@@ -23,6 +23,8 @@
 - F1 budget: 15 odds + 5 stats por enrich como fallback; plan dinámico por cuota restante, 2× daily cron; intentos parciales cacheados 12h, placeholders sin cuota excluidos de cobertura. Prod aún sin precio: `API_FOOTBALL_KEY` responde 403.
 - F2 rentabilidad: `tip_results/combo_results.odds_source` (mig 0024) marca 'book' vs 'model'; el ROI (`src/services/roi.js`) solo cuenta cuotas reales (1 ud por apuesta, voids devuelven stake) y Tips/Stats muestran yield, aciertos y nº apostadas; con precio del modelo se rotula "sin cuota de casa".
 - F3 cron en vivo: `*/10 15-23 * * *` (UTC) llama a `runLiveCron`, que reutiliza el refresco en vivo (marcador, incidentes, liquidacion de tips) y solo llama a los feeds si hay partido en vivo, tip pendiente o kickoff en ±3 h; `last_live_cron_at` y `liveWork` visibles en `/api/v1/status`.
+- F3 saneado: partidos 'live' con kickoff de hace >4h se cierran y sus tips se anulan (void) porque ningun feed ya los cubre y liquidarlos escribiria un marcador inventado.
+- F4 PWA: `public/sw.js` (shell con stale-while-revalidate, API con network-first + copia offline, admin/sync sin cachear, fallback SPA offline); aviso de "sin conexion" y refresco al volver la red. Version de assets `hb12` sincronizada con el precache.
 
 ## Hecho
 - URL: https://houdini-bet.pages.dev (+ workers.dev origen)
@@ -51,7 +53,8 @@
 - Tests selección de tips: `node cloudflare/scripts/test-pick-bets.mjs` (10 checks); `node cloudflare/scripts/test-daily-tip-context.mjs` (7); `node cloudflare/scripts/test-daily-tip-diversity.mjs` (6); `node cloudflare/scripts/test-top3-diversity.mjs` (6)
 - Tests presupuesto/odds AF: `node cloudflare/scripts/test-af-free-budget.mjs` (10); `node cloudflare/scripts/test-api-football-odds.mjs` (5)
 - Tests rentabilidad: `node cloudflare/scripts/test-roi.mjs` (19)
-- Tests cron en vivo: `node cloudflare/scripts/test-live-cron.mjs` (17)
+- Tests cron en vivo: `node cloudflare/scripts/test-live-cron.mjs` (24)
+- Tests PWA: `node cloudflare/scripts/test-pwa.mjs` (21)
 - Tests guard swipe: `node cloudflare/scripts/test-swipe-guard.mjs` (19 checks)
 - Tests UI móvil: `node cloudflare/scripts/test-mobile-ui.mjs` (17 checks)
 - Tests cuota/proveedor F1: `node cloudflare/scripts/test-af-free-budget.mjs` (10) + `node cloudflare/scripts/test-api-football-odds.mjs` (5)

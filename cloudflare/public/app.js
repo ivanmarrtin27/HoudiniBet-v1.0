@@ -4256,6 +4256,36 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') refreshLiveAndReload();
 });
 
+/** Offline support: service worker for the shell + cached data fallback. */
+function registerServiceWorker() {
+  if (!('serviceWorker' in navigator)) return;
+  const secure = location.protocol === 'https:' || location.hostname === 'localhost';
+  if (!secure) return;
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(() => {});
+  });
+}
+
+function updateConnectionBanner() {
+  if (navigator.onLine) {
+    const el = document.getElementById('global-banner');
+    if (el && el.classList.contains('banner-info') && /conexión/i.test(el.textContent || '')) {
+      showBanner('');
+    }
+    return;
+  }
+  showBanner('Sin conexión: se muestran los últimos datos guardados.', 'info');
+}
+
+window.addEventListener('offline', updateConnectionBanner);
+window.addEventListener('online', () => {
+  updateConnectionBanner();
+  refreshLiveAndReload();
+});
+
+registerServiceWorker();
+updateConnectionBanner();
+
 restoreSearchIfAllowed();
 
 const dateInputInit = document.getElementById('match-date');

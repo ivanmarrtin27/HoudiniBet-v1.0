@@ -32,8 +32,9 @@ function hasRule(selector, declaration) {
 
 check('viewport supports notches and edge-to-edge display',
   HTML.includes('viewport-fit=cover') && CSS.includes('color-scheme: dark'));
+const appVersion = HTML.match(/\/app\.js\?v=([\w.-]+)/)?.[1];
 check('mobile assets bypass stale browser cache',
-  HTML.includes('/styles.css?v=hb11') && HTML.includes('/app.js?v=hb11'));
+  Boolean(appVersion) && HTML.includes(`/styles.css?v=${appVersion}`) && HTML.includes(`/app.js?v=${appVersion}`));
 check('sticky mobile header respects top safe area',
   /\.v2-header\s*\{[^}]*padding-top:\s*env\(safe-area-inset-top/.test(CSS));
 check('mobile header uses a deliberate compact grid',
