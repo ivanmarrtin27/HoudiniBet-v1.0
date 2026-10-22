@@ -1,7 +1,7 @@
 import { createDb } from './db.js';
 import * as store from './db.js';
 import { getPredictionBundle, predictMany } from './services/predictionService.js';
-import { runDailySync, runAfEnrichOnly, runLiveStatusRefresh } from './services/syncService.js';
+import { runDailySync, runAfEnrichOnly, runLiveStatusRefresh, runLiveCron } from './services/syncService.js';
 import { WINDOW_DAYS } from './services/fixtureDownload.js';
 import { resolveTeamLogoUrl } from './services/teamLogos.js';
 import { resolveTipOdds, parseOddsBandParam, pickLegForCombo, BAND_META } from './services/oddsBands.js';
@@ -13,6 +13,8 @@ import { buildLiveBlock } from './services/liveModel.js';
 
 const STALE_MS = 12 * 60 * 60 * 1000;
 const SYNC_LOCK_MS = 5 * 60 * 1000;
+/** Live refresh cron: every 10 minutes during the European match window (UTC). */
+const LIVE_CRON = '*/10 15-23 * * *';
 
 /** Missing preds only on list GETs — cap 5. Full recompute runs in sync/cron. */
 function missingPredictionIds(allIds, existingMap, cap = 5) {
@@ -185,6 +187,14 @@ async function handleApi(request, env, ctx) {
     const oddsCoveragePct =
       upcoming > 0 ? Number(((100 * upcomingWithOdds) / upcoming).toFixed(1)) : null;
     const lastEnrichAt = await store.getMeta(db, 'last_enrich_at');
+    const lastLiveRefreshAt = await store.getMeta(db, 'last_live_refresh_at');
+    const lastLiveCronAt = await store.getMeta(db, 'last_live_cron_at');
+    let liveWork = null;
+    try {
+      liveWork = await store.getLiveWorkStatus(db);
+    } catch (_) {
+      liveWork = null;
+    }
     let lastEnrichSummary = null;
     try {
       const rawSum = await store.getMeta(db, 'last_enrich_summary');
@@ -228,6 +238,9 @@ async function handleApi(request, env, ctx) {
       windowDays: WINDOW_DAYS,
       lastSyncAt: auto.lastSyncAt,
       lastEnrichAt: lastEnrichAt || null,
+      lastLiveRefreshAt: lastLiveRefreshAt || null,
+      lastLiveCronAt: lastLiveCronAt || null,
+      liveWork,
       lastEnrichSummary,
       calibrationDecided: calibDecided,
       syncing: auto.syncing,
@@ -652,6 +665,12 @@ export default {
     if (cron === '30 6 * * *' || cron === '0 12 * * *') {
       ctx.waitUntil(
         runAfEnrichOnly(env, db).then((r) => console.log('cron af-enrich', JSON.stringify(r)))
+      );
+      return;
+    }
+    if (cron === LIVE_CRON) {
+      ctx.waitUntil(
+        runLiveCron(env, db).then((r) => console.log('cron live', JSON.stringify(r)))
       );
       return;
     }

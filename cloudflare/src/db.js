@@ -1026,6 +1026,30 @@ export async function upsertOdds(db, o) {
   );
 }
 
+/**
+ * Cheap check so the live cron can skip upstream calls when nothing is pending.
+ * Counts live matches, pending tips to settle and matches kicking off soon.
+ */
+export async function getLiveWorkStatus(db) {
+  const row = await db.first(
+    `SELECT
+       (SELECT COUNT(*) FROM matches WHERE status = 'live') AS live,
+       (SELECT COUNT(*) FROM tip_results WHERE outcome = 'pending') AS pending_tips,
+       (SELECT COUNT(*) FROM matches
+         WHERE status IN ('scheduled','live')
+           AND datetime(match_date) BETWEEN datetime('now', '-3 hours') AND datetime('now', '+3 hours')) AS kicking`
+  );
+  const live = Number(row?.live || 0);
+  const pendingTips = Number(row?.pending_tips || 0);
+  const kicking = Number(row?.kicking || 0);
+  return {
+    live,
+    pendingTips,
+    kicking,
+    needsWork: live > 0 || pendingTips > 0 || kicking > 0,
+  };
+}
+
 export async function getOddsForMatch(db, matchId) {
   return db.first(
     `SELECT * FROM odds

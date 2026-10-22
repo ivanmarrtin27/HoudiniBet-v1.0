@@ -1801,3 +1801,31 @@ export async function runLiveStatusRefresh(env, db, { force = false } = {}) {
     lastLiveRefreshAt: now,
   };
 }
+
+/**
+ * Cron entry point for live refresh (every 10 min during match hours).
+ * Skips the upstream calls when no match is live, no tip is pending and no
+ * fixture is about to kick off.
+ */
+export async function runLiveCron(env, db) {
+  let work = null;
+  try {
+    work = await store.getLiveWorkStatus(db);
+  } catch (err) {
+    return { ok: false, skipped: false, error: err.message || String(err) };
+  }
+  const now = new Date().toISOString();
+  if (!work.needsWork) {
+    await store.setMeta(db, 'last_live_cron_at', now);
+    return {
+      ok: true,
+      skipped: true,
+      reason: 'sin partidos en vivo, tips pendientes ni_fixture_cerca',
+      ...work,
+      lastLiveCronAt: now,
+    };
+  }
+  const result = await runLiveStatusRefresh(env, db);
+  await store.setMeta(db, 'last_live_cron_at', now);
+  return { ok: true, skipped: false, ...work, ...result, lastLiveCronAt: now };
+}
