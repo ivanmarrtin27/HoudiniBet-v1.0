@@ -1552,6 +1552,14 @@ async function fetchEventsForMatchRow(env, m, hasAfKey, fotmobIdByMatchId = null
  * The one-day lookback closes matches that crossed midnight without an active client.
  */
 export async function runLiveStatusRefresh(env, db, { force = false } = {}) {
+  // Rows stuck as "live" long after kickoff pollute the live state and keep
+  // their tips pending forever. Close them before the cooldown check.
+  let staleLive = { closed: 0, voided: 0 };
+  try {
+    staleLive = await store.closeStaleLiveMatches(db, 4);
+  } catch (err) {
+    staleLive = { closed: 0, voided: 0, error: err.message || String(err) };
+  }
   const lastAt = await store.getMeta(db, 'last_live_refresh_at');
   const lastMs = lastAt ? Date.parse(lastAt) : NaN;
   if (!force && lastAt && !Number.isNaN(lastMs) && Date.now() - lastMs < LIVE_REFRESH_COOLDOWN_MS) {
@@ -1563,6 +1571,7 @@ export async function runLiveStatusRefresh(env, db, { force = false } = {}) {
       fdUpdated: 0,
       fotmobUpdated: 0,
       afUpdated: 0,
+      staleLive,
     };
   }
 
@@ -1799,6 +1808,7 @@ export async function runLiveStatusRefresh(env, db, { force = false } = {}) {
     ratingsMaint,
     errors,
     lastLiveRefreshAt: now,
+    staleLive,
   };
 }
 
@@ -1828,4 +1838,22 @@ export async function runLiveCron(env, db) {
   const result = await runLiveStatusRefresh(env, db);
   await store.setMeta(db, 'last_live_cron_at', now);
   return { ok: true, skipped: false, ...work, ...result, lastLiveCronAt: now };
+}
+
+/**
+ * Same as runLiveCron but never throws: the attempt is always recorded so a
+ * stuck cron is visible in /api/v1/status.
+ */
+export async function runLiveCronSafe(env, db) {
+  try {
+    return await runLiveCron(env, db);
+  } catch (err) {
+    const now = new Date().toISOString();
+    try {
+      await store.setMeta(db, 'last_live_cron_at', now);
+    } catch (_) {
+      /* meta optional */
+    }
+    return { ok: false, skipped: false, error: err.message || String(err), lastLiveCronAt: now };
+  }
 }

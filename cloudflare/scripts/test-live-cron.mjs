@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { getLiveWorkStatus } from '../src/db.js';
+import { getLiveWorkStatus, closeStaleLiveMatches } from '../src/db.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const INDEX = readFileSync(resolve(HERE, '../src/index.js'), 'utf8');
@@ -28,7 +28,10 @@ check('live cron is registered in wrangler', WRANGLER.includes('"*/10 15-23 * * 
 check('live cron keeps the worker within the cron trigger limit',
   (WRANGLER.match(/"[0-9*\/ ]+ \* \* \*"/g) || []).length <= 5);
 check('scheduled handler routes the live cron to the live refresh',
-  INDEX.includes("if (cron === LIVE_CRON)") && INDEX.includes('runLiveCron(env, db)'));
+  INDEX.includes("if (cron === LIVE_CRON)") && INDEX.includes('runLiveCronSafe(env, db)'));
+check('live cron never leaves an unhandled rejection',
+  SYNC.includes('export async function runLiveCronSafe') &&
+    SYNC.includes('catch (err) {'));
 check('live cron does not fall through to the daily sync',
   INDEX.indexOf("if (cron === LIVE_CRON)") <
     INDEX.indexOf('runDailySync(env, db)', INDEX.indexOf('async scheduled(')));
@@ -67,6 +70,30 @@ check('status endpoint exposes the live cron timestamps',
   INDEX.includes('lastLiveCronAt: lastLiveCronAt || null') &&
     INDEX.includes('lastLiveRefreshAt: lastLiveRefreshAt || null'));
 check('status endpoint exposes the live work counters', INDEX.includes('liveWork,'));
+
+// Stale "live" rows: closed and their unverifiable tips voided.
+check('stale live rows are closed by the refresh',
+  SYNC.includes('closeStaleLiveMatches(db, 4)'));
+check('stale live rows void their pending tips instead of settling them',
+  DB.includes("SET outcome = 'void' WHERE match_id = ? AND outcome = 'pending'") &&
+    DB.includes("SET status = 'finished', elapsed_minute = NULL"));
+check('stale sweep only targets matches kicking off long ago',
+  DB.includes("status = 'live' AND datetime(match_date) < datetime('now', ?)"));
+
+let sweepSql = '';
+let voided = 0;
+const closed = await closeStaleLiveMatches({
+  all: async (sql) => {
+    sweepSql = sql;
+    return [{ id: 6326 }];
+  },
+  run: async () => ({ meta: { changes: 1 } }),
+  batch: async () => [],
+});
+check('stale sweep closes the reported rows', closed.closed === 1, JSON.stringify(closed));
+check('stale sweep voids the pending tips', closed.voided === 1, JSON.stringify(closed));
+check('stale sweep only looks at live matches', sweepSql.includes("status = 'live'"));
+void voided;
 
 console.log(failed ? `\n${failed} checks failed` : `\n${passed}/${passed} checks passed`);
 process.exit(failed ? 1 : 0);

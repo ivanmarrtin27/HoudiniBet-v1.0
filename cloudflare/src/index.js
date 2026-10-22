@@ -1,7 +1,13 @@
 import { createDb } from './db.js';
 import * as store from './db.js';
 import { getPredictionBundle, predictMany } from './services/predictionService.js';
-import { runDailySync, runAfEnrichOnly, runLiveStatusRefresh, runLiveCron } from './services/syncService.js';
+import {
+  runDailySync,
+  runAfEnrichOnly,
+  runLiveStatusRefresh,
+  runLiveCron,
+  runLiveCronSafe,
+} from './services/syncService.js';
 import { WINDOW_DAYS } from './services/fixtureDownload.js';
 import { resolveTeamLogoUrl } from './services/teamLogos.js';
 import { resolveTipOdds, parseOddsBandParam, pickLegForCombo, BAND_META } from './services/oddsBands.js';
@@ -670,7 +676,7 @@ export default {
     }
     if (cron === LIVE_CRON) {
       ctx.waitUntil(
-        runLiveCron(env, db).then((r) => console.log('cron live', JSON.stringify(r)))
+        runLiveCronSafe(env, db).then((r) => console.log('cron live', JSON.stringify(r)))
       );
       return;
     }

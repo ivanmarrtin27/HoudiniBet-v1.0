@@ -1050,6 +1050,39 @@ export async function getLiveWorkStatus(db) {
   };
 }
 
+/**
+ * Close live rows whose kickoff is long past and void their unverifiable tips.
+ * Those matches are no longer covered by any feed, so their score cannot be
+ * confirmed: settling them would write a made-up result into the ledger.
+ */
+export async function closeStaleLiveMatches(db, olderThanHours = 4) {
+  const hours = Math.max(1, Number(olderThanHours) || 4);
+  const rows = await db.all(
+    `SELECT id FROM matches
+     WHERE status = 'live' AND datetime(match_date) < datetime('now', ?)`,
+    `-${hours} hours`
+  );
+  if (!rows.length) return { closed: 0, voided: 0 };
+  const ids = rows.map((r) => Number(r.id)).filter((id) => id > 0);
+  let voided = 0;
+  for (const id of ids) {
+    const res = await db.run(
+      `UPDATE tip_results SET outcome = 'void' WHERE match_id = ? AND outcome = 'pending'`,
+      id
+    );
+    voided += Number(res?.meta?.changes || 0);
+  }
+  await db.batch(
+    ids.map((id) => ({
+      sql: `UPDATE matches
+            SET status = 'finished', elapsed_minute = NULL
+            WHERE id = ? AND status = 'live'`,
+      params: [id],
+    }))
+  );
+  return { closed: ids.length, voided };
+}
+
 export async function getOddsForMatch(db, matchId) {
   return db.first(
     `SELECT * FROM odds
