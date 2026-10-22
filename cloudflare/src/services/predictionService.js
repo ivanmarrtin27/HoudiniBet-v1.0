@@ -237,6 +237,28 @@ function isExtraFamily(label) {
   return f === 'shots' || f === 'shots_on_target' || f === 'corners' || f === 'cards';
 }
 
+/** Compact 5x5 exact-score grid (0-4 goals each side) for the panel. */
+function scoreGridFromMatrix(matrix) {
+  if (!Array.isArray(matrix) || !matrix.length) return null;
+  const size = Math.min(5, matrix.length);
+  return Array.from({ length: size }, (_, h) =>
+    Array.from({ length: size }, (_, a) => Number((matrix[h]?.[a] || 0).toFixed(4)))
+  );
+}
+
+/** Most likely exact scores, sorted by probability. */
+function topScoresFromMatrix(matrix, limit = 6) {
+  if (!Array.isArray(matrix) || !matrix.length) return [];
+  const cells = [];
+  for (let h = 0; h < matrix.length; h += 1) {
+    for (let a = 0; a < (matrix[h]?.length || 0); a += 1) {
+      cells.push({ home: h, away: a, prob: Number(matrix[h][a].toFixed(4)) });
+    }
+  }
+  cells.sort((x, y) => y.prob - x.prob);
+  return cells.slice(0, limit);
+}
+
 function tipProbabilityAllowed(candidate, { valueCandidate = false } = {}) {
   const prob = Number(candidate?.prob);
   if (!Number.isFinite(prob)) return false;
@@ -729,6 +751,35 @@ export async function predictMatch(db, matchId) {
   const matrix = buildScoreMatrix(homeXg, awayXg, 8, -0.08);
   const m = marketsFromMatrix(matrix);
 
+  // Context blocks for the analysis panel: exact scores, head to head and the
+  // mini league table. Best effort: a failure here must not break the tip.
+  let scoreGrid = null;
+  let topScores = null;
+  let h2h = [];
+  let leagueTable = [];
+  try {
+    scoreGrid = scoreGridFromMatrix(matrix);
+    topScores = topScoresFromMatrix(matrix);
+  } catch (_) {
+    /* keep the panel working without the score grid */
+  }
+  try {
+    h2h = await store.getHeadToHead(db, match.homeTeam?.name, match.awayTeam?.name, {
+      limit: 6,
+      excludeId: match.id,
+      beforeDate: match.matchDate,
+    });
+  } catch (_) {
+    h2h = [];
+  }
+  try {
+    const table = await store.getLeagueTable(db, match.leagueId, 20);
+    // Cups and national-team tournaments have no single league table.
+    leagueTable = table.length > 24 ? [] : table;
+  } catch (_) {
+    leagueTable = [];
+  }
+
   const corners = cornersModel(homeStats, awayStats, league);
   const cards = cardsModel(homeStats, awayStats, league);
   const shots = totalShotsModel(homeStats, awayStats, league);
@@ -966,6 +1017,10 @@ export async function predictMatch(db, matchId) {
     },
     dataQuality,
     sampleSize,
+    scoreGrid: scoreGridFromMatrix(matrix),
+    topScores: topScoresFromMatrix(matrix),
+    h2h,
+    leagueTable,
     tipOdds: tipResolved.tipOdds,
     oddsBand: tipResolved.oddsBand,
     oddsSource: tipResolved.oddsSource,

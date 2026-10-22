@@ -1083,6 +1083,117 @@ export async function closeStaleLiveMatches(db, olderThanHours = 4) {
   return { closed: ids.length, voided };
 }
 
+/**
+ * Recent meetings between two teams (by name, case-insensitive).
+ * Names are used instead of team ids so cross-league meetings are found.
+ * `excludeId` drops the current match; `beforeDate` (its kickoff) prevents
+ * lookahead: a head to head must only show meetings already played.
+ */
+export async function getHeadToHead(db, homeName, awayName, opts = {}) {
+  if (!homeName || !awayName) return [];
+  const limit = Math.max(1, Math.min(12, Number(opts.limit) || 6));
+  const conds = [];
+  const where = [
+    '(lower(ht.name) = lower(?1) AND lower(at.name) = lower(?2))',
+    'OR (lower(ht.name) = lower(?3) AND lower(at.name) = lower(?4))',
+    'm.home_goals IS NOT NULL',
+    'm.away_goals IS NOT NULL',
+  ];
+  const params = [homeName, awayName, awayName, homeName];
+  if (opts.excludeId != null) {
+    conds.push('m.id != ?5');
+    params.push(Number(opts.excludeId));
+  }
+  if (opts.beforeDate) {
+    conds.push('datetime(m.match_date) < datetime(?6)');
+    params.push(String(opts.beforeDate));
+  }
+  const rows = await db.all(
+    `SELECT m.id, m.match_date, m.status, m.home_goals, m.away_goals,
+            ht.name AS home_name, at.name AS away_name, l.name AS league_name
+     FROM matches m
+     JOIN teams ht ON ht.id = m.home_team_id
+     JOIN teams at ON at.id = m.away_team_id
+     JOIN leagues l ON l.id = m.league_id
+     WHERE ${(where[0] + '\n      OR ' + where[1] + '\n       AND ' + where[2] + '\n       AND ' + where[3])}${conds.length ? `\n       AND ${conds.join('\n       AND ')}` : ''}
+     ORDER BY m.match_date DESC
+     LIMIT ?${params.length + 1}`,
+    ...params,
+    limit
+  );
+  return rows.map((r) => {
+    const homeGoals = Number(r.home_goals);
+    const awayGoals = Number(r.away_goals);
+    return {
+      id: Number(r.id),
+      date: String(r.match_date || '').slice(0, 10),
+      homeName: r.home_name,
+      awayName: r.away_name,
+      leagueName: r.league_name,
+      homeGoals,
+      awayGoals,
+      homeWon: homeGoals > awayGoals,
+      draw: homeGoals === awayGoals,
+    };
+  });
+}
+
+/** Mini league table computed from finished matches. */
+export async function getLeagueTable(db, leagueId, limit = 20) {
+  const lid = Number(leagueId);
+  if (!Number.isFinite(lid) || lid <= 0) return [];
+  const rows = await db.all(
+    `WITH results AS (
+       SELECT home_team_id AS team_id, home_goals AS gf, away_goals AS ga,
+              CASE WHEN home_goals > away_goals THEN 1 ELSE 0 END AS won,
+              CASE WHEN home_goals = away_goals THEN 1 ELSE 0 END AS drawn
+       FROM matches
+       WHERE league_id = ? AND status = 'finished'
+         AND home_goals IS NOT NULL AND away_goals IS NOT NULL
+       UNION ALL
+       SELECT away_team_id AS team_id, away_goals AS gf, home_goals AS ga,
+              CASE WHEN away_goals > home_goals THEN 1 ELSE 0 END AS won,
+              CASE WHEN away_goals = home_goals THEN 1 ELSE 0 END AS drawn
+       FROM matches
+       WHERE league_id = ? AND status = 'finished'
+         AND home_goals IS NOT NULL AND away_goals IS NOT NULL
+     )
+     SELECT t.id AS team_id, t.name AS team,
+            SUM(r.won) AS won, SUM(r.drawn) AS drawn,
+            COUNT(*) - SUM(r.won) - SUM(r.drawn) AS lost,
+            SUM(r.gf) AS gf, SUM(r.ga) AS ga
+     FROM results r
+     JOIN teams t ON t.id = r.team_id
+     GROUP BY r.team_id
+     ORDER BY (SUM(r.won) * 3 + SUM(r.drawn)) DESC,
+              (SUM(r.gf) - SUM(r.ga)) DESC,
+              SUM(r.gf) DESC,
+              t.name ASC`,
+    lid,
+    lid
+  );
+  return rows.slice(0, Math.max(1, Math.min(40, Number(limit) || 20))).map((r, i) => {
+    const won = Number(r.won || 0);
+    const drawn = Number(r.drawn || 0);
+    const lost = Number(r.lost || 0);
+    const gf = Number(r.gf || 0);
+    const ga = Number(r.ga || 0);
+    return {
+      position: i + 1,
+      teamId: Number(r.team_id),
+      team: r.team,
+      played: won + drawn + lost,
+      won,
+      drawn,
+      lost,
+      goalsFor: gf,
+      goalsAgainst: ga,
+      goalDiff: gf - ga,
+      points: won * 3 + drawn,
+    };
+  });
+}
+
 export async function getOddsForMatch(db, matchId) {
   return db.first(
     `SELECT * FROM odds

@@ -1368,6 +1368,153 @@ h2 {
   font-weight: 500;
 }
 
+/* Exact-score grid, head to head and mini league table */
+.mp-score {
+  margin: 0.9rem 0 0.2rem;
+  padding: 0.7rem 0.75rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--board-2);
+}
+.mp-score__title {
+  margin-bottom: 0.5rem;
+  color: var(--fog-2);
+  font-family: var(--font-display);
+  font-size: 0.8rem;
+  font-weight: 400;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.mp-score__grid {
+  display: grid;
+  gap: 2px;
+}
+.mp-score__row {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 2px;
+}
+.mp-score__cell {
+  display: grid;
+  place-items: center;
+  min-height: 2rem;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent) calc(var(--heat, 0) * 0.55), var(--board));
+  color: var(--chalk);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  line-height: 1;
+}
+.mp-score__cell span {
+  opacity: 0.92;
+}
+.mp-score__top {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.5rem;
+}
+.mp-score__chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.25rem;
+  padding: 0.16rem 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--fog-2);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+}
+.mp-score__chip strong {
+  color: var(--chalk);
+}
+.mp-score__caption,
+.mp-score__axis {
+  margin: 0.4rem 0 0;
+  font-size: 0.68rem;
+}
+.mp-h2h,
+.mp-table {
+  margin-top: 0.9rem;
+}
+.mp-h2h__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.3rem;
+}
+.mp-h2h__row {
+  display: grid;
+  grid-template-columns: 4.6rem minmax(0, 1fr) auto;
+  gap: 0.5rem;
+  align-items: baseline;
+  padding: 0.35rem 0.45rem;
+  border-left: 2px solid var(--line-strong);
+  background: var(--board-2);
+  font-size: 0.78rem;
+}
+.mp-h2h__row--win { border-left-color: var(--ok); }
+.mp-h2h__row--draw { border-left-color: var(--fog); }
+.mp-h2h__row--loss { border-left-color: var(--signal); }
+.mp-h2h__date {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+}
+.mp-h2h__teams {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mp-h2h__league {
+  font-size: 0.68rem;
+}
+.mp-table__wrap {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--board-2);
+}
+.mp-table__grid {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.76rem;
+}
+.mp-table__grid th,
+.mp-table__grid td {
+  padding: 0.32rem 0.45rem;
+  text-align: right;
+  white-space: nowrap;
+}
+.mp-table__grid th {
+  color: var(--fog);
+  font-weight: 600;
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.mp-table__grid td:nth-child(2) {
+  text-align: left;
+  max-width: 11rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mp-table__pos {
+  color: var(--fog-2);
+  font-family: var(--font-mono);
+}
+.mp-table__gd {
+  font-family: var(--font-mono);
+}
+.mp-table__row.is-mine {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.mp-table__row.is-mine .mp-table__team {
+  color: var(--chalk);
+  font-weight: 600;
+}
+
 .perf-recent { margin: 0; }
 .perf-list__head {
   display: flex;

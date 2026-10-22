@@ -25,6 +25,7 @@
 - F3 cron en vivo: `*/10 15-23 * * *` (UTC) llama a `runLiveCron`, que reutiliza el refresco en vivo (marcador, incidentes, liquidacion de tips) y solo llama a los feeds si hay partido en vivo, tip pendiente o kickoff en ±3 h; `last_live_cron_at` y `liveWork` visibles en `/api/v1/status`.
 - F3 saneado: partidos 'live' con kickoff de hace >4h se cierran y sus tips se anulan (void) porque ningun feed ya los cubre y liquidarlos escribiria un marcador inventado.
 - F4 PWA: `public/sw.js` (shell con stale-while-revalidate, API con network-first + copia offline, admin/sync sin cachear, fallback SPA offline); aviso de "sin conexion" y refresco al volver la red. Version de assets `hb12` sincronizada con el precache.
+- F5 contexto: panel de partido con grid 5x5 de marcadores exactos (Poisson+Dixon-Coles), ultimos enfrentamientos (H2H por nombre entre ligas, excluye el propio partido y sin lookahead) y mini clasificacion desde partidos jugados (copas/selecciones >24 equipos sin pseudotabla). Sigue en root del bundle: `scoreGrid`, `topScores`, `h2h`, `leagueTable`.
 
 ## Hecho
 - URL: https://houdini-bet.pages.dev (+ workers.dev origen)
@@ -55,6 +56,7 @@
 - Tests rentabilidad: `node cloudflare/scripts/test-roi.mjs` (19)
 - Tests cron en vivo: `node cloudflare/scripts/test-live-cron.mjs` (24)
 - Tests PWA: `node cloudflare/scripts/test-pwa.mjs` (21)
+- Tests contexto F5: `node cloudflare/scripts/test-analysis-context.mjs` (23)
 - Tests guard swipe: `node cloudflare/scripts/test-swipe-guard.mjs` (19 checks)
 - Tests UI móvil: `node cloudflare/scripts/test-mobile-ui.mjs` (17 checks)
 - Tests cuota/proveedor F1: `node cloudflare/scripts/test-af-free-budget.mjs` (10) + `node cloudflare/scripts/test-api-football-odds.mjs` (5)

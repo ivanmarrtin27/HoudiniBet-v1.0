@@ -1188,6 +1188,104 @@ function extrasPanel({
   `;
 }
 
+/** Exact-score grid (5x5) with the most likely scorelines. */
+function scoreGridHtml(grid, topScores, homeName, awayName) {
+  if (!Array.isArray(grid) || !grid.length) return '';
+  const max = Math.max(...grid.flat().map((v) => Number(v) || 0), 0.01);
+  const top = (topScores || [])[0];
+  const cells = grid
+    .map(
+      (row, h) =>
+        `<div class="mp-score__row">${row
+          .map((v, a) => {
+            const p = Number(v) || 0;
+            const intensity = Math.round((p / max) * 100);
+            return `<div class="mp-score__cell" style="--heat:${intensity}%" title="${h}-${a}: ${(
+              p * 100
+            ).toFixed(1)}%"><span>${(p * 100).toFixed(0)}%</span></div>`;
+          })
+          .join('')}</div>`
+    )
+    .join('');
+  const list = (topScores || [])
+    .slice(0, 4)
+    .map(
+      (s) =>
+        `<span class="mp-score__chip"><strong>${s.home}-${s.away}</strong> ${(s.prob * 100).toFixed(1)}%</span>`
+    )
+    .join('');
+  return `
+    <section class="mp-score">
+      <div class="mp-score__title">Marcadores exactos</div>
+      <div class="mp-score__grid" role="img" aria-label="Probabilidad de cada marcador exacto, del 0 al ${grid.length - 1} goles por equipo">
+        ${cells}
+      </div>
+      <div class="mp-score__top">${list}</div>
+      ${
+        top
+          ? `<p class="mp-score__caption">Más probable: <strong>${top.home}-${top.away}</strong> (${(top.prob * 100).toFixed(1)}%)</p>`
+          : ''
+      }
+      <p class="mp-score__axis muted">Filas: ${escapeHtml(homeName || 'local')} · Columnas: ${escapeHtml(
+        awayName || 'visitante'
+      )}</p>
+    </section>`;
+}
+
+/** Previous meetings between the two teams. */
+function h2hHtml(h2h, homeName) {
+  const rows = h2h || [];
+  if (!rows.length) return '';
+  const list = rows
+    .map((r) => {
+      const homeWon = r.homeWon ? 'win' : r.draw ? 'draw' : 'loss';
+      return `<li class="mp-h2h__row mp-h2h__row--${homeWon}">
+        <span class="mp-h2h__date muted">${escapeHtml(String(r.date || '').slice(0, 10))}</span>
+        <span class="mp-h2h__teams">${escapeHtml(r.homeName || '')} ${Number(r.homeGoals)}-${Number(
+        r.awayGoals
+      )} ${escapeHtml(r.awayName || '')}</span>
+        <span class="mp-h2h__league muted">${escapeHtml(r.leagueName || '')}</span>
+      </li>`;
+    })
+    .join('');
+  return `
+    <section class="mp-h2h">
+      <div class="mp-section-title">Últimos enfrentamientos</div>
+      <ul class="mp-h2h__list">${list}</ul>
+    </section>`;
+}
+
+/** Mini league table with the two teams of the match highlighted. */
+function leagueTableHtml(table, homeName, awayName) {
+  const rows = table || [];
+  if (!rows.length) return '';
+  const body = rows
+    .map((r) => {
+      const mine =
+        (homeName && r.team === homeName) || (awayName && r.team === awayName) ? ' is-mine' : '';
+      const gd = Number(r.goalDiff || 0);
+      const gdTxt = gd > 0 ? `+${gd}` : String(gd);
+      return `<tr class="mp-table__row${mine}">
+        <td class="mp-table__pos">${Number(r.position)}</td>
+        <td class="mp-table__team">${escapeHtml(r.team || '')}</td>
+        <td>${Number(r.played)}</td>
+        <td>${Number(r.points)}</td>
+        <td class="mp-table__gd">${escapeHtml(gdTxt)}</td>
+      </tr>`;
+    })
+    .join('');
+  return `
+    <section class="mp-table">
+      <div class="mp-section-title">Clasificación</div>
+      <div class="mp-table__wrap">
+        <table class="mp-table__grid">
+          <thead><tr><th>#</th><th>Equipo</th><th>PJ</th><th>Pts</th><th>DG</th></tr></thead>
+          <tbody>${body}</tbody>
+        </table>
+      </div>
+    </section>`;
+}
+
 function winProbBar(p) {
   const h = pct(p.home_win_prob);
   const d = pct(p.draw_prob);
@@ -3348,7 +3446,8 @@ async function openPrediction(id) {
           probBar('Más de 2,5', p.away_over25_prob),
           probBar('Menos de 2,5', p.away_under25_prob),
         ].join('')
-      )}`;
+      )}
+      ${scoreGridHtml(bundle.scoreGrid, bundle.topScores, homeName, awayName)}`;
 
     const shotsPanel = extrasPanel({
           label: 'Tiros a puerta esperados',
@@ -3460,6 +3559,8 @@ async function openPrediction(id) {
                 ? `<h3 class="mp-section-title">Probabilidades clave</h3><div class="mp-grid">${keyCards}</div>`
                 : ''
             }
+            ${h2hHtml(bundle.h2h, homeName)}
+            ${leagueTableHtml(bundle.leagueTable, homeName, awayName)}
           </div>
           <div class="mp-panel" data-mp-panel="goles" role="tabpanel" hidden>${goalsPanel}</div>
           <div class="mp-panel" data-mp-panel="tiros" role="tabpanel" hidden>${shotsPanel}</div>
