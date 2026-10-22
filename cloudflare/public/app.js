@@ -1733,6 +1733,105 @@ function setLoading(containerId, rows = 3) {
   el.innerHTML = Array.from({ length: rows }, () => `<div class="skeleton" aria-hidden="true"></div>`).join('');
 }
 
+/* ------------------------------------------------------------------ *
+ * Premium (F8): guest cookie + Stripe checkout. No accounts.
+ * ------------------------------------------------------------------ */
+
+const premiumState = {
+  loaded: false,
+  premium: false,
+  premiumUntil: null,
+  stripeConfigured: false,
+};
+
+async function loadPremiumState() {
+  try {
+    const data = await api(`/api/v1/premium/status`);
+    premiumState.premium = Boolean(data.premium);
+    premiumState.premiumUntil = data.premiumUntil || null;
+    premiumState.stripeConfigured = Boolean(data.stripeConfigured);
+  } catch (_) {
+    premiumState.stripeConfigured = false;
+  }
+  premiumState.loaded = true;
+  return premiumState;
+}
+
+async function startPremiumCheckout() {
+  if (!premiumState.loaded) await loadPremiumState();
+  if (!premiumState.stripeConfigured) {
+    showBanner('El pago premium todavia no esta configurado. Prueba mas tarde.', 'info');
+    return;
+  }
+  try {
+    const data = await api(`/api/v1/premium/session`, { method: 'POST' });
+    if (data.checkoutUrl) {
+      window.location.href = data.checkoutUrl;
+    } else {
+      showBanner('No se pudo abrir el pago. Intenta de nuevo en unos segundos.', 'error');
+    }
+  } catch (err) {
+    showBanner(`No se pudo iniciar el pago premium: ${err.message}`, 'error');
+  }
+}
+
+function premiumUpsellHtml(source) {
+  return `
+    <div class="premium-upsell" data-premium-source="${escapeHtml(source)}">
+      <span class="premium-upsell__lock" aria-hidden="true">🔒</span>
+      <div class="premium-upsell__text">
+        <strong>Premium</strong>
+        <span>Las combinadas, la rentabilidad y el detalle de tips van con el plan de pago.</span>
+      </div>
+      <button type="button" class="btn premium-upsell__btn" data-premium-activate>${premiumState.stripeConfigured ? 'Activar con Stripe' : 'Premium'}</button>
+    </div>`;
+}
+
+function bindPremiumActivate(root = document) {
+  root.querySelectorAll('[data-premium-activate]').forEach((btn) => {
+    if (btn.dataset.premiumBound) return;
+    btn.dataset.premiumBound = '1';
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      startPremiumCheckout();
+    });
+  });
+}
+
+/** ?premium=ok|cancel after Stripe (success_url) — banner once, then clean URL. */
+async function handlePremiumReturn() {
+  const sp = new URLSearchParams(window.location.search);
+  const ret = sp.get('premium');
+  if (!ret) return;
+  if (ret === 'ok') showBanner('Pago confirmado: premium activado. Sera visible en unos segundos.', 'info');
+  else showBanner('Pago cancelado sin cargos.', 'info');
+  sp.delete('premium');
+  const rest = sp.toString();
+  window.history.replaceState({}, '', `${window.location.pathname}${rest ? `?${rest}` : ''}`);
+}
+
+/** Keep the #premium view tuned to the real state (CTA, price text). */
+function syncPremiumView() {
+  const cta = document.getElementById('premium-cta');
+  const note = document.querySelector('#premium .premium-note');
+  if (!cta) return;
+  bindPremiumActivate(cta.closest('#premium') || document);
+  if (premiumState.premium) {
+    const until = premiumState.premiumUntil ? String(premiumState.premiumUntil).slice(0, 10) : null;
+    cta.disabled = true;
+    cta.textContent = until ? `Activo hasta ${until}` : 'Premium activo';
+    if (note) note.textContent = 'Acceso premium activo, gracias por apoyar el proyecto.';
+  } else if (premiumState.stripeConfigured) {
+    cta.disabled = false;
+    cta.textContent = 'Activar 30 días con Stripe';
+    if (note) note.textContent = 'Pago único · activa 30 días de funciones premium.';
+  } else {
+    cta.disabled = true;
+    cta.textContent = 'Sin pago configurado';
+    if (note) note.textContent = 'El pago via Stripe se configura en el servidor (STRIPE_* secrets).';
+  }
+}
+
 async function api(path, opts = {}) {
   const res = await fetch(`${API}${path}`, opts);
   let data = null;
@@ -1742,7 +1841,10 @@ async function api(path, opts = {}) {
     data = null;
   }
   if (!res.ok) {
-    throw new Error((data && data.error) || res.statusText || 'Error de red');
+    const err = new Error((data && data.error) || res.statusText || 'Error de red');
+    if (data && data.errorCode) err.code = data.errorCode;
+    else err.code = String(res.status);
+    throw err;
   }
   return data || {};
 }
@@ -2631,10 +2733,16 @@ function roiTone(value) {
   return 'roi--flat';
 }
 
-/** Profitability block: only meaningful with real bookmaker prices. */
+/** Profitability block: only meaningful with real bookmaker prices (premium). */
 function perfRoiHtml(perf) {
   const roi = perf?.roi || null;
   const staked = Number(roi?.staked || 0);
+  if (perf?.premiumRequired && !premiumState.premium && !staked) {
+    return `<div class="perf-roi perf-roi--empty perf-roi--premium">
+      <span class="perf-roi__label">Rentabilidad</span>
+      <span class="perf-roi__premium">${premiumUpsellHtml('perf-roi')}</span>
+    </div>`;
+  }
   if (!staked) {
     const modelPriced = Number(roi?.modelPriced || 0);
     return `<div class="perf-roi perf-roi--empty">
@@ -2741,7 +2849,11 @@ function renderPerformance(perf) {
 
   const rows = perf?.recent || [];
   if (!rows.length) {
-    recent.innerHTML = `<div class="perf-empty muted">Sin tips cerrados aún — cuando liquiden partidos, aparecen aquí.</div>`;
+    recent.innerHTML =
+      perf?.premiumRequired && !premiumState.premium
+        ? premiumUpsellHtml('perf-recent')
+        : `<div class="perf-empty muted">Sin tips cerrados aún — cuando liquiden partidos, aparecen aquí.</div>`;
+    if (perf?.premiumRequired && !premiumState.premium) bindPremiumActivate(recent);
     return;
   }
   recent.innerHTML = `
@@ -3261,7 +3373,12 @@ async function loadOddsBandBets() {
   } catch (err) {
     cachedOddsBandBets = [];
     if (el) {
-      el.innerHTML = `<div class="empty-board conf-lo">${escapeHtml(err.message)}</div>`;
+      if (err.code === 'premium_required') {
+        el.innerHTML = premiumUpsellHtml(`banda-${oddsBandFilter}`);
+        bindPremiumActivate(el);
+      } else {
+        el.innerHTML = `<div class="empty-board conf-lo">${escapeHtml(err.message)}</div>`;
+      }
     }
   }
 }
@@ -4342,6 +4459,9 @@ trackEvent('session_start');
   if (splashLabel) splashLabel.textContent = 'Cargando partidos y datos…';
   try {
     await waitForBootAssets();
+    await handlePremiumReturn();
+    await loadPremiumState();
+    syncPremiumView();
     await load();
     if (splashLabel) splashLabel.textContent = 'Listo';
     await waitForFirstPaint();

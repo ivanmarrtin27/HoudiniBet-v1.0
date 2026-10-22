@@ -1385,6 +1385,56 @@ h2 {
   font-weight: 500;
 }
 
+/* Premium upsell (F8) */
+.premium-upsell {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-lg);
+  background: var(--board-2);
+}
+.premium-upsell__lock {
+  font-size: 1rem;
+  line-height: 1;
+}
+.premium-upsell__text {
+  display: grid;
+  gap: 0.1rem;
+  min-width: 0;
+}
+.premium-upsell__text strong {
+  color: var(--chalk);
+  font-size: 0.8rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.premium-upsell__text span {
+  color: var(--fog);
+  font-size: 0.74rem;
+}
+.premium-upsell__btn {
+  margin-left: auto;
+  padding: 0.4rem 0.7rem;
+  border-radius: 999px;
+  border: 1px solid var(--accent);
+  color: var(--chalk);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  font-weight: 600;
+  font-size: 0.74rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.premium-upsell__btn:hover {
+  background: color-mix(in srgb, var(--accent) 32%, transparent);
+}
+.perf-roi__premium .premium-upsell {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
 /* Exact-score grid, head to head and mini league table */
 .mp-score {
   margin: 0.9rem 0 0.2rem;

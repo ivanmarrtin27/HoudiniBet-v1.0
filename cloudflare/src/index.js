@@ -16,6 +16,7 @@ import { loadTipCalibration, fitTipCalibration } from './services/calibration.js
 import { runBacktestSuite } from './services/backtestService.js';
 import { backfillRatings } from './services/ratingsService.js';
 import { buildLiveBlock } from './services/liveModel.js';
+import * as premiumService from './services/premiumService.js';
 
 const STALE_MS = 12 * 60 * 60 * 1000;
 const SYNC_LOCK_MS = 5 * 60 * 1000;
@@ -32,20 +33,39 @@ function missingPredictionIds(allIds, existingMap, cap = 5) {
   return missing;
 }
 
-function json(data, status = 200) {
+function json(data, status = 200, extraHeaders = null) {
+  const headers = {
+    'content-type': 'application/json; charset=utf-8',
+    'access-control-allow-origin': '*',
+    'access-control-allow-headers': 'content-type, x-sync-secret',
+    'access-control-allow-methods': 'GET, POST, OPTIONS',
+  };
+  if (extraHeaders) Object.assign(headers, extraHeaders);
   return new Response(JSON.stringify(data), {
     status,
-    headers: {
-      'content-type': 'application/json; charset=utf-8',
-      'access-control-allow-origin': '*',
-      'access-control-allow-headers': 'content-type, x-sync-secret',
-      'access-control-allow-methods': 'GET, POST, OPTIONS',
-    },
+    headers,
   });
 }
 
-function parseDays(url, fallback = WINDOW_DAYS) {
-  const daysParam = url.searchParams.get('days');
+/** Resolve the premium session once per request (no cookie = free). */
+async function premiumSessionOf(request, db) {
+  const cookieValue = premiumService.sessionCookieFromHeader(request.headers.get('cookie'));
+  if (!cookieValue) return { premium: false, session: null };
+  return premiumService.resolvePremiumSession(db, cookieValue);
+}
+
+function premiumRequiredResponse() {
+  return json(
+    {
+      error: 'Premium requerido: esta vista pertenece al plan de pago.',
+      errorCode: 'premium_required',
+      premium: false,
+    },
+    402
+  );
+}
+
+function parseDays(url, fallback = WINDOW_DAYS) {  const daysParam = url.searchParams.get('days');
   if (daysParam == null) return fallback;
   return Math.max(0, Number(daysParam) || 0);
 }
@@ -304,6 +324,13 @@ async function handleApi(request, env, ctx) {
   if (method === 'GET' && path === '/api/v1/matches/best-bets') {
     const win = parseMatchWindow(url);
     const oddsBand = parseOddsBandParam(url.searchParams.get('oddsBand'));
+    // F8: the odds-band combos are premium (single-leg best bets stay public).
+    if (oddsBand) {
+      const { premium } = await premiumSessionOf(request, db);
+      if (!premium) {
+        return premiumRequiredResponse();
+      }
+    }
     const limitParam = url.searchParams.get('limit');
     const defaultLimit = oddsBand ? 25 : 200;
     const limit = Math.min(400, Math.max(1, Number(limitParam) || defaultLimit));
@@ -427,6 +454,7 @@ async function handleApi(request, env, ctx) {
 
   if (method === 'GET' && path === '/api/v1/tips/performance') {
     const win = parseMatchWindow(url);
+    const { premium } = await premiumSessionOf(request, db);
     const perf = await store.getTipPerformance(db, win);
     let calib = await loadTipCalibration(db);
     if (!calib) {
@@ -437,7 +465,7 @@ async function handleApi(request, env, ctx) {
         calib = null;
       }
     }
-    return json({
+    const payload = {
       hits: perf.hits,
       misses: perf.misses,
       pending: perf.pending,
@@ -477,8 +505,101 @@ async function handleApi(request, env, ctx) {
         leagueName: r.league_name,
         leagueCountry: r.league_country || null,
       })),
+    };
+    // F8: basic hit rates stay public; the money view (ROI) and the deeper
+    // combos history are premium.
+    return json(premium ? payload : premiumService.stripPerfForFree(payload));
+  }
+  if (method === 'GET' && path === '/api/v1/premium/status') {
+    const { premium, session } = await premiumSessionOf(request, db);
+    return json({
+      premium,
+      premiumUntil: premium && session ? session.premium_until : null,
+      stripeConfigured: premiumService.stripeConfigured(env),
     });
   }
+
+  if (method === 'POST' && path === '/api/v1/premium/session') {
+    const cookieValue = premiumService.sessionCookieFromHeader(request.headers.get('cookie'));
+    let { premium, session } = await premiumService.resolvePremiumSession(db, cookieValue);
+    let setCookie = null;
+    if (!session || !cookieValue) {
+      const created = await premiumService.createPremiumSession(db);
+      const cookie = premiumService.sessionCookieHeader(created.cookieValue);
+      setCookie = cookie.toSetCookieString();
+      session = { id: created.id, premium_until: null, active: 1 };
+      premium = false;
+    }
+    let checkoutUrl = null;
+    if (premiumService.stripeConfigured(env)) {
+      const checkout = await premiumService.createStripeCheckout(
+        env,
+        String(session.id),
+        { origin: new URL(request.url).origin }
+      );
+      checkoutUrl = checkout.url || null;
+    }
+    return json(
+      {
+        premium,
+        premiumUntil: premium ? session.premium_until : null,
+        stripeConfigured: premiumService.stripeConfigured(env),
+        checkoutUrl,
+      },
+      200,
+      setCookie ? { 'set-cookie': setCookie } : null
+    );
+  }
+
+  if (method === 'POST' && path === '/api/v1/premium/webhook') {
+    const raw = await request.text();
+    const valid = await premiumService.verifyStripeSignature(
+      raw,
+      request.headers.get('stripe-signature'),
+      env.STRIPE_WEBHOOK_SECRET,
+      new Date()
+    );
+    if (!valid) {
+      return json({ error: 'Firma de webhook invalida' }, 400);
+    }
+    let event = null;
+    try {
+      event = JSON.parse(raw);
+    } catch (_) {
+      return json({ error: 'Payload no es JSON' }, 400);
+    }
+    const applied = await premiumService.applyStripeEvent(db, env, event);
+    return json({ ok: true, ...applied });
+  }
+
+  if (method === 'POST' && path === '/api/v1/admin/premium/grant') {
+    const secret = env.SYNC_SECRET || 'change-me-houdini';
+    const header = request.headers.get('x-sync-secret');
+    if (!header || header !== secret) {
+      return json({ error: 'No autorizado. Header x-sync-secret requerido.' }, 401);
+    }
+    let body = {};
+    try {
+      body = await request.json();
+    } catch (_) {
+      body = {};
+    }
+    const days = Math.max(1, Math.min(365, Number(body.days) || 30));
+    if (body.id) {
+      const until = await premiumService.grantPremium(db, String(body.id), { days });
+      return json({ ok: true, id: String(body.id), premiumUntil: until });
+    }
+    const created = await premiumService.createPremiumSession(db);
+    const until = await premiumService.grantPremium(db, created.id, { days });
+    return json({
+      ok: true,
+      id: created.id,
+      premiumUntil: until,
+      cookieValue: created.cookieValue,
+      note: 'Entregar este cookieValue como hb_prem al beneficiario (promo/reembolso).',
+    });
+  }
+
   if (method === 'POST' && path === '/api/v1/matches/refresh-live') {
     const force = url.searchParams.get('force') === '1';
     const result = await runLiveStatusRefresh(env, db, { force });
