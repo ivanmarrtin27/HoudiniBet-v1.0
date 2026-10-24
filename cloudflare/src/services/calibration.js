@@ -30,57 +30,33 @@ const CACHE_TTL_MS = 10 * 60 * 1000;
 
 export function tipFamily(label) {
   const bet = label != null ? String(label) : '';
-  if (['HOME_WIN', 'DRAW', 'AWAY_WIN'].includes(bet)) return '1X2';
+  if (
+    ['HOME_WIN', 'DRAW', 'AWAY_WIN', 'DC_1X', 'DC_X2', 'DNB_HOME', 'DNB_AWAY'].includes(bet)
+  ) {
+    return '1X2';
+  }
+  if (['BTTS_YES', 'BTTS_NO'].includes(bet)) return 'btts';
   if (
     [
+      'OVER_05',
+      'UNDER_05',
       'OVER_15',
       'UNDER_15',
       'OVER_25',
       'UNDER_25',
       'OVER_35',
       'UNDER_35',
-      'BTTS_YES',
-      'BTTS_NO',
-    ].includes(bet)
+      'OVER_45',
+      'UNDER_45',
+    ].includes(bet) ||
+    /^(HOME|AWAY)_(OVER|UNDER)_/.test(bet)
   ) {
-    return 'goles';
+    return 'ou';
   }
-  if (
-    [
-      'CORNERS_OVER_85',
-      'CORNERS_UNDER_85',
-      'CORNERS_OVER_95',
-      'CORNERS_UNDER_95',
-      'CORNERS_OVER_105',
-      'CORNERS_UNDER_105',
-    ].includes(bet)
-  ) {
-    return 'corners';
-  }
-  if (
-    ['CARDS_OVER_35', 'CARDS_UNDER_35', 'CARDS_OVER_45', 'CARDS_UNDER_45'].includes(bet)
-  ) {
-    return 'cards';
-  }
-  if (
-    ['SHOTS_OVER_225', 'SHOTS_UNDER_225', 'SHOTS_OVER_255', 'SHOTS_UNDER_255'].includes(
-      bet
-    )
-  ) {
-    return 'shots';
-  }
-  if (
-    [
-      'SOT_OVER_75',
-      'SOT_UNDER_75',
-      'SOT_OVER_85',
-      'SOT_UNDER_85',
-      'SOT_OVER_95',
-      'SOT_UNDER_95',
-    ].includes(bet)
-  ) {
-    return 'shots_on_target';
-  }
+  if (bet.startsWith('CORNERS_')) return 'corners';
+  if (bet.startsWith('CARDS_')) return 'cards';
+  if (bet.startsWith('SHOTS_')) return 'shots';
+  if (bet.startsWith('SOT_')) return 'shots_on_target';
   return 'otros';
 }
 

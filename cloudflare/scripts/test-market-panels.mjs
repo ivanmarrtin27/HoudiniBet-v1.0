@@ -141,7 +141,54 @@ const cornersHtml = api.extrasPanel({
 });
 
 check('panel renders the expected card', cornersHtml.includes('ladder-expected'));
-check('degraded panel shows sample-count warning', cornersHtml.includes('Estimación con pocas muestras · 1 local / 2 visitante'));
+check(
+  'very-thin degraded panel shows strong sample warning',
+  cornersHtml.includes('Muestras muy escasas · 1 local / 2 visitante') &&
+    cornersHtml.includes('tip exige ≥4 por lado')
+);
+const limitedHtml = api.extrasPanel({
+  unit: 'Córners',
+  ladders: {
+    ...fixture.ladders.corners,
+    degraded: true,
+    samples: { home: 2, away: 2 },
+  },
+  matchLines: [8.5, 9.5, 10.5],
+  teamLines: [3.5, 4.5],
+});
+check(
+  '2/2 degraded panel uses softer limited-data note',
+  limitedHtml.includes('Datos limitados · 2 local / 2 visitante') &&
+    limitedHtml.includes('tip exige ≥4 por lado')
+);
+const oneSidedHtml = api.extrasPanel({
+  unit: 'Córners',
+  ladders: {
+    ...fixture.ladders.corners,
+    degraded: true,
+    samples: { home: 2, away: 0 },
+  },
+  matchLines: [8.5, 9.5, 10.5],
+  teamLines: [3.5, 4.5],
+});
+check(
+  'one-sided sample note mentions liga fallback',
+  oneSidedHtml.includes('Estimación parcial') && oneSidedHtml.includes('media liga')
+);
+const leagueOnlyHtml = api.extrasPanel({
+  unit: 'Córners',
+  ladders: {
+    ...fixture.ladders.corners,
+    degraded: true,
+    samples: { home: 0, away: 0 },
+  },
+  matchLines: [8.5],
+  teamLines: [3.5],
+});
+check(
+  'zero-sample note mentions media de liga',
+  leagueOnlyHtml.includes('Estimación con media de liga') && leagueOnlyHtml.includes('sin muestras de equipo')
+);
 check('panel shows both team averages and league reference',
   cornersHtml.includes('Promedios recientes · Córners') &&
     cornersHtml.includes('6,2') && cornersHtml.includes('4,1') &&

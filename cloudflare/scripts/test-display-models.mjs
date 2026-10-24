@@ -138,6 +138,24 @@ for (const [name, model, awayDefenseKey] of [
   check(`${name}: missing defense stats use neutral league strength`,
     neutralDefense != null && Number.isFinite(neutralDefense.lambdaMatch));
 
+  const oneSided = model([homeOne], [], league, { degraded: true });
+  check(`${name}: display model works with zero samples on one side`,
+    oneSided != null &&
+      oneSided.degraded === true &&
+      oneSided.samples?.home === 1 &&
+      oneSided.samples?.away === 0 &&
+      Number.isFinite(oneSided.lambdaMatch) &&
+      oneSided.lambdaMatch > 0);
+
+  const leagueOnly = model([], [], league, { degraded: true });
+  check(`${name}: display model falls back to league when both sides empty`,
+    leagueOnly != null &&
+      leagueOnly.degraded === true &&
+      leagueOnly.samples?.home === 0 &&
+      leagueOnly.samples?.away === 0 &&
+      Number.isFinite(leagueOnly.lambdaMatch) &&
+      leagueOnly.lambdaMatch > 0);
+
   const enoughHome = Array.from({ length: 4 }, () => ({ ...homeOne }));
   const enoughAway = Array.from({ length: 4 }, () => ({ ...awayOne }));
   const strict = model(enoughHome, enoughAway, league);

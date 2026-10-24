@@ -4,14 +4,30 @@ import { getPredictionBundle, predictMany } from './services/predictionService.j
 import {
   runDailySync,
   runAfEnrichOnly,
-  runLiveStatusRefresh,
+  handleLiveRefreshRequest,
   runLiveCron,
   runLiveCronSafe,
 } from './services/syncService.js';
 import { WINDOW_DAYS } from './services/fixtureDownload.js';
 import { resolveTeamLogoUrl } from './services/teamLogos.js';
-import { resolveTipOdds, parseOddsBandParam, pickLegForCombo, BAND_META } from './services/oddsBands.js';
-import { buildCombos, comboOptsForBand } from './services/combos.js';
+import {
+  resolveTipOdds,
+  modelProbForBet,
+  parseOddsBandParam,
+  pickLegForCombo,
+  BAND_META,
+} from './services/oddsBands.js';
+import { buildCombos, buildCombosForTargetOdds, comboOptsForBand } from './services/combos.js';
+import {
+  isTop5League,
+  pickWeeklyLeg,
+  pickWeeklyCandidates,
+  buildWeeklyCombos,
+  buildWeeklyProfiles,
+  filterWeeklyLegs,
+  parseWeeklyFilterParams,
+  WEEKLY_DEFAULTS,
+} from './services/weeklyComboService.js';
 import { loadTipCalibration, fitTipCalibration } from './services/calibration.js';
 import { runBacktestSuite } from './services/backtestService.js';
 import { backfillRatings } from './services/ratingsService.js';
@@ -23,14 +39,48 @@ const SYNC_LOCK_MS = 5 * 60 * 1000;
 /** Live refresh cron: every 10 minutes during the European match window (UTC). */
 const LIVE_CRON = '*/10 15-23 * * *';
 
-/** Missing preds only on list GETs — cap 5. Full recompute runs in sync/cron. */
+/** Anti-trivial tips still stored from older pickBets — refresh on list. */
+const STALE_TRIVIAL_TIPS = new Set(['OVER_05', 'UNDER_45']);
+
+function isStaleTipLabel(label) {
+  const lab = String(label || '');
+  return STALE_TRIVIAL_TIPS.has(lab) || lab.startsWith('SHOTS_');
+}
+
+/** Missing preds + stale trivial/SHOTS tips on list GETs — cap 5. Full recompute in sync/cron. */
 function missingPredictionIds(allIds, existingMap, cap = 5) {
   const missing = [];
+  const stale = [];
   for (const id of allIds) {
-    if (!existingMap.get(id)) missing.push(id);
-    if (missing.length >= cap) break;
+    const pred = existingMap.get(id);
+    if (!pred) missing.push(id);
+    else if (
+      isStaleTipLabel(pred.suggested_bet) ||
+      isStaleTipLabel(pred.secondary_bet)
+    ) {
+      stale.push(id);
+    }
   }
-  return missing;
+  const out = [];
+  for (const id of missing) {
+    if (out.length >= cap) break;
+    out.push(id);
+  }
+  for (const id of stale) {
+    if (out.length >= cap) break;
+    out.push(id);
+  }
+  return out;
+}
+
+function tipTierFromStored(suggestedBet, confidenceScore, tipOdds) {
+  if (!suggestedBet) return null;
+  if (STALE_TRIVIAL_TIPS.has(String(suggestedBet))) return 'fallback';
+  const conf = confidenceScore != null ? Number(confidenceScore) : null;
+  const odds = tipOdds != null ? Number(tipOdds) : null;
+  if (odds != null && Number.isFinite(odds) && odds < 1.25) return 'fallback';
+  if (conf != null && conf >= 69) return 'playable';
+  return 'fallback';
 }
 
 function json(data, status = 200, extraHeaders = null) {
@@ -152,6 +202,15 @@ function marketsFromPrediction(p) {
 
 function mapBetPayload(r) {
   const oddsMeta = tipOddsMeta(r.suggested_bet, r, r);
+  const secBet = r.secondary_bet || null;
+  const secMeta = secBet
+    ? tipOddsMeta(secBet, r, r)
+    : { tipOdds: null, oddsBand: null, oddsSource: null };
+  const secProb = secBet ? modelProbForBet(r, secBet) : null;
+  const secConf =
+    secProb != null && Number.isFinite(secProb)
+      ? Number((secProb * 100).toFixed(2))
+      : null;
   return {
     matchId: r.match_id,
     matchDate: r.match_date,
@@ -161,7 +220,7 @@ function mapBetPayload(r) {
     homeTeam: { name: r.home_name, logo: resolveTeamLogoUrl(r.home_name, r.home_logo) },
     awayTeam: { name: r.away_name, logo: resolveTeamLogoUrl(r.away_name, r.away_logo) },
     suggestedBet: r.suggested_bet,
-    secondaryBet: r.secondary_bet,
+    secondaryBet: secBet,
     confidenceScore: Number(r.confidence_score),
     highConfidence: Number(r.confidence_score) >= 60,
     valueEdge: r.value_edge != null ? Number(r.value_edge) : null,
@@ -169,6 +228,9 @@ function mapBetPayload(r) {
     tipOdds: oddsMeta.tipOdds,
     oddsBand: oddsMeta.oddsBand,
     oddsSource: oddsMeta.oddsSource,
+    secondaryTipOdds: secMeta.tipOdds,
+    secondaryOddsSource: secMeta.oddsSource,
+    secondaryConfidence: secConf,
     markets: marketsFromPrediction(r),
     homeWinProb: r.home_win_prob != null ? Number(r.home_win_prob) : null,
     drawProb: r.draw_prob != null ? Number(r.draw_prob) : null,
@@ -238,11 +300,25 @@ async function handleApi(request, env, ctx) {
     let mode = 'demo';
     let message =
       'Modo demo (seed). Auto-sync o Sync manual trae calendario real (FixtureDownload).';
+    let top5Upcoming = 0;
+    let top5WithOdds = 0;
+    let top5OddsCoveragePct = null;
+    try {
+      top5Upcoming = await store.countUpcomingTop5(db, WINDOW_DAYS);
+      top5WithOdds = await store.countUpcomingTop5WithOdds(db, WINDOW_DAYS);
+      top5OddsCoveragePct =
+        top5Upcoming > 0
+          ? Number(((100 * top5WithOdds) / top5Upcoming).toFixed(1))
+          : null;
+    } catch (_) {
+      top5Upcoming = 0;
+      top5WithOdds = 0;
+    }
     if (fdCount > 0) {
       mode = 'live';
       message = hasKey
-        ? `FD + API-Football: ${upcomingWithOdds}/${upcoming} con cuota (${oddsCoveragePct ?? 0}%) · corners=${cornersCount} · amarillas=${yellowsCount}.`
-        : `Calendario FD (${fdCount} partidos). Sin API_FOOTBALL_KEY → sin value, corners ni amarillas.`;
+        ? `FD + API-Football: ${upcomingWithOdds}/${upcoming} con cuota (${oddsCoveragePct ?? 0}%) · top5 ${top5WithOdds}/${top5Upcoming} (${top5OddsCoveragePct ?? 0}%) · corners=${cornersCount} · amarillas=${yellowsCount}.`
+        : `Calendario FD (${fdCount} partidos). Sin API_FOOTBALL_KEY → sin value ni cuotas book. Corners/amarillas vía FotMob cuando hay muestra.`;
     } else if (auto.syncing) {
       message = 'Sincronizando calendario real en segundo plano… recarga en unos segundos.';
     }
@@ -253,6 +329,7 @@ async function handleApi(request, env, ctx) {
       demo: mode === 'demo',
       source: fdCount > 0 ? 'fixturedownload' : 'seed',
       oddsEnabled: hasKey,
+      apiFootballKeyPresent: hasKey,
       oddsMatchCount: oddsCount,
       cornersMatchCount: cornersCount,
       yellowsMatchCount: yellowsCount,
@@ -260,6 +337,9 @@ async function handleApi(request, env, ctx) {
       upcomingCount: upcoming,
       upcomingWithOdds,
       oddsCoveragePct,
+      top5UpcomingCount: top5Upcoming,
+      top5WithOdds,
+      top5OddsCoveragePct,
       fixtureDownloadCount: fdCount,
       windowDays: WINDOW_DAYS,
       lastSyncAt: auto.lastSyncAt,
@@ -286,7 +366,7 @@ async function handleApi(request, env, ctx) {
         : await store.getUpcoming(db, win.days, lid);
     const allIds = matches.map((m) => m.id);
     const existing = await store.getPredictionsByMatchIds(db, allIds);
-    const missing = missingPredictionIds(allIds, existing, 5);
+    const missing = missingPredictionIds(allIds, existing, 8);
     if (missing.length) await predictMany(db, missing);
     const predMap = await store.getPredictionsByMatchIds(db, allIds);
     const oddsMap = await store.getOddsByMatchIds(db, allIds);
@@ -294,16 +374,31 @@ async function handleApi(request, env, ctx) {
       const p = predMap.get(m.id);
       const odds = oddsMap.get(m.id);
       const oddsMeta = tipOddsMeta(p?.suggested_bet, p, odds);
+      const conf =
+        p?.confidence_score != null ? Number(p.confidence_score) : null;
+      const secBet = p?.secondary_bet ?? null;
+      const secMeta = secBet
+        ? tipOddsMeta(secBet, p, odds)
+        : { tipOdds: null, oddsBand: null, oddsSource: null };
+      const secProb = secBet ? modelProbForBet(p, secBet) : null;
+      const secConf =
+        secProb != null && Number.isFinite(secProb)
+          ? Number((secProb * 100).toFixed(2))
+          : null;
       return {
         ...m,
         suggestedBet: p?.suggested_bet ?? null,
-        secondaryBet: p?.secondary_bet ?? null,
-        confidenceScore: p?.confidence_score != null ? Number(p.confidence_score) : null,
+        secondaryBet: secBet,
+        confidenceScore: conf,
         valueEdge: p?.value_edge != null ? Number(p.value_edge) : null,
         valueMarket: p?.value_market ?? null,
         tipOdds: oddsMeta.tipOdds,
         oddsBand: oddsMeta.oddsBand,
         oddsSource: oddsMeta.oddsSource,
+        tipTier: tipTierFromStored(p?.suggested_bet, conf, oddsMeta.tipOdds),
+        secondaryTipOdds: secMeta.tipOdds,
+        secondaryOddsSource: secMeta.oddsSource,
+        secondaryConfidence: secConf,
         markets: marketsFromPrediction(p),
         live: buildLiveBlock(m, p),
       };
@@ -321,16 +416,242 @@ async function handleApi(request, env, ctx) {
     });
   }
 
+  if (method === 'GET' && path === '/api/v1/combos/weekly') {
+    const filters = parseWeeklyFilterParams(url.searchParams);
+    const {
+      leagueApiId: filterLeague,
+      family: filterFamily,
+      window: filterWindow,
+      from: filterFrom,
+      to: filterTo,
+      fetchDays,
+    } = filters;
+    const days = Math.min(14, Math.max(3, Number(fetchDays) || 14));
+    const ids = await store.getScheduledUpcomingIds(db, days);
+    const fetchIds = ids.slice(0, 160);
+    const existing = await store.getPredictionsByMatchIds(db, fetchIds);
+    const missing = missingPredictionIds(fetchIds, existing, 8);
+    if (missing.length) await predictMany(db, missing);
+    const predMap = await store.getPredictionsByMatchIds(db, fetchIds);
+    const matchRows = await store.getUpcoming(db, days, null);
+    const oddsMap = await store.getOddsByMatchIds(db, fetchIds);
+    const legsRaw = [];
+    for (const m of matchRows) {
+      if (!fetchIds.includes(m.id)) continue;
+      if (!isTop5League(m)) continue;
+      if (m.status !== 'scheduled') continue;
+      const p = predMap.get(m.id);
+      const odds = oddsMap.get(m.id) || null;
+      const cands = pickWeeklyCandidates(m, p, odds);
+      if (cands.length) legsRaw.push(...cands);
+      else {
+        const leg = pickWeeklyLeg(m, p, odds);
+        if (leg) legsRaw.push(leg);
+      }
+    }
+    const filtersActive =
+      filterLeague != null || filterFamily != null || filterWindow !== 'next14';
+    const legs = filterWeeklyLegs(legsRaw, {
+      leagueApiId: filterLeague,
+      family: filterFamily,
+      from: filterFrom,
+      to: filterTo,
+    });
+    const { aggressive, conservative } = buildWeeklyProfiles(legs);
+    const excludeRaw = String(url.searchParams.get('excludeIds') || '');
+    const excludeIds = new Set(
+      excludeRaw
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+    );
+    const aggressivePool = (aggressive.combos || []).filter(
+      (c) => !c?.id || !excludeIds.has(String(c.id))
+    );
+    const primary = aggressivePool[0] || null;
+    const conservativeCombo = conservative.combos[0] || null;
+    const alternatives = aggressivePool.slice(1, 6);
+    const uniqueMatches = new Set(legs.map((l) => l.matchId)).size;
+    const uniqueRaw = new Set(legsRaw.map((l) => l.matchId)).size;
+    let emptyReason = null;
+    if (uniqueMatches < WEEKLY_DEFAULTS.MIN_LEGS) {
+      emptyReason =
+        filtersActive && uniqueRaw >= WEEKLY_DEFAULTS.MIN_LEGS
+          ? 'no_legs_filtered'
+          : 'no_legs';
+    } else if (!primary && !conservativeCombo) {
+      emptyReason = excludeIds.size
+        ? 'no_more_after_exclude'
+        : 'no_match_in_tolerance';
+    }
+    return json({
+      windowDays: days,
+      count: aggressivePool.length,
+      emptyReason,
+      meta: {
+        ...aggressive.meta,
+        activeFilters: {
+          leagueApiId: filterLeague,
+          family: filterFamily,
+          window: filterWindow,
+          from: filterFrom,
+          to: filterTo,
+        },
+        poolSizeRaw: legsRaw.length,
+        poolSizeFiltered: legs.length,
+        excludedCount: excludeIds.size,
+        conservative: {
+          belowTarget: conservative.meta.belowTarget || false,
+          belowReason: conservative.meta.belowReason || null,
+          minJointProbAdj: WEEKLY_DEFAULTS.SAFE_MIN_JOINT,
+          targetOdds: WEEKLY_DEFAULTS.SAFE_TARGET_ODDS,
+        },
+      },
+      whyPreferred: aggressive.whyPreferred || null,
+      primary,
+      conservative: conservativeCombo,
+      alternatives,
+      combos: aggressivePool,
+      generatedAt: new Date().toISOString(),
+    });
+  }
+
+  if (method === 'GET' && path === '/api/v1/combos/by-target') {
+    const win = parseMatchWindow(url);
+    const targetOdds = Math.min(
+      15,
+      Math.max(1.8, Number(url.searchParams.get('targetOdds')) || 3)
+    );
+    const tolerance = Math.min(
+      0.25,
+      Math.max(0.05, Number(url.searchParams.get('tolerance')) || 0.12)
+    );
+    const limit = Math.min(12, Math.max(1, Number(url.searchParams.get('limit')) || 12));
+    const ids =
+      win.mode === 'date'
+        ? await store.getScheduledIdsOnDate(db, win.date)
+        : await store.getScheduledUpcomingIds(db, win.days);
+    const fetchIds = ids.slice(0, 120);
+    const existing = await store.getPredictionsByMatchIds(db, fetchIds);
+    const missing = missingPredictionIds(fetchIds, existing, 5);
+    if (missing.length) await predictMany(db, missing);
+    const leagueIdsRaw = (url.searchParams.get('leagueIds') || '').trim();
+    const leagueIdSet = new Set(
+      leagueIdsRaw
+        .split(',')
+        .map((s) => Number(s.trim()))
+        .filter((n) => Number.isFinite(n) && n > 0)
+    );
+    const predMap = await store.getPredictionsByMatchIds(db, fetchIds);
+    const matchRows =
+      win.mode === 'date'
+        ? await store.getByDate(db, win.date, null)
+        : await store.getUpcoming(db, win.days, null);
+    const oddsMap = await store.getOddsByMatchIds(db, fetchIds);
+    const calib = await loadTipCalibration(db);
+
+    function collectLegs(bookOnly) {
+      const out = [];
+      for (const m of matchRows) {
+        if (!fetchIds.includes(m.id)) continue;
+        if (leagueIdSet.size && !leagueIdSet.has(Number(m.leagueId))) continue;
+        const p = predMap.get(m.id);
+        if (!p) continue;
+        const odds = oddsMap.get(m.id) || null;
+        const picked = pickLegForCombo(p, odds || p, [p.suggested_bet, p.secondary_bet], {
+          tipMin: 1.2,
+          tipMax: 2.8,
+          calib,
+          bookOnly,
+        });
+        if (!picked) continue;
+        if (bookOnly && picked.oddsSource !== 'book') continue;
+        out.push({
+          matchId: m.id,
+          matchDate: m.matchDate,
+          league: m.leagueName,
+          leagueId: m.leagueId,
+          leagueCountry: m.leagueCountry,
+          homeTeam: m.homeTeam,
+          awayTeam: m.awayTeam,
+          suggestedBet: picked.label,
+          tipOdds: picked.tipOdds,
+          oddsSource: picked.oddsSource || (bookOnly ? 'book' : 'model'),
+          confidenceScore: Number((picked.prob * 100).toFixed(2)),
+          prob: picked.prob,
+        });
+      }
+      return out;
+    }
+
+    // Prefer book legs; if fewer than 3, fall back to model-implied tips (labeled).
+    let legs = collectLegs(true);
+    let pricingMode = 'book';
+    if (legs.length < 3) {
+      legs = collectLegs(false);
+      pricingMode = 'model';
+    }
+
+    const built = buildCombosForTargetOdds(legs, targetOdds, {
+      tolerance,
+      limit,
+      minLegs: 3,
+      maxLegs: 8,
+      poolSize: 14,
+      tipMin: 1.2,
+      tipMax: 2.8,
+    });
+    const combos = built.map((c, i) => {
+      const comboPricing = c.pricing || pricingMode;
+      return {
+        id: `t${targetOdds.toFixed(1)}-${i}-${c.legs.map((l) => l.matchId).join('_')}`,
+        combinedOdds: c.combinedOdds,
+        targetOdds: c.targetOdds,
+        avgConfidence: c.avgConfidence,
+        jointProb: c.jointProb,
+        nLegs: c.nLegs ?? c.legs.length,
+        pricing: comboPricing,
+        oddsSource: comboPricing === 'book' ? 'book' : comboPricing,
+        legs: c.legs,
+      };
+    });
+    const responsePricing =
+      combos.length === 0
+        ? pricingMode
+        : combos.every((c) => c.pricing === 'book')
+          ? 'book'
+          : combos.every((c) => c.pricing === 'model')
+            ? 'model'
+            : 'mixed';
+    return json({
+      date: win.date || null,
+      windowMode: win.mode,
+      windowDays: win.mode === 'all' || win.mode === 'days' ? win.days : 0,
+      targetOdds: Number(targetOdds.toFixed(2)),
+      tolerance,
+      minLegs: 3,
+      maxLegs: 8,
+      poolSize: legs.length,
+      pricing: responsePricing,
+      count: combos.length,
+      emptyReason:
+        legs.length === 0
+          ? 'no_legs'
+          : combos.length === 0
+            ? 'no_match_in_tolerance'
+            : null,
+      note:
+        responsePricing === 'book'
+          ? 'P(acierto) ≈ producto de P_modelo (independencia). Cuotas de casa.'
+          : 'P(acierto) ≈ producto de P_modelo (independencia). Cuotas estimadas (sin book) — no son precios de casa.',
+      combos,
+    });
+  }
+
   if (method === 'GET' && path === '/api/v1/matches/best-bets') {
     const win = parseMatchWindow(url);
     const oddsBand = parseOddsBandParam(url.searchParams.get('oddsBand'));
-    // F8: the odds-band combos are premium (single-leg best bets stay public).
-    if (oddsBand) {
-      const { premium } = await premiumSessionOf(request, db);
-      if (!premium) {
-        return premiumRequiredResponse();
-      }
-    }
+    // Combos by odds band are public (no login / premium gate yet).
     const limitParam = url.searchParams.get('limit');
     const defaultLimit = oddsBand ? 25 : 200;
     const limit = Math.min(400, Math.max(1, Number(limitParam) || defaultLimit));
@@ -342,7 +663,7 @@ async function handleApi(request, env, ctx) {
       ? Math.min(400, Math.max(ids.length || 80, 80))
       : Math.min(400, Math.max(limit, ids.length || limit));
     const existing = await store.getPredictionsByMatchIds(db, ids);
-    const missing = missingPredictionIds(ids, existing, 5);
+    const missing = missingPredictionIds(ids, existing, 8);
     if (missing.length) await predictMany(db, missing);
     const rows =
       win.mode === 'date'
@@ -454,7 +775,6 @@ async function handleApi(request, env, ctx) {
 
   if (method === 'GET' && path === '/api/v1/tips/performance') {
     const win = parseMatchWindow(url);
-    const { premium } = await premiumSessionOf(request, db);
     const perf = await store.getTipPerformance(db, win);
     let calib = await loadTipCalibration(db);
     if (!calib) {
@@ -506,9 +826,8 @@ async function handleApi(request, env, ctx) {
         leagueCountry: r.league_country || null,
       })),
     };
-    // F8: basic hit rates stay public; the money view (ROI) and the deeper
-    // combos history are premium.
-    return json(premium ? payload : premiumService.stripPerfForFree(payload));
+    // Full performance (ROI + recent tips) is public until login/premium ships.
+    return json(payload);
   }
   if (method === 'GET' && path === '/api/v1/premium/status') {
     const { premium, session } = await premiumSessionOf(request, db);
@@ -602,7 +921,8 @@ async function handleApi(request, env, ctx) {
 
   if (method === 'POST' && path === '/api/v1/matches/refresh-live') {
     const force = url.searchParams.get('force') === '1';
-    const result = await runLiveStatusRefresh(env, db, { force });
+    const wait = url.searchParams.get('wait') === '1';
+    const result = await handleLiveRefreshRequest(env, db, ctx, { force, wait });
     return json(result);
   }
 
@@ -612,8 +932,9 @@ async function handleApi(request, env, ctx) {
     const match = await store.findMatchById(db, matchId);
     if (!match) return json({ error: 'Partido no encontrado' }, 404);
     const force = url.searchParams.get('force') === '1';
+    const wait = url.searchParams.get('wait') === '1';
     // Shares the cooldown of the global refresh: it stays cheap on repeated calls.
-    await runLiveStatusRefresh(env, db, { force });
+    await handleLiveRefreshRequest(env, db, ctx, { force, wait });
     const fresh = (await store.findMatchById(db, matchId)) || match;
     const prediction = await store.getPredictionByMatchId(db, matchId);
     return json({
@@ -635,6 +956,28 @@ async function handleApi(request, env, ctx) {
 
   if (method === 'GET' && path === '/api/v1/leagues') {
     return json({ leagues: await store.listLeagues(db) });
+  }
+
+  const leagueTableMatch = path.match(/^\/api\/v1\/leagues\/(\d+)\/table$/);
+  if (method === 'GET' && leagueTableMatch) {
+    const apiId = Number(leagueTableMatch[1]);
+    const league = await store.findLeagueByApiId(db, apiId);
+    if (!league) return json({ error: 'Liga no encontrada' }, 404);
+    const raw = await store.getLeagueTable(db, league.id, 40);
+    const table = raw.map((row) => ({
+      ...row,
+      logoUrl: resolveTeamLogoUrl(row.team, row.logoUrl),
+    }));
+    return json({
+      league: {
+        id: Number(league.id),
+        apiId: Number(league.api_id),
+        name: league.name,
+        country: league.country || null,
+      },
+      table,
+      emptyReason: table.length ? null : 'Sin clasificatorio aún',
+    });
   }
 
   if (method === 'GET' && path === '/api/v1/teams/search') {
@@ -664,6 +1007,113 @@ async function handleApi(request, env, ctx) {
       last5: stats,
       nextMatch,
       prediction,
+    });
+  }
+
+  if (method === 'GET' && path === '/api/v1/crests/audit') {
+    const { auditCrestsForLeague, TOP5_CREST_ROSTERS } = await import(
+      './services/teamLogos.js'
+    );
+    const leagueId = url.searchParams.get('leagueId');
+    const ids = leagueId
+      ? [Number(leagueId)]
+      : Object.keys(TOP5_CREST_ROSTERS).map(Number);
+    const reports = ids.map((id) => auditCrestsForLeague(id));
+    return json({
+      ok: true,
+      generatedAt: new Date().toISOString(),
+      reports,
+    });
+  }
+
+  if (method === 'GET' && path === '/api/v1/crests/verifications') {
+    const leagueId = url.searchParams.get('leagueId');
+    const rows = await store.listCrestVerifications(
+      db,
+      leagueId != null ? Number(leagueId) : null,
+      300
+    );
+    return json({ ok: true, count: rows.length, rows });
+  }
+
+  if (method === 'POST' && path === '/api/v1/admin/crests/audit') {
+    const secret = env.SYNC_SECRET || 'change-me-houdini';
+    const header = request.headers.get('x-sync-secret');
+    if (!header || header !== secret) {
+      return json({ error: 'No autorizado. Header x-sync-secret requerido.' }, 401);
+    }
+    const { auditCrestsForLeague, TOP5_CREST_ROSTERS } = await import(
+      './services/teamLogos.js'
+    );
+    let body = {};
+    try {
+      body = await request.json();
+    } catch (_) {
+      body = {};
+    }
+    const leagueId = body.leagueId != null ? Number(body.leagueId) : null;
+    const ids = leagueId
+      ? [leagueId]
+      : Object.keys(TOP5_CREST_ROSTERS).map(Number);
+    const reports = [];
+    let inserted = 0;
+    for (const id of ids) {
+      const report = auditCrestsForLeague(id);
+      reports.push(report);
+      for (const r of report.rows) {
+        await store.insertCrestVerification(db, {
+          league_api_id: r.leagueApiId,
+          team_api_id: r.teamApiId,
+          team_name: r.team,
+          logo_url: r.logoUrl,
+          reference_url: r.referenceUrl,
+          reference_source: r.referenceSource,
+          status: r.status,
+          problem: r.problem,
+          action: r.action,
+          evidence: r.evidence,
+        });
+        inserted += 1;
+      }
+    }
+    let logosRewritten = 0;
+    try {
+      logosRewritten = await store.rewriteBrokenTeamLogos(db, resolveTeamLogoUrl);
+    } catch (_) {
+      logosRewritten = 0;
+    }
+    return json({ ok: true, inserted, logosRewritten, reports });
+  }
+
+  if (method === 'POST' && path === '/api/v1/admin/stats/reset') {
+    const secret = env.SYNC_SECRET || 'change-me-houdini';
+    const header = request.headers.get('x-sync-secret');
+    if (!header || header !== secret) {
+      return json({ error: 'No autorizado. Header x-sync-secret requerido.' }, 401);
+    }
+    const wiped = await store.resetStatsLedgers(db);
+    return json({
+      ok: true,
+      tipsDeleted: wiped.tipsDeleted,
+      combosDeleted: wiped.combosDeleted,
+      statsResetAt: wiped.statsResetAt || null,
+      note:
+        'tip_results + combo_results vaciados. Stats cuenta desde statsResetAt. Matches/predictions/odds intactos.',
+    });
+  }
+
+  if (method === 'POST' && path === '/api/v1/admin/matches/repair-future-finished') {
+    const secret = env.SYNC_SECRET || 'change-me-houdini';
+    const header = request.headers.get('x-sync-secret');
+    if (!header || header !== secret) {
+      return json({ error: 'No autorizado. Header x-sync-secret requerido.' }, 401);
+    }
+    const result = await store.repairFutureFinishedMatches(db);
+    return json({
+      ok: true,
+      ...result,
+      note:
+        'Partidos finished con kickoff futuro → scheduled; goles/events/fotmob limpios; tip_results borrados.',
     });
   }
 

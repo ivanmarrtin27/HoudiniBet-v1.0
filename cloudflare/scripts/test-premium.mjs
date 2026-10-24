@@ -107,14 +107,14 @@ check('checkout needs key and price',
 
 const body = prem.checkoutFormBody({
   clientReferenceId: created.id,
-  origin: 'https://houdini-bet.pages.dev',
+  origin: 'https://houdini-bet.dev',
   priceId: 'price_123',
 });
 check('the checkout body is form encoded with the session reference',
   typeof body === 'string' &&
     body.includes(`client_reference_id=${created.id}`) &&
     body.includes('line_items%5B0%5D%5Bprice%5D=price_123') &&
-    body.includes('success_url=https%3A%2F%2Fhoudini-bet.pages.dev%2F%3Fpremium%3Dok'));
+    body.includes('success_url=https%3A%2F%2Fhoudini-bet.dev%2F%3Fpremium%3Dok'));
 
 const WEBHOOK_SECRET = 'whsec_test_123';
 const eventPayload = JSON.stringify({

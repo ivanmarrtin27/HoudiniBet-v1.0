@@ -4,7 +4,7 @@
 App de predicciones de fútbol (Poisson).
 
 ## Runtime de producción (Cloudflare)
-- URL pública (Pages): `https://houdini-bet.pages.dev`
+- URL día a día: `https://houdini-bet.pages.dev` (+ workers.dev); custom `houdini-bet.dev` opcional cuando producto listo (auth + Premium pago)
 - Worker + assets (origen): `https://houdini-bet.ivanmarrtin2703.workers.dev`
 - D1: `houdini-bet-db` (ID `b6ee98e6-2397-45e5-83cb-33d1370656ae`) — **aislado del proyecto QR**
 - Cron sync: `0 6 * * *`
@@ -22,10 +22,16 @@ App de predicciones de fútbol (Poisson).
 
 ## UI
 HTML/JS en `cloudflare/public` (mínima). Pulir con `frontend-design` / `web-design-guidelines` después. Angular descartado.
+- **Ligas** (`#ligas`): split Partidos (países+banderas | tabla) Europeas (2/3/5) + top5 → `GET /leagues/:apiId/table` → tap equipo → nextMatch; `#ligas/<apiId>`
+- Live: name-match umbral 85; no pintar scores si kickoff futuro; `POST /api/v1/admin/matches/repair-future-finished`
 
 ## Mercados Houdini
-- Top 3 del día; por partido 1 principal + 1 secundaria
-- 1X2 · O/U 2.5 · BTTS · corners · value ≥5%
+- Top 10 del día (P≥69% + cuota 1.30–3.50; hash `#top3`); hasta 10; máx 1 label / máx 3 familia; pool primary+secondary
+- 1X2 · DC/DNB · O/U 0.5–4.5 · BTTS · corners/cards/SOT · value ≥5% (book); **nunca SHOTS_*** (tiros totales)
+- Tips: anti-trivial (no O0.5 / U4.5); lane jugable P≥69% + cuota≥1.25; secondary diversa (malus diario BTTS/O-U)
+- Semanal cuota 10 (+ Conservadora cuota 5): top5; UI sin `@`/«piernas»; Prob. combinada; Valor solo con book
+- Crests: FotMob PSG/Elche/Deportivo/Leverkusen; audit `node scripts/audit-crests.mjs`
+- Admin reset Stats: `POST /api/v1/admin/stats/reset` (wipe + `stats_reset_at`)
 
 ## Convenciones
 - Nunca mezclar D1/DB con proyecto QR

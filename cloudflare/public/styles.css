@@ -500,20 +500,33 @@ main.v2-main.shell {
 .v2-main[data-view="ligas"] .views-track {
   transform: translateX(-300%);
 }
-.views[data-view="premium"] .views-track,
-.v2-main[data-view="premium"] .views-track {
-  transform: translateX(-400%);
-}
 .views[data-view="bandas"] .views-track,
 .v2-main[data-view="bandas"] .views-track {
-  transform: translateX(-500%);
-}
-.views[data-view="ajustes"] .views-track,
-.v2-main[data-view="ajustes"] .views-track {
-  transform: translateX(-600%);
+  transform: translateX(-400%);
 }
 .views.views--dragging .views-track {
   transition: none;
+}
+
+/* Premium / Ajustes live outside the swipe track */
+#premium.view,
+#ajustes.view {
+  display: none;
+  flex: none;
+  width: 100%;
+  min-width: 0;
+}
+.views[data-view="premium"] .views-track,
+.v2-main[data-view="premium"] .views-track,
+.views[data-view="ajustes"] .views-track,
+.v2-main[data-view="ajustes"] .views-track {
+  display: none;
+}
+.views[data-view="premium"] #premium,
+.v2-main[data-view="premium"] #premium,
+.views[data-view="ajustes"] #ajustes,
+.v2-main[data-view="ajustes"] #ajustes {
+  display: block;
 }
 
 .view {
@@ -1687,278 +1700,272 @@ h2 {
   font-size: 0.78rem;
 }
 
-/* ââ Cuotas board ââ */
-.odds-stats-wrap {
+/* —— Cuotas target calculator —— */
+.cuotas-target {
   display: grid;
-  gap: 0.5rem;
-  margin: 0 0 0.75rem;
-}
-.odds-global {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.65rem;
-  flex-wrap: wrap;
-  padding: 0.7rem 0.85rem;
+  gap: 0.75rem;
+  margin: 0 0 1.1rem;
+  padding: 0.95rem 1rem 1rem;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background:
     linear-gradient(90deg, var(--accent-dim) 0 3px, transparent 3px),
     var(--board);
 }
-.odds-global__main {
+.cuotas-target__label {
   display: flex;
   align-items: baseline;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-}
-.odds-global__label {
-  font-family: var(--font-display);
-  font-size: 0.85rem;
-  letter-spacing: 0.04em;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-size: 0.88rem;
+  font-weight: 600;
   color: var(--fog-2);
+  letter-spacing: 0.01em;
 }
-.odds-global__rate {
+.cuotas-target__label strong {
   font-family: var(--font-display);
   font-size: 1.55rem;
   font-weight: 700;
   color: var(--accent);
-  line-height: 1;
+  letter-spacing: 0.02em;
 }
-.odds-global__sub {
-  font-size: 0.78rem;
+.cuotas-target__range {
+  width: 100%;
+  height: 1.5rem;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.cuotas-target__range:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.cuotas-target__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+.cuotas-target__meta {
+  font-size: 0.76rem;
   color: var(--fog);
 }
-.odds-global__period {
-  font-size: 0.72rem;
+.cuotas-target--weekly {
+  padding: 0.65rem 1rem;
+}
+.weekly-sources {
+  margin: 0 0 0.75rem;
+  padding: 0.55rem 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+.weekly-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.65rem 0.85rem;
+  margin-top: 0.35rem;
+}
+.weekly-filters__item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  flex: 1 1 8.5rem;
+  min-width: 7.5rem;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fog);
+}
+.weekly-filters__item select {
+  font: inherit;
+  text-transform: none;
+  letter-spacing: normal;
+  height: 2.35rem;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--board);
+  color: inherit;
+}
+.weekly-filters__actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-end;
+}
+.weekly-filters__actions .btn {
+  height: 2.35rem;
+  padding: 0 1rem;
+}
+.weekly-filters__badge {
+  margin: 0.55rem 0 0;
+  font-size: 0.75rem;
+}
+.weekly-summary__hero {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr));
+  gap: 0.75rem 1rem;
+  margin-bottom: 0.65rem;
+}
+.weekly-summary__hero strong {
+  display: block;
+  font-family: var(--font-display);
+  font-size: 1.45rem;
+  margin-top: 0.1rem;
+}
+.weekly-summary__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.85rem;
+  font-size: 0.78rem;
   color: var(--fog-2);
+}
+.weekly-summary__meta span strong {
+  color: inherit;
   font-weight: 600;
 }
-.odds-stats {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 0.4rem;
-  width: 100%;
-}
-.odds-stat {
-  appearance: none;
-  width: 100%;
-  min-width: 0;
+.weekly-profile {
+  margin: 0 0 1.25rem;
+  padding: 0.85rem 1rem;
   border: 1px solid var(--line);
-  background: var(--board);
   border-radius: var(--radius);
-  padding: 0.5rem 0.35rem 0.45rem;
-  text-align: center;
-  cursor: pointer;
-  color: inherit;
-  font: inherit;
-  transition: border-color 0.15s ease, background 0.15s ease;
-  min-height: 4.4rem;
-}
-.odds-stat--static {
-  /* Cortas is also selectable for history */
-}
-.odds-stat--static:hover {
-  border-color: var(--accent-soft);
-  background: var(--board-2);
-}
-.odds-stat:hover { border-color: var(--accent-soft); background: var(--board-2); }
-.odds-stat.is-active {
-  border-color: var(--accent);
-  background: var(--accent-dim);
-}
-.odds-stat:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-.odds-stat__band {
-  display: block;
-  font-family: var(--font-display);
-  font-size: 0.82rem;
-  letter-spacing: 0.03em;
-  color: var(--fog-2);
-}
-.odds-stat__range {
-  display: block;
-  font-size: 0.58rem;
-  color: var(--fog);
-  margin-top: 0.08rem;
-  line-height: 1.15;
-}
-.odds-stat__rate {
-  display: block;
-  font-family: var(--font-display);
-  font-size: 1.2rem;
-  font-weight: 700;
-  color: var(--accent);
-  line-height: 1.1;
-  margin: 0.15rem 0 0.05rem;
-}
-.odds-stat__sub {
-  display: block;
-  font-size: 0.64rem;
-  color: var(--fog);
-}
-
-.odds-history {
-  margin: 0 0 0.75rem;
-  padding: 0.55rem 0.7rem 0.65rem;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
   background: var(--board);
 }
-.odds-history__summary {
+.weekly-profile__head {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   justify-content: space-between;
-  gap: 0.65rem;
-  flex-wrap: wrap;
-  cursor: default;
-  list-style: none;
-  font-family: var(--font-display);
-  font-size: 0.95rem;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  padding: 0.15rem 0;
-  pointer-events: none;
-}
-.odds-history__summary::-webkit-details-marker {
-  display: none;
-}
-.odds-history__summary::before {
-  display: none;
-}
-.odds-history__summary-title {
-  flex: 1 1 auto;
-}
-.odds-history__summary-meta {
-  font-family: var(--font-body);
-  font-size: 0.72rem;
-  font-weight: 500;
-  letter-spacing: 0;
-}
-.odds-history[open] > .odds-history__summary {
-  margin-bottom: 0.55rem;
-  padding-bottom: 0.45rem;
-  border-bottom: 1px solid var(--line);
-}
-.odds-history__head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.65rem;
-  flex-wrap: wrap;
+  gap: 0.35rem 1rem;
   margin-bottom: 0.55rem;
 }
-.odds-history__title {
+.weekly-profile__title {
   margin: 0;
-  font-family: var(--font-display);
-  font-size: 0.88rem;
-  font-weight: 700;
-  letter-spacing: 0.02em;
+  font-size: 0.85rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
-.odds-history__range {
-  margin: 0.1rem 0 0;
-  font-size: 0.72rem;
+.weekly-profile__stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.1rem;
+  font-size: 0.82rem;
 }
-.odds-history__tabs {
-  display: inline-flex;
-  gap: 0.25rem;
-  padding: 0.18rem;
+.weekly-profile__warn {
+  margin: 0.5rem 0 0;
+  font-size: 0.75rem;
+}
+.weekly-why {
+  margin: 0 0 1rem;
+  padding: 0.65rem 0.85rem;
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: var(--board-2);
+  font-size: 0.8rem;
 }
-.odds-history__tab {
-  appearance: none;
-  border: none;
-  background: transparent;
-  color: var(--fog-2);
-  font: inherit;
-  font-size: 0.78rem;
-  font-weight: 600;
-  padding: 0.35rem 0.55rem;
-  min-height: 2rem;
-  border-radius: calc(var(--radius) - 2px);
-  cursor: pointer;
+.weekly-why ul {
+  margin: 0.35rem 0 0;
+  padding-left: 1.1rem;
 }
-.odds-history__tab.is-active {
-  background: var(--accent);
-  color: var(--accent-ink);
-}
-.odds-history__list {
-  display: grid;
-  gap: 0.4rem;
-}
-.odds-history__row {
-  padding: 0.55rem 0.6rem;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--board-2);
-}
-.odds-history__top {
+.weekly-table__teams {
   display: flex;
-  align-items: center;
-  gap: 0.45rem;
   flex-wrap: wrap;
-}
-.odds-history__tip {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-size: 0.9rem;
-  font-weight: 700;
-}
-.odds-history__odds {
-  font-family: var(--font-display);
-  font-weight: 700;
-  font-size: 0.95rem;
-  color: var(--fog-2);
-}
-.odds-history__match {
-  margin: 0.28rem 0 0.12rem;
-  font-size: 0.86rem;
-  font-weight: 600;
-}
-.odds-history__meta {
-  margin: 0;
-  font-size: 0.74rem;
-  display: flex;
   align-items: center;
-  gap: 0.25rem;
-  flex-wrap: wrap;
-}
-.odds-history__flag {
-  font-size: 1rem;
-  line-height: 1;
-}
-.odds-history__empty {
-  padding: 0.85rem 0.5rem;
-}
-.odds-history-combo__legs {
-  list-style: none;
-  margin: 0.45rem 0 0;
-  padding: 0;
-  display: grid;
   gap: 0.35rem;
 }
-.odds-history-combo__leg {
-  display: grid;
-  gap: 0.1rem;
-  padding: 0.35rem 0.45rem;
-  border-radius: 6px;
-  background: var(--board-2);
+.crest-audit {
+  margin: 1.5rem 0 0;
+  padding: 0.85rem 1rem;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+}
+.crest-audit__league {
+  margin: 0.65rem 0 0;
+  font-size: 0.8rem;
+}
+.crest-audit__league ul {
+  margin: 0.35rem 0 0;
+  padding-left: 1.1rem;
+}
+.weekly-summary {
+  margin: 0 0 1rem;
+  padding: 0.85rem 1rem;
   border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--board);
 }
-.odds-history-combo__match {
-  font-size: 0.82rem;
-  font-weight: 600;
+.weekly-summary__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+  gap: 0.65rem 1rem;
 }
-.odds-history-combo__tip {
+.weekly-summary__grid strong {
+  display: block;
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+  margin-top: 0.15rem;
+}
+.weekly-summary__risk,
+.weekly-summary__note {
+  margin: 0.65rem 0 0;
   font-size: 0.78rem;
+  line-height: 1.4;
 }
-.odds-history-combo__meta {
+.weekly-block { margin: 0 0 1.25rem; }
+.weekly-block__title {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fog-2);
+}
+.weekly-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--board);
+}
+.weekly-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+.weekly-table th,
+.weekly-table td {
+  padding: 0.55rem 0.65rem;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+.weekly-table th {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fog);
+  white-space: nowrap;
+}
+.weekly-table__match {
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.weekly-table__match:hover { color: var(--accent, #dc2626); }
+.weekly-table__when {
   font-size: 0.72rem;
+  margin-top: 0.15rem;
 }
+#cuotas-results-wrap {
+  min-height: 4rem;
+}
+
+/* —— Cuotas results —— */
 .odds-board__hint {
   margin: 0.55rem 0 0.45rem;
   font-size: var(--type-meta);
@@ -1972,7 +1979,7 @@ h2 {
   font-size: 0.95rem;
   font-weight: 700;
   letter-spacing: 0.02em;
-  color: var(--ink);
+  color: var(--chalk);
 }
 .odds-board__top-meta {
   font-size: 0.72rem;
@@ -2116,6 +2123,31 @@ h2 {
   gap: 0.1rem;
   font-size: 0.72rem;
   font-weight: 700;
+}
+.combo-card__prob {
+  font-family: var(--font-display);
+  font-size: 1.65rem;
+  font-weight: 700;
+  line-height: 1;
+}
+.combo-card__prob-lab {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--fog-2);
+  text-align: right;
+  max-width: 7.5rem;
+}
+.combo-card__badge {
+  display: inline-block;
+  margin-top: 0.35rem;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: var(--fog-2);
+  background: color-mix(in srgb, var(--board) 80%, var(--fog) 20%);
 }
 .combo-card__legs {
   display: grid;
@@ -2434,29 +2466,6 @@ h2 {
   .odds-row__tip { grid-area: tip; }
   .odds-row__nums { grid-area: nums; align-self: center; }
   .seg__sub { display: none; }
-  .odds-stats {
-    display: flex;
-    gap: 0.35rem;
-    overflow-x: auto;
-    overscroll-behavior-x: contain;
-    scroll-snap-type: x proximity;
-    justify-content: safe center;
-    padding-inline: 0.35rem;
-    padding-bottom: 0.25rem;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: thin;
-    width: auto;
-  }
-  .odds-stat {
-    flex: 0 0 auto;
-    width: 4.85rem;
-    min-width: 4.85rem;
-    min-height: 4.6rem;
-    scroll-snap-align: center;
-  }
-  .odds-stat__rate { font-size: 1.15rem; }
-  .odds-stat__band { font-size: 0.78rem; }
-  .odds-global__rate { font-size: 1.4rem; }
   .combo-leg {
     grid-template-columns: auto minmax(0, 1fr);
     grid-template-areas:
@@ -3508,6 +3517,11 @@ input[type="search"]::-webkit-search-cancel-button { -webkit-appearance: none; }
   color: var(--warn);
   font-size: 0.76rem;
 }
+.market-estimate-note--ok {
+  border-color: var(--line);
+  background: var(--board-2);
+  color: var(--fog);
+}
 .market-averages {
   margin: 0.65rem 0 0.9rem;
   padding: 0.7rem;
@@ -4413,6 +4427,27 @@ body.browse-layout {
 }
 @media (max-width: 899px) {
   .browse-col--panel { display: none; }
+  body.has-ligas-selection #ligas > .aciertos-bar { display: none; }
+  body.has-ligas-selection .ligas-split {
+    min-height: 0;
+    gap: 0;
+  }
+  body.has-ligas-selection .ligas-split .browse-col--list { display: none; }
+  body.has-ligas-selection .ligas-split .browse-col--panel {
+    display: block;
+    padding-top: 0;
+    margin-top: 0;
+    border: 0;
+    border-radius: 0;
+    max-height: none;
+    position: static;
+  }
+  body.has-ligas-selection #ligas-panel-empty { display: none; }
+  body.has-ligas-selection .ligas-explorer__hint { display: none; }
+}
+
+.ligas-split .browse-panel-empty {
+  padding: 1.25rem 1rem;
 }
 
 .browse-chrome { margin-bottom: 0.65rem; }
@@ -5056,159 +5091,287 @@ body.browse-layout {
   .v2-header .premium-chip { display: none; }
 }
 
-/*  Ligas view + Top 3 valor  */
-.ligas-tabs {
+/* —— Ligas explorer (carpetas → tabla) + Top 3 —— */
+.ligas-explorer {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.35rem;
-  margin: 0.5rem 0 0.75rem;
+  flex-direction: column;
+  gap: 0.75rem;
 }
-.ligas-tabs__btn {
-  border: 1px solid var(--line);
-  background: #141414;
-  color: var(--fog-2);
-  border-radius: 999px;
-  padding: 0.4rem 0.85rem;
+.ligas-explorer__hint {
+  margin: 0.25rem 0 0;
   font-size: 0.82rem;
-  font-weight: 600;
-  cursor: pointer;
-}
-.ligas-tabs__btn.is-active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
-}
-.ligas-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-  margin-bottom: 0.75rem;
 }
 .ligas-list {
   display: flex;
   flex-direction: column;
-  gap: 0.65rem;
+  gap: 0.45rem;
 }
-.ligas-list__summary {
-  font-size: 0.8rem;
-  margin-bottom: 0.15rem;
-}
-.ligas-country {
+.ligas-folder {
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 10px;
   background: #101010;
   overflow: hidden;
 }
-.ligas-country.is-all-active {
-  border-color: rgba(220, 38, 38, 0.45);
+.ligas-folder.is-open {
+  border-color: rgba(220, 38, 38, 0.35);
 }
-.ligas-country.is-partial {
-  border-color: rgba(220, 38, 38, 0.28);
-}
-.ligas-country__head {
+.ligas-folder__head {
   display: flex;
   align-items: center;
   gap: 0.55rem;
   width: 100%;
+  min-height: 48px;
   margin: 0;
-  padding: 0.55rem 0.7rem;
+  padding: 0.65rem 0.8rem;
   border: 0;
-  border-bottom: 1px solid var(--line);
   background: #151515;
   color: var(--chalk);
   font-family: var(--font-body);
   text-align: left;
   cursor: pointer;
-  transition: background 0.15s ease;
 }
-.ligas-country__head:hover {
+.ligas-folder__head:hover {
   background: #1a1a1a;
 }
-.ligas-country__head:focus-visible {
+.ligas-folder__head:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
-.ligas-country__check {
+.ligas-folder__chevron {
   flex-shrink: 0;
-  width: 1.1rem;
-  height: 1.1rem;
-  border: 1.5px solid var(--line-strong);
-  border-radius: 0.25rem;
-  background: var(--board);
-  position: relative;
-}
-.ligas-country.is-all-active .ligas-country__check {
-  border-color: var(--accent);
-  background: var(--accent);
-}
-.ligas-country.is-all-active .ligas-country__check::after {
-  content: '';
-  position: absolute;
-  left: 0.28rem;
-  top: 0.08rem;
-  width: 0.28rem;
+  width: 0.55rem;
   height: 0.55rem;
-  border: solid var(--accent-ink, #fff);
-  border-width: 0 2px 2px 0;
+  border-right: 2px solid var(--fog-2);
+  border-bottom: 2px solid var(--fog-2);
+  transform: rotate(-45deg);
+  transition: transform 0.15s ease;
+  margin-right: 0.15rem;
+}
+.ligas-folder.is-open .ligas-folder__chevron {
   transform: rotate(45deg);
+  margin-top: -0.15rem;
 }
-.ligas-country.is-partial .ligas-country__check {
-  border-color: var(--accent);
-  background: var(--accent-dim);
-}
-.ligas-country.is-partial .ligas-country__check::after {
-  content: '';
-  position: absolute;
-  left: 0.22rem;
-  right: 0.22rem;
-  top: 50%;
-  height: 2px;
-  margin-top: -1px;
-  background: var(--accent);
-  border-radius: 1px;
-}
-.ligas-country__flag {
-  font-size: 1.35rem;
-  line-height: 1;
-  width: 1.6rem;
-  text-align: center;
+.ligas-folder__flag,
+.ligas-folder__uefa {
   flex-shrink: 0;
+  width: 1.5rem;
+  text-align: center;
+  font-size: 1.2rem;
+  line-height: 1;
 }
-.ligas-country__body {
-  display: grid;
-  gap: 0.1rem;
+.ligas-folder__uefa {
+  color: var(--accent);
+  font-size: 1rem;
+}
+.ligas-folder__label {
+  flex: 1;
   min-width: 0;
-}
-.ligas-country__name {
-  font-size: 0.92rem;
+  font-size: 0.95rem;
   font-weight: 700;
   letter-spacing: -0.01em;
 }
-.ligas-country__meta {
+.ligas-folder__badge {
+  flex-shrink: 0;
   font-size: 0.72rem;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--fog);
+  background: #1c1c1c;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.15rem 0.4rem;
 }
-.ligas-country__leagues {
+.ligas-folder__body {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  border-top: 1px solid transparent;
+  transition: grid-template-rows 0.18s ease, opacity 0.18s ease, border-color 0.18s ease;
+}
+.ligas-folder.is-open .ligas-folder__body {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  border-top-color: var(--line);
+}
+.ligas-folder__body-inner {
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   gap: 0;
-  padding: 0.25rem;
+  padding: 0 0.2rem 0.2rem;
 }
-.ligas-country__leagues .league-cat--nested {
+@media (prefers-reduced-motion: reduce) {
+  .ligas-folder__body {
+    transition: none;
+  }
+}
+.ligas-league-row {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  width: 100%;
+  min-height: 48px;
+  margin: 0;
+  padding: 0.55rem 0.7rem;
   border: 0;
   border-radius: 8px;
   background: transparent;
-  box-shadow: none;
-  min-height: 2.25rem;
-  padding: 0.4rem 0.55rem 0.4rem 0.45rem;
+  color: var(--chalk);
+  font-family: var(--font-body);
+  text-align: left;
+  cursor: pointer;
 }
-.ligas-country__leagues .league-cat--nested:hover {
-  background: var(--board-2);
+.ligas-league-row:hover {
+  background: var(--board-2, #161616);
 }
-.ligas-country__leagues .league-cat--nested.active {
-  background: var(--accent-dim);
-  box-shadow: inset 3px 0 0 var(--accent);
+.ligas-league-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.ligas-league-row__name {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+.ligas-league-row__tag {
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--fog);
+}
+.ligas-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+.ligas-detail__head {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+.ligas-detail__back {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #151515;
+  color: var(--chalk);
+  font-size: 1.1rem;
+  cursor: pointer;
+}
+.ligas-detail__back:hover {
+  background: #1a1a1a;
+}
+.ligas-detail__back:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.ligas-detail__titles {
+  min-width: 0;
+}
+.ligas-detail__name {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+}
+.ligas-detail__meta {
+  margin: 0.1rem 0 0;
+  font-size: 0.78rem;
+  color: var(--fog);
+}
+.ligas-detail__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.ligas-table {
+  min-height: 4rem;
+}
+.ligas-standings__wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #0f0f0f;
+}
+.ligas-standings {
+  width: 100%;
+  min-width: 320px;
+  border-collapse: collapse;
+  font-size: 0.84rem;
+}
+.ligas-standings th,
+.ligas-standings td {
+  padding: 0.55rem 0.4rem;
+  text-align: center;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.ligas-standings th {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--fog);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: #151515;
+}
+.ligas-standings th:nth-child(2),
+.ligas-standings td:nth-child(2) {
+  text-align: left;
+  padding-left: 0.55rem;
+}
+.ligas-standings__pos {
+  width: 2rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--fog-2);
+  font-weight: 600;
+}
+.ligas-standings__team {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+  max-width: 11.5rem;
+}
+.ligas-standings__team-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+}
+.ligas-standings__pts {
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.ligas-standings__gd {
+  font-variant-numeric: tabular-nums;
+  color: var(--fog-2);
+}
+.ligas-standings__row {
+  cursor: pointer;
+  min-height: 44px;
+}
+.ligas-standings__row:hover {
+  background: rgba(220, 38, 38, 0.08);
+}
+.ligas-standings__row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.ligas-standings__empty,
+.ligas-standings__error {
+  margin: 0.75rem 0;
+  font-size: 0.88rem;
+  color: var(--fog);
+}
+.ligas-standings__error {
+  color: #f87171;
 }
 .top3-lead {
   margin: 0 0 0.85rem;

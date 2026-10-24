@@ -1,9 +1,50 @@
 /**
  * Public crest URLs via API-Sports media CDN (no API key needed to display).
  * Keys: normalizeTeamName(name) → AF team id.
+ * When AF media serves a broken/placeholder crest, prefer FotMob CDN overrides.
  */
 
 const MEDIA = 'https://media.api-sports.io/football/teams';
+const FOTMOB_MEDIA = 'https://images.fotmob.com/image_resources/logo/teamlogo';
+
+/** AF media team ids known to serve a wrong/placeholder crest PNG. */
+const AF_BROKEN_LOGO_IDS = new Set([
+  1102, // RC Deportivo — CDN returns striped placeholder, not the club crest
+  85, // PSG — AF media often wrong vs current crest; force FotMob
+  3751, // Elche — AF media unreliable; force FotMob
+  168, // Leverkusen — force FotMob so D1/client aliases always rewrite
+]);
+
+/**
+ * FotMob teamlogo ids for clubs where AF media is broken or missing.
+ * Checked before CLUB_IDS. Keys: normalizeTeamName(name).
+ * @type {Record<string, number>}
+ */
+const FOTMOB_CLUB_IDS = {
+  'rc deportivo': 9783,
+  'rc deportivo de la coruna': 9783,
+  'deportivo la coruna': 9783,
+  'deportivo a coruna': 9783,
+  'deportivo de la coruna': 9783,
+  // Bare "deportivo" = A Coruña in our leagues (Alavés uses "deportivo alaves").
+  deportivo: 9783,
+  // PSG / Elche: force FotMob (AF media or D1 URL often wrong / collides with "paris").
+  'paris saint germain': 9847,
+  'paris saint-germain': 9847,
+  'paris saint germain fc': 9847,
+  'paris saint-germain fc': 9847,
+  'paris sg': 9847,
+  'paris s g': 9847,
+  psg: 9847,
+  elche: 10268,
+  'elche cf': 10268,
+  // Bayer Leverkusen — client often only had bare "leverkusen"; force FotMob.
+  'bayer leverkusen': 8178,
+  'bayer 04 leverkusen': 8178,
+  'bayer 04': 8178,
+  leverkusen: 8178,
+  'bayer leverkusen fc': 8178,
+};
 
 /** @type {Record<string, number>} */
 const CLUB_IDS = {
@@ -57,9 +98,12 @@ const CLUB_IDS = {
   'valencia cf': 532,
   villarreal: 533,
   'villarreal cf': 533,
+  // RC Deportivo: AF id 1102 exists but media CDN crest is broken — see FOTMOB_CLUB_IDS.
   'rc deportivo': 1102,
   'rc deportivo de la coruna': 1102,
   'deportivo la coruna': 1102,
+  'deportivo a coruna': 1102,
+  'deportivo de la coruna': 1102,
   deportivo: 1102,
 
   // —— Premier League ——
@@ -153,7 +197,9 @@ const CLUB_IDS = {
   leipzig: 173,
   'bayer leverkusen': 168,
   'bayer 04 leverkusen': 168,
+  'bayer 04': 168,
   leverkusen: 168,
+  'bayer leverkusen fc': 168,
   'eintracht frankfurt': 169,
   frankfurt: 169,
   wolfsburg: 161,
@@ -209,6 +255,10 @@ const CLUB_IDS = {
   // —— Ligue 1 ——
   'paris saint germain': 85,
   'paris saint-germain': 85,
+  'paris saint germain fc': 85,
+  'paris saint-germain fc': 85,
+  'paris sg': 85,
+  'paris s g': 85,
   psg: 85,
   marseille: 81,
   'olympique marseille': 81,
@@ -562,12 +612,30 @@ function clubLookupKeys(key) {
   return keys;
 }
 
+function isFotmobCrestUrl(url) {
+  return /images\.fotmob\.com\/image_resources\/logo\/teamlogo\//i.test(String(url || ''));
+}
+
+function isFlagCdnUrl(url) {
+  return /flagcdn\.com\//i.test(String(url || ''));
+}
+
+function apiSportsTeamIdFromUrl(url) {
+  const m = String(url || '').match(/media\.api-sports\.io\/football\/teams\/(\d+)\.png/i);
+  return m ? Number(m[1]) : null;
+}
+
 export function clubLogoUrl(name) {
   const key = normalizeTeamName(name);
   if (!key) return null;
   for (const k of clubLookupKeys(key)) {
+    const fmId = FOTMOB_CLUB_IDS[k];
+    if (fmId != null) return `${FOTMOB_MEDIA}/${fmId}.png`;
+  }
+  for (const k of clubLookupKeys(key)) {
     const id = CLUB_IDS[k];
-    if (id != null) return MEDIA + '/' + id + '.png';
+    if (id == null || AF_BROKEN_LOGO_IDS.has(id)) continue;
+    return `${MEDIA}/${id}.png`;
   }
   return null;
 }
@@ -578,7 +646,264 @@ export function flagLogoForTeamName(name) {
   return iso ? 'https://flagcdn.com/w80/' + iso + '.png' : null;
 }
 
-/** Prefer mapped crest/flag; fall back to stored logo_url. */
-export function resolveTeamLogoUrl(name, existingLogo = null) {
-  return clubLogoUrl(name) || flagLogoForTeamName(name) || (existingLogo ? String(existingLogo) : null);
+function fotmobOverrideUrl(name) {
+  const key = normalizeTeamName(name);
+  if (!key) return null;
+  for (const k of clubLookupKeys(key)) {
+    const fmId = FOTMOB_CLUB_IDS[k];
+    if (fmId != null) return `${FOTMOB_MEDIA}/${fmId}.png`;
+  }
+  return null;
 }
+
+/**
+ * Resolve display crest: prefer synced FotMob logos, then static maps,
+ * and replace known-broken API-Sports media URLs.
+ */
+export function resolveTeamLogoUrl(name, existingLogo = null) {
+  const existing = existingLogo ? String(existingLogo).trim() : '';
+  if (existing && isFotmobCrestUrl(existing)) return existing;
+
+  // Explicit FotMob overrides always win over stored AF URLs (PSG, Elche, Deportivo…).
+  const fotmobForced = fotmobOverrideUrl(name);
+  if (fotmobForced) return fotmobForced;
+
+  const mapped = clubLogoUrl(name);
+  const afId = existing ? apiSportsTeamIdFromUrl(existing) : null;
+  if (afId != null && AF_BROKEN_LOGO_IDS.has(afId) && mapped) return mapped;
+  if (existing && /^https?:\/\//i.test(existing) && !isFlagCdnUrl(existing)) {
+    return existing;
+  }
+  return mapped || flagLogoForTeamName(name) || (existing || null);
+}
+
+/** Canonical top-5 rosters for crest audit (display name → preferred lookup key). */
+export const TOP5_CREST_ROSTERS = {
+  39: {
+    name: 'Premier League',
+    teams: [
+      'Arsenal',
+      'Aston Villa',
+      'Bournemouth',
+      'Brentford',
+      'Brighton',
+      'Chelsea',
+      'Crystal Palace',
+      'Everton',
+      'Fulham',
+      'Ipswich',
+      'Leicester',
+      'Liverpool',
+      'Manchester City',
+      'Manchester United',
+      'Newcastle',
+      'Nottingham Forest',
+      'Southampton',
+      'Tottenham',
+      'West Ham',
+      'Wolves',
+      'Burnley',
+      'Leeds',
+      'Sunderland',
+    ],
+  },
+  140: {
+    name: 'LaLiga',
+    teams: [
+      'Alaves',
+      'Athletic Club',
+      'Atletico Madrid',
+      'Barcelona',
+      'Celta Vigo',
+      'Elche',
+      'Espanyol',
+      'Getafe',
+      'Girona',
+      'Levante',
+      'Mallorca',
+      'Osasuna',
+      'Rayo Vallecano',
+      'Real Betis',
+      'Real Madrid',
+      'Real Oviedo',
+      'Real Sociedad',
+      'Sevilla',
+      'Valencia',
+      'Villarreal',
+      'RC Deportivo',
+    ],
+  },
+  135: {
+    name: 'Serie A',
+    teams: [
+      'AC Milan',
+      'Inter',
+      'Juventus',
+      'Napoli',
+      'Roma',
+      'Lazio',
+      'Atalanta',
+      'Fiorentina',
+      'Bologna',
+      'Torino',
+      'Udinese',
+      'Genoa',
+      'Cagliari',
+      'Empoli',
+      'Monza',
+      'Lecce',
+      'Hellas Verona',
+      'Como',
+      'Parma',
+      'Venezia',
+      'Sassuolo',
+    ],
+  },
+  78: {
+    name: 'Bundesliga',
+    teams: [
+      'Bayern Munich',
+      'Borussia Dortmund',
+      'RB Leipzig',
+      'Bayer Leverkusen',
+      'Eintracht Frankfurt',
+      'Wolfsburg',
+      'Borussia Monchengladbach',
+      'Hoffenheim',
+      'Freiburg',
+      'Mainz 05',
+      'Augsburg',
+      'Stuttgart',
+      'Werder Bremen',
+      'Union Berlin',
+      'Heidenheim',
+      'St Pauli',
+      'Holstein Kiel',
+      'FC Koln',
+      'Hamburger SV',
+    ],
+  },
+  61: {
+    name: 'Ligue 1',
+    teams: [
+      'Paris Saint Germain',
+      'Marseille',
+      'Lyon',
+      'Monaco',
+      'Lille',
+      'Nice',
+      'Rennes',
+      'Lens',
+      'Strasbourg',
+      'Nantes',
+      'Toulouse',
+      'Reims',
+      'Montpellier',
+      'Brest',
+      'Auxerre',
+      'Angers',
+      'Le Havre',
+      'Saint Etienne',
+      'Paris FC',
+      'Lorient',
+    ],
+  },
+};
+
+/**
+ * Audit one club crest against static maps (no pixel AI).
+ * @returns {{ team, leagueApiId, logoUrl, referenceUrl, referenceSource, status, problem, action, evidence }}
+ */
+export function auditCrestForTeam(teamName, leagueApiId, existingLogo = null) {
+  const name = String(teamName || '').trim();
+  const key = normalizeTeamName(name);
+  const resolved = resolveTeamLogoUrl(name, existingLogo);
+  const mapped = clubLogoUrl(name);
+  let fotmobId = null;
+  let afId = null;
+  for (const k of clubLookupKeys(key)) {
+    if (FOTMOB_CLUB_IDS[k] != null) {
+      fotmobId = FOTMOB_CLUB_IDS[k];
+      break;
+    }
+  }
+  for (const k of clubLookupKeys(key)) {
+    if (CLUB_IDS[k] != null) {
+      afId = CLUB_IDS[k];
+      break;
+    }
+  }
+  const existingAf = existingLogo ? apiSportsTeamIdFromUrl(existingLogo) : null;
+  let status = 'pending';
+  let problem = null;
+  let action = null;
+  const referenceUrl = mapped || resolved;
+  const referenceSource = fotmobId
+    ? 'fotmob'
+    : afId != null && !AF_BROKEN_LOGO_IDS.has(afId)
+      ? 'api-sports'
+      : null;
+
+  if (!key) {
+    status = 'pending';
+    problem = 'empty_name';
+    action = 'skip';
+  } else if (afId != null && AF_BROKEN_LOGO_IDS.has(afId)) {
+    if (resolved && isFotmobCrestUrl(resolved)) {
+      status = 'verified';
+      problem = 'af_media_broken_overridden';
+      action = 'use_fotmob';
+    } else {
+      status = 'broken';
+      problem = 'af_media_broken';
+      action = 'add_fotmob_override';
+    }
+  } else if (existingAf != null && afId != null && existingAf !== afId) {
+    status = 'mismatch';
+    problem = `stored_af_id_${existingAf}_expected_${afId}`;
+    action = 'rewrite_logo_url';
+  } else if (referenceUrl && resolved && referenceUrl === resolved) {
+    status = 'verified';
+    action = 'none';
+  } else if (!mapped && !resolved) {
+    status = 'pending';
+    problem = 'no_map_entry';
+    action = 'add_club_id_map';
+  } else if (mapped && existingLogo && mapped !== existingLogo && !isFotmobCrestUrl(existingLogo)) {
+    status = 'mismatch';
+    problem = 'stored_differs_from_map';
+    action = 'rewrite_via_resolve';
+  } else if (resolved) {
+    status = 'verified';
+    action = 'none';
+  }
+
+  return {
+    team: name,
+    leagueApiId: Number(leagueApiId),
+    teamApiId: afId,
+    logoUrl: existingLogo || resolved,
+    referenceUrl,
+    referenceSource,
+    status,
+    problem,
+    action,
+    evidence: JSON.stringify({
+      key,
+      afId,
+      fotmobId,
+      existingAf,
+      resolved,
+      mapped,
+    }),
+  };
+}
+
+export function auditCrestsForLeague(leagueApiId) {
+  const roster = TOP5_CREST_ROSTERS[Number(leagueApiId)];
+  if (!roster) return { leagueApiId, name: null, rows: [] };
+  const rows = roster.teams.map((t) => auditCrestForTeam(t, leagueApiId, null));
+  return { leagueApiId: Number(leagueApiId), name: roster.name, rows };
+}
+
+export { AF_BROKEN_LOGO_IDS, FOTMOB_CLUB_IDS, CLUB_IDS, MEDIA, FOTMOB_MEDIA };

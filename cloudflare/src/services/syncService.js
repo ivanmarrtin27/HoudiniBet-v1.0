@@ -306,12 +306,16 @@ function extractOddsFields(bets) {
     home: oddValue(matchWinner, (v) => v === 'Home'),
     draw: oddValue(matchWinner, (v) => v === 'Draw'),
     away: oddValue(matchWinner, (v) => v === 'Away'),
+    over05: oddValue(overUnder, (v) => /over\s*0\.5/i.test(v)),
+    under05: oddValue(overUnder, (v) => /under\s*0\.5/i.test(v)),
     over15: oddValue(overUnder, (v) => /over\s*1\.5/i.test(v)),
     under15: oddValue(overUnder, (v) => /under\s*1\.5/i.test(v)),
     over25: oddValue(overUnder, (v) => /over\s*2\.5/i.test(v)),
     under25: oddValue(overUnder, (v) => /under\s*2\.5/i.test(v)),
     over35: oddValue(overUnder, (v) => /over\s*3\.5/i.test(v)),
     under35: oddValue(overUnder, (v) => /under\s*3\.5/i.test(v)),
+    over45: oddValue(overUnder, (v) => /over\s*4\.5/i.test(v)),
+    under45: oddValue(overUnder, (v) => /under\s*4\.5/i.test(v)),
     bttsYes: oddValue(btts, (v) => /^yes$/i.test(v.trim())),
     bttsNo: oddValue(btts, (v) => /^no$/i.test(v.trim())),
     shotsOver225: oddValue(totalShots, (v) => /over\s*22\.5/i.test(v)),
@@ -345,12 +349,16 @@ function mergeOddsFromBookmakers(bookmakers) {
     'home',
     'draw',
     'away',
+    'over05',
+    'under05',
     'over15',
     'under15',
     'over25',
     'under25',
     'over35',
     'under35',
+    'over45',
+    'under45',
     'bttsYes',
     'bttsNo',
     'shotsOver225',
@@ -428,12 +436,16 @@ async function syncOddsForMatch(env, db, apiFixtureId, localMatchId, rateLimit =
       home_odds: merged.home,
       draw_odds: merged.draw,
       away_odds: merged.away,
+      over05_odds: merged.over05,
+      under05_odds: merged.under05,
       over15_odds: merged.over15,
       under15_odds: merged.under15,
       over25_odds: merged.over25,
       under25_odds: merged.under25,
       over35_odds: merged.over35,
       under35_odds: merged.under35,
+      over45_odds: merged.over45,
+      under45_odds: merged.under45,
       btts_yes_odds: merged.bttsYes,
       btts_no_odds: merged.bttsNo,
       shots_over225_odds: merged.shotsOver225,
@@ -491,7 +503,23 @@ function teamNameScore(a, b) {
   return Math.round((100 * inter) / Math.max(wa.size, wb.size));
 }
 
-function findBestFixtureMatch(items, homeName, awayName) {
+/** Min score (both teams) for live name-match. 50 was too loose (Atlético/Deportivo). */
+export const LIVE_NAME_MATCH_MIN = 85;
+
+/**
+ * True when D1 kickoff is still in the future (UTC-ish SQL datetime).
+ * Used to block FotMob/AF name-match from writing scores onto unplayed fixtures.
+ */
+export function isPreKickoff(matchDate, marginMs = 2 * 60 * 1000) {
+  if (!matchDate) return false;
+  const raw = String(matchDate).trim().replace(' ', 'T');
+  let ms = Date.parse(/Z$/i.test(raw) ? raw : `${raw}Z`);
+  if (Number.isNaN(ms)) ms = Date.parse(String(matchDate));
+  if (Number.isNaN(ms)) return false;
+  return ms > Date.now() + marginMs;
+}
+
+export function findBestFixtureMatch(items, homeName, awayName, minScore = LIVE_NAME_MATCH_MIN) {
   let best = null;
   let bestScore = 0;
   for (const item of items) {
@@ -503,8 +531,10 @@ function findBestFixtureMatch(items, homeName, awayName) {
       best = item;
     }
   }
-  return bestScore >= 50 ? best : null;
+  return bestScore >= minScore ? best : null;
 }
+
+export { teamNameScore };
 
 /** Significant words of a team name (drops "fc", "cf", "club", numbers). */
 function nameTokens(name) {
@@ -1351,8 +1381,10 @@ export async function runDailySync(env, db) {
   const mode = 'fixturedownload+fotmob';
   await store.setMeta(db, 'last_sync_mode', mode);
   let logosBackfilled = 0;
+  let logosRewritten = 0;
   try {
     logosBackfilled = await store.backfillMissingTeamLogos(db, resolveTeamLogoUrl);
+    logosRewritten = await store.rewriteBrokenTeamLogos(db, resolveTeamLogoUrl);
   } catch (_) {
     /* ignore logo backfill errors */
   }
@@ -1394,6 +1426,7 @@ export async function runDailySync(env, db) {
     predicted,
     tipsDiversityRebalanced: diversityIds.filter((id) => warmIds.includes(id)).length,
     logosBackfilled,
+    logosRewritten,
     tipsBackfilled,
     tipOddsBackfilled,
     tipsSettled,
@@ -1514,7 +1547,35 @@ export async function runAfEnrichOnly(env, db) {
   };
 }
 
-const LIVE_REFRESH_COOLDOWN_MS = 45 * 1000;
+export const LIVE_REFRESH_COOLDOWN_MS = 45 * 1000;
+
+/**
+ * HTTP handler: returns immediately while the heavy refresh runs in waitUntil
+ * (unless ?wait=1 / force, or still inside the cooldown window).
+ */
+export async function handleLiveRefreshRequest(env, db, ctx, { force = false, wait = false } = {}) {
+  if (wait || force) {
+    return runLiveStatusRefresh(env, db, { force });
+  }
+  const lastAt = await store.getMeta(db, 'last_live_refresh_at');
+  const lastMs = lastAt ? Date.parse(lastAt) : NaN;
+  const inCooldown =
+    lastAt && !Number.isNaN(lastMs) && Date.now() - lastMs < LIVE_REFRESH_COOLDOWN_MS;
+  if (inCooldown) {
+    return runLiveStatusRefresh(env, db, { force });
+  }
+  ctx.waitUntil(
+    runLiveStatusRefresh(env, db, { force }).catch((err) => {
+      console.error('live refresh background', err);
+    })
+  );
+  return {
+    ok: true,
+    async: true,
+    started: true,
+    lastLiveRefreshAt: lastAt || null,
+  };
+}
 
 async function fetchEventsForMatchRow(env, m, hasAfKey, fotmobIdByMatchId = null) {
   const afId = m.af_fixture_id != null ? Number(m.af_fixture_id) : null;
@@ -1575,6 +1636,9 @@ export async function runLiveStatusRefresh(env, db, { force = false } = {}) {
     };
   }
 
+  // Reserve cooldown before slow upstream calls so parallel UI polls don't stack work.
+  await store.setMeta(db, 'last_live_refresh_at', new Date().toISOString());
+
   let fdUpdated = 0;
   let fotmobUpdated = 0;
   let afUpdated = 0;
@@ -1625,6 +1689,8 @@ export async function runLiveStatusRefresh(env, db, { force = false } = {}) {
       );
       const fmId = fotmobMatchIdFromApiId(fx.api_id);
       if (best?._row?.id && !updatedIds.has(best._row.id)) {
+        // Never paint live/finished scores onto a fixture that has not kicked off yet.
+        if (isPreKickoff(best._row.match_date)) continue;
         liveUpdates.push({
           id: best._row.id,
           status: fx.status,
@@ -1646,6 +1712,7 @@ export async function runLiveStatusRefresh(env, db, { force = false } = {}) {
     const liveIndex = buildLiveNameIndex(allLive);
     for (const m of dbMatches) {
       if (updatedIds.has(m.id)) continue;
+      if (isPreKickoff(m.match_date)) continue;
       const candidates = liveCandidatesFor(liveIndex, m.home_name, m.away_name);
       if (!candidates.length) continue;
       const best = findBestFixtureMatch(candidates, m.home_name, m.away_name);
@@ -1689,6 +1756,7 @@ export async function runLiveStatusRefresh(env, db, { force = false } = {}) {
       }
 
       for (const m of dbMatches) {
+        if (isPreKickoff(m.match_date)) continue;
         const leagueApi = Number(m.league_api_id);
         // AF league ids for clubs match FD; FotMob leagues use 840M+ — skip those for AF name match on wrong pool
         let candidates = byLeague.get(leagueApi) || [];

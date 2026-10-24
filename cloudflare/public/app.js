@@ -160,8 +160,63 @@ let statusFilter = 'all';
 let selectedMatchId = null;
 let leagueFilterIds = new Set(); // empty = todas; otherwise selected league ids
 let leaguesPanelOpen = true;
-/** Scope inside #ligas view: clubs | intl | all */
-let ligasViewScope = 'clubs';
+/** Ligas explorer: open folder key + active league api_id for table detail. */
+let ligasOpenFolder = 'europeas';
+let ligasActiveApiId = null;
+let ligasActiveD1Id = null;
+let ligasLeaguesByApiId = null;
+let ligasLeaguesPromise = null;
+const LIGAS_FOLDERS = [
+  {
+    key: 'europeas',
+    label: 'Europeas',
+    badge: 'UEFA',
+    flagCountry: null,
+    leagues: [
+      { apiId: 2, name: 'UEFA Champions League', tag: 'UCL' },
+      { apiId: 3, name: 'UEFA Europa League', tag: 'UEL' },
+      { apiId: 5, name: 'UEFA Nations League', tag: 'UNL' },
+    ],
+  },
+  {
+    key: 'england',
+    label: 'Inglaterra',
+    badge: 'ENG',
+    flagCountry: 'England',
+    leagues: [{ apiId: 39, name: 'Premier League', tag: 'PL' }],
+  },
+  {
+    key: 'spain',
+    label: 'España',
+    badge: 'ESP',
+    flagCountry: 'Spain',
+    leagues: [
+      { apiId: 140, name: 'LaLiga', tag: '1ª' },
+      { apiId: 141, name: 'LaLiga 2', tag: '2ª' },
+    ],
+  },
+  {
+    key: 'italy',
+    label: 'Italia',
+    badge: 'ITA',
+    flagCountry: 'Italy',
+    leagues: [{ apiId: 135, name: 'Serie A', tag: 'SA' }],
+  },
+  {
+    key: 'germany',
+    label: 'Alemania',
+    badge: 'GER',
+    flagCountry: 'Germany',
+    leagues: [{ apiId: 78, name: 'Bundesliga', tag: 'BL' }],
+  },
+  {
+    key: 'france',
+    label: 'Francia',
+    badge: 'FRA',
+    flagCountry: 'France',
+    leagues: [{ apiId: 61, name: 'Ligue 1', tag: 'L1' }],
+  },
+];
 let cachedMatches = [];
 let cachedMode = 'live';
 let cachedBets = [];
@@ -177,16 +232,14 @@ const FREE_TOP_CAP = 10;
 const FREE_VALOR_CAP = 5;
 /** Content unlocked; Premium tab still says “Pronto” / no payment. */
 const PREMIUM_UNLOCKED = true;
-/** '1' | '2' | '3' | '4' | '5' — history selection; combos only for 2–5 */
-let oddsBandFilter = '2';
-let oddsHistoryFilter = 'all'; // all | miss | hit
+/** Cached combos for Cuotas target calculator. */
 let cachedOddsBandBets = [];
-let cachedOddsBandPerf = null;
-let cachedOddsRecent = [];
-let cachedOddsCombos = [];
-/** @type {{ hits: number, misses: number, decided: number, hitRate: number|null, pending: number, windowLabel?: string|null }|null} */
-let cachedOddsGlobal = null;
-/** Shared tip summary/perf cache for badge + Bandas counters */
+/** Target cuota for Cuotas calculator (default 3.0). */
+let cuotasTargetOdds = 3;
+/** Debounce + request generation for slider recalcs. */
+let cuotasTargetTimer = null;
+let cuotasLoadGen = 0;
+/** Shared tip summary/perf cache for badge + Stats */
 let cachedTipSummary = null;
 let tipPerfCacheKey = '';
 let tipPerfCache = null;
@@ -231,12 +284,20 @@ const BET_LABELS = {
   HOME_WIN: 'Victoria local',
   DRAW: 'Empate',
   AWAY_WIN: 'Victoria visitante',
+  DC_1X: 'Doble oportunidad 1X',
+  DC_X2: 'Doble oportunidad X2',
+  DNB_HOME: 'Empate no válido · local',
+  DNB_AWAY: 'Empate no válido · visitante',
+  OVER_05: 'Más de 0,5 goles',
+  UNDER_05: 'Menos de 0,5 goles',
   OVER_15: 'Más de 1,5 goles',
   UNDER_15: 'Menos de 1,5 goles',
   OVER_25: 'Más de 2,5 goles',
   UNDER_25: 'Menos de 2,5 goles',
   OVER_35: 'Más de 3,5 goles',
   UNDER_35: 'Menos de 3,5 goles',
+  OVER_45: 'Más de 4,5 goles',
+  UNDER_45: 'Menos de 4,5 goles',
   BTTS_YES: 'Ambos marcan — Sí',
   BTTS_NO: 'Ambos marcan — No',
   HOME_OVER_05: 'Local · Más de 0,5 goles',
@@ -279,6 +340,8 @@ const BET_LABELS = {
 
 const FAMILY_LABELS = {
   '1X2': '1X2',
+  ou: 'Más/Menos',
+  btts: 'Ambos marcan',
   goles: 'Goles',
   corners: 'Córners',
   cards: 'Amarillas',
@@ -286,6 +349,9 @@ const FAMILY_LABELS = {
   shots_on_target: 'Tiros a puerta',
   otros: 'Otros',
 };
+
+/** Align with predictionService MIN_VALUE (5% edge vs fair book). */
+const MIN_VALUE_EDGE = 0.05;
 
 /** "15" → "1,5" ; "105" → "10,5" */
 function lineFromSuffix(suffix) {
@@ -620,9 +686,13 @@ const CLUB_CREST_IDS = {
   lask: 652,
   'aek athens': 557,
   viking: 320,
-  paris: 85,
   'paris saint germain': 85,
+  'paris saint-germain': 85,
+  'paris saint germain fc': 85,
+  'paris sg': 85,
   psg: 85,
+  elche: 3751,
+  'elche cf': 3751,
   arsenal: 42,
   barcelona: 529,
   'real madrid': 541,
@@ -653,6 +723,10 @@ const CLUB_CREST_IDS = {
   marseille: 81,
   rennes: 94,
   leverkusen: 168,
+  'bayer leverkusen': 168,
+  'bayer 04 leverkusen': 168,
+  'bayer 04': 168,
+  'bayer leverkusen fc': 168,
   leipzig: 173,
   stuttgart: 172,
   hoffenheim: 167,
@@ -663,8 +737,28 @@ const CLUB_CREST_IDS = {
   'aston villa': 66,
 };
 
-function clubCrestUrl(name) {
-  const key = String(name || '')
+const FOTMOB_CREST_IDS = {
+  'paris saint germain': 9847,
+  'paris saint-germain': 9847,
+  'paris saint germain fc': 9847,
+  'paris saint-germain fc': 9847,
+  'paris sg': 9847,
+  'paris s g': 9847,
+  psg: 9847,
+  elche: 10268,
+  'elche cf': 10268,
+  'rc deportivo': 9783,
+  deportivo: 9783,
+  'bayer leverkusen': 8178,
+  'bayer 04 leverkusen': 8178,
+  'bayer 04': 8178,
+  leverkusen: 8178,
+  'bayer leverkusen fc': 8178,
+};
+const AF_BROKEN_CREST_IDS = new Set([1102, 85, 3751, 168]);
+
+function normalizeCrestKey(name) {
+  return String(name || '')
     .trim()
     .toLowerCase()
     .normalize('NFD')
@@ -679,13 +773,22 @@ function clubCrestUrl(name) {
     .replace(/[^a-z0-9.\s'-]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function clubCrestUrl(name) {
+  const key = normalizeCrestKey(name);
   if (!key) return null;
+  const fm = FOTMOB_CREST_IDS[key];
+  if (fm != null) return `https://images.fotmob.com/image_resources/logo/teamlogo/${fm}.png`;
   const id = CLUB_CREST_IDS[key];
   if (id != null) return `https://media.api-sports.io/football/teams/${id}.png`;
   const stripped = key
     .replace(/^(fc|cf|ac|as|ssc|rc|rcd|gnk|nk|sk|fk|rsc|sl)\s+/, '')
     .replace(/\s+(fc|cf|ac|afc|sc|sv|jk)$/, '')
     .trim();
+  if (stripped && FOTMOB_CREST_IDS[stripped] != null) {
+    return `https://images.fotmob.com/image_resources/logo/teamlogo/${FOTMOB_CREST_IDS[stripped]}.png`;
+  }
   if (stripped && CLUB_CREST_IDS[stripped] != null) {
     return `https://media.api-sports.io/football/teams/${CLUB_CREST_IDS[stripped]}.png`;
   }
@@ -693,7 +796,31 @@ function clubCrestUrl(name) {
 }
 
 function resolveCrestUrl(logo, name) {
-  return clubCrestUrl(name) || (logo ? String(logo) : null) || flagUrlForTeam(name);
+  const existing = logo ? String(logo).trim() : '';
+  const forced = (() => {
+    const key = normalizeCrestKey(name);
+    if (!key) return null;
+    if (FOTMOB_CREST_IDS[key] != null) {
+      return `https://images.fotmob.com/image_resources/logo/teamlogo/${FOTMOB_CREST_IDS[key]}.png`;
+    }
+    const stripped = key
+      .replace(/^(fc|cf|ac|as|ssc|rc|rcd|gnk|nk|sk|fk|rsc|sl)\s+/, '')
+      .replace(/\s+(fc|cf|ac|afc|sc|sv|jk)$/, '')
+      .trim();
+    if (stripped && FOTMOB_CREST_IDS[stripped] != null) {
+      return `https://images.fotmob.com/image_resources/logo/teamlogo/${FOTMOB_CREST_IDS[stripped]}.png`;
+    }
+    return null;
+  })();
+  if (forced) return forced;
+  if (existing && /^https?:\/\//i.test(existing)) {
+    const m = existing.match(/media\.api-sports\.io\/football\/teams\/(\d+)\.png/i);
+    if (m && AF_BROKEN_CREST_IDS.has(Number(m[1]))) {
+      return clubCrestUrl(name) || existing;
+    }
+    return existing;
+  }
+  return clubCrestUrl(name) || flagUrlForTeam(name);
 }
 
 function crestHtml(name, logo, size = 'md') {
@@ -1025,9 +1152,19 @@ function ladderProbRows(side, lines) {
   return rows.join('');
 }
 
-function marketAveragesHtml({ unit, homeName, awayName, recentAvgs, leagueAverage }) {
+function marketAveragesHtml({
+  unit,
+  homeName,
+  awayName,
+  recentAvgs,
+  leagueAverage,
+  leagueProxy = false,
+}) {
   const home = recentAvgs?.home;
   const away = recentAvgs?.away;
+  const hasTeamAvgs =
+    (home != null && Number.isFinite(Number(home))) ||
+    (away != null && Number.isFinite(Number(away)));
   const leaguePerTeam =
     leagueAverage != null && Number.isFinite(Number(leagueAverage))
       ? Number(leagueAverage) / 2
@@ -1036,6 +1173,15 @@ function marketAveragesHtml({ unit, homeName, awayName, recentAvgs, leagueAverag
     if (value == null || !Number.isFinite(Number(value))) return '—';
     return Number(value).toFixed(1).replace('.', ',');
   };
+  const leagueLabel = leagueProxy
+    ? 'Media proxy (sin muestra liga)'
+    : 'Media liga / equipo';
+  let caption = `${unit} por partido (últimos partidos)`;
+  if (!hasTeamAvgs && leagueProxy) {
+    caption = `Sin muestras de equipo · media proxy de referencia`;
+  } else if (leagueProxy) {
+    caption = `${unit} por partido · liga sin muestra → proxy`;
+  }
   return `
     <section class="market-averages" aria-label="Promedios recientes de ${escapeHtml(unit)}">
       <h3 class="market-averages__title">Promedios recientes · ${escapeHtml(unit)}</h3>
@@ -1049,11 +1195,11 @@ function marketAveragesHtml({ unit, homeName, awayName, recentAvgs, leagueAverag
           <strong class="market-averages__value">${format(away)}</strong>
         </div>
         <div class="market-averages__item market-averages__item--league">
-          <span class="market-averages__label">Media liga / equipo</span>
+          <span class="market-averages__label">${escapeHtml(leagueLabel)}</span>
           <strong class="market-averages__value">${format(leaguePerTeam)}</strong>
         </div>
       </div>
-      <p class="market-averages__caption">${escapeHtml(unit)} por partido</p>
+      <p class="market-averages__caption">${escapeHtml(caption)}</p>
     </section>`;
 }
 
@@ -1074,21 +1220,41 @@ function extrasPanel({
   awayLogo,
   recentAvgs,
   leagueAverage,
+  leagueProxy = false,
   fallbackHtml,
 }) {
   const matchRows = ladderProbRows(ladders?.match, matchLines);
   const homeRows = ladderProbRows(ladders?.home, teamLines);
   const awayRows = ladderProbRows(ladders?.away, teamLines);
   const hasRows = Boolean(matchRows || homeRows || awayRows);
-  const degradedNote = ladders?.degraded
-    ? `<div class="market-estimate-note" role="status">Estimación con pocas muestras · ${Number(ladders.samples?.home) || 0} local / ${Number(ladders.samples?.away) || 0} visitante</div>`
-    : '';
+  const homeN = Number(ladders?.samples?.home) || 0;
+  const awayN = Number(ladders?.samples?.away) || 0;
+  const leagueOnly = Boolean(ladders?.degraded) && homeN === 0 && awayN === 0;
+  const oneSided =
+    Boolean(ladders?.degraded) && !leagueOnly && (homeN === 0 || awayN === 0);
+  let degradedNote = '';
+  if (leagueOnly || (leagueProxy && !ladders?.degraded && !hasRows)) {
+    degradedNote = `<div class="market-estimate-note" role="status">Estimación con media de liga${leagueProxy ? ' (proxy)' : ''} · sin muestras de equipo · no es tip</div>`;
+  } else if (oneSided) {
+    degradedNote = `<div class="market-estimate-note" role="status">Estimación parcial · ${homeN} local / ${awayN} visitante (lado sin datos = media liga) · tip exige ≥4 por lado · no es tip</div>`;
+  } else if (ladders?.degraded) {
+    // EXTRA_MARKET_MIN_N = 4: stronger wording only when a side has <2 games.
+    const veryThin = homeN < 2 || awayN < 2;
+    degradedNote = veryThin
+      ? `<div class="market-estimate-note" role="status">Muestras muy escasas · ${homeN} local / ${awayN} visitante · tip exige ≥4 por lado · no es tip</div>`
+      : `<div class="market-estimate-note" role="status">Datos limitados · ${homeN} local / ${awayN} visitante (tip exige ≥4 por lado) · estimación orientativa, no es tip</div>`;
+  } else if (leagueProxy) {
+    degradedNote = `<div class="market-estimate-note" role="status">Media de liga proxy (sin stats reales de liga) · probabilidades del modelo Poisson</div>`;
+  } else if (hasRows) {
+    degradedNote = `<div class="market-estimate-note market-estimate-note--ok muted" role="status">Probabilidades Poisson del modelo · medias = últimos partidos</div>`;
+  }
   const averages = marketAveragesHtml({
     unit,
     homeName,
     awayName,
     recentAvgs,
     leagueAverage,
+    leagueProxy,
   });
   const header = `${expectedCardHtml({
     title: label,
@@ -1543,97 +1709,277 @@ function groupLeaguesByCountry(leagues) {
   return [...map.values()].sort((a, b) => String(a.label).localeCompare(String(b.label), 'es'));
 }
 
-function renderLigasView() {
+function parseLigasApiIdFromHash(hash = location.hash) {
+  const m = String(hash || '').match(/^#ligas\/(\d+)/i);
+  return m ? Number(m[1]) : null;
+}
+
+async function ensureLigasCatalog() {
+  if (ligasLeaguesByApiId) return ligasLeaguesByApiId;
+  if (ligasLeaguesPromise) return ligasLeaguesPromise;
+  ligasLeaguesPromise = api('/api/v1/leagues')
+    .then((data) => {
+      const map = new Map();
+      for (const row of data.leagues || []) {
+        const apiId = Number(row.api_id ?? row.apiId);
+        if (!Number.isFinite(apiId) || apiId <= 0) continue;
+        map.set(apiId, {
+          id: Number(row.id),
+          apiId,
+          name: row.name || '',
+          country: row.country || null,
+        });
+      }
+      ligasLeaguesByApiId = map;
+      return map;
+    })
+    .catch((err) => {
+      ligasLeaguesPromise = null;
+      throw err;
+    });
+  return ligasLeaguesPromise;
+}
+
+function setLigasSelectionVisible(hasSelection) {
+  document.body.classList.toggle('has-ligas-selection', !!hasSelection);
+  const empty = document.getElementById('ligas-panel-empty');
+  const detail = document.getElementById('ligas-detail');
+  if (empty) empty.hidden = !!hasSelection;
+  if (detail) detail.hidden = !hasSelection;
+}
+
+function ligasStandingsHtml(table) {
+  const rows = table || [];
+  if (!rows.length) {
+    return `<p class="ligas-standings__empty">Sin clasificatorio aún</p>`;
+  }
+  const body = rows
+    .map((r) => {
+      const gd = Number(r.goalDiff || 0);
+      const gdTxt = gd > 0 ? `+${gd}` : String(gd);
+      const team = r.team || '';
+      return `<tr class="ligas-standings__row" tabindex="0" role="button" data-team-id="${Number(
+        r.teamId
+      )}" aria-label="Ver próximo partido de ${escapeHtml(team)}">
+        <td class="ligas-standings__pos">${Number(r.position)}</td>
+        <td>
+          <span class="ligas-standings__team">
+            ${crestHtml(team, r.logoUrl, 'sm')}
+            <span class="ligas-standings__team-name">${escapeHtml(team)}</span>
+          </span>
+        </td>
+        <td>${Number(r.played || 0)}</td>
+        <td class="ligas-standings__gd">${escapeHtml(gdTxt)}</td>
+        <td class="ligas-standings__pts">${Number(r.points || 0)}</td>
+      </tr>`;
+    })
+    .join('');
+  return `<div class="ligas-standings__wrap">
+    <table class="ligas-standings">
+      <thead><tr><th>#</th><th>Equipo</th><th>PJ</th><th>DG</th><th>Pts</th></tr></thead>
+      <tbody>${body}</tbody>
+    </table>
+  </div>`;
+}
+
+function bindLigasStandingsRows(root) {
+  root?.querySelectorAll('[data-team-id]').forEach((row) => {
+    const open = async () => {
+      const teamId = Number(row.getAttribute('data-team-id'));
+      if (!Number.isFinite(teamId) || teamId <= 0) return;
+      try {
+        showBanner('Buscando próximo partido…', 'info');
+        const insight = await api(`/api/v1/teams/${teamId}`);
+        const nextId = Number(insight?.nextMatch?.id);
+        if (!Number.isFinite(nextId) || nextId <= 0) {
+          showBanner('Sin partido próximo en la ventana', 'info');
+          return;
+        }
+        showBanner('');
+        setActiveNav('#partidos');
+        selectedMatchId = nextId;
+        openPrediction(nextId).catch((err) => showBanner(err.message || 'Error al abrir', 'error'));
+      } catch (err) {
+        showBanner(err.message || 'No se pudo cargar el equipo', 'error');
+      }
+    };
+    row.addEventListener('click', () => {
+      open().catch(() => {});
+    });
+    row.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        open().catch(() => {});
+      }
+    });
+  });
+}
+
+async function showLigasTable(apiId, { pushHash = true } = {}) {
+  const aid = Number(apiId);
+  if (!Number.isFinite(aid) || aid <= 0) return;
+  const nameEl = document.getElementById('ligas-detail-name');
+  const metaEl = document.getElementById('ligas-detail-meta');
+  const tableEl = document.getElementById('ligas-table');
+  if (!tableEl) return;
+
+  ligasActiveApiId = aid;
+  setLigasSelectionVisible(true);
+  if (pushHash) {
+    const want = `#ligas/${aid}`;
+    if (location.hash !== want) history.replaceState(null, '', want);
+  }
+
+  const folderLeague = LIGAS_FOLDERS.flatMap((f) => f.leagues).find((l) => l.apiId === aid);
+  if (nameEl) nameEl.textContent = folderLeague?.name || `Liga ${aid}`;
+  if (metaEl) metaEl.textContent = 'Cargando clasificación…';
+  tableEl.innerHTML = Array.from({ length: 6 }, () => `<div class="skeleton" aria-hidden="true"></div>`).join('');
+
+  try {
+    const catalog = await ensureLigasCatalog();
+    const known = catalog.get(aid);
+    if (!known) {
+      ligasActiveD1Id = null;
+      if (metaEl) metaEl.textContent = 'No disponible en datos';
+      tableEl.innerHTML = `<p class="ligas-standings__empty">Sin clasificatorio aún</p>`;
+      return;
+    }
+    ligasActiveD1Id = known.id;
+    const data = await api(`/api/v1/leagues/${aid}/table`);
+    const league = data.league || known;
+    ligasActiveD1Id = Number(league.id) || known.id;
+    if (nameEl) nameEl.textContent = league.name || folderLeague?.name || `Liga ${aid}`;
+    if (metaEl) {
+      const bits = [league.country, folderLeague?.tag].filter(Boolean);
+      metaEl.textContent = bits.length ? bits.join(' · ') : 'Clasificación (D1)';
+    }
+    tableEl.innerHTML = ligasStandingsHtml(data.table || []);
+    bindLigasStandingsRows(tableEl);
+  } catch (err) {
+    if (metaEl) metaEl.textContent = '';
+    tableEl.innerHTML = `<p class="ligas-standings__error">${escapeHtml(
+      err.message || 'Error al cargar la tabla'
+    )}</p>`;
+  } finally {
+    const panel = document.getElementById('ligasBrowsePanel');
+    if (panel) panel.scrollTop = 0;
+    const view = document.getElementById('ligas');
+    if (view && typeof view.scrollIntoView === 'function') {
+      view.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    }
+  }
+}
+
+function hideLigasTable({ pushHash = true } = {}) {
+  ligasActiveApiId = null;
+  ligasActiveD1Id = null;
+  setLigasSelectionVisible(false);
+  if (pushHash && location.hash !== '#ligas') history.replaceState(null, '', '#ligas');
+  const tableEl = document.getElementById('ligas-table');
+  if (tableEl) tableEl.innerHTML = '';
+}
+
+function renderLigasFolders(catalog) {
   const listEl = document.getElementById('ligas-list');
   if (!listEl) return;
 
-  document.querySelectorAll('.ligas-tabs__btn').forEach((btn) => {
-    const on = btn.dataset.ligasScope === ligasViewScope;
-    btn.classList.toggle('is-active', on);
-    btn.setAttribute('aria-selected', on ? 'true' : 'false');
-  });
+  const folders = LIGAS_FOLDERS.map((folder) => {
+    const leagues = folder.leagues
+      .map((l) => {
+        const hit = catalog.get(l.apiId);
+        if (!hit) return null;
+        return { ...l, d1Id: hit.id, dbName: hit.name || l.name };
+      })
+      .filter(Boolean);
+    return { ...folder, leagues };
+  }).filter((f) => f.leagues.length > 0);
 
-  const leagues = collectLeagues(cachedMatches, ligasViewScope);
-  pruneLeagueSelection(leagues);
-  const nSel = selectedLeagueCount();
-  const groups = groupLeaguesByCountry(leagues);
-
-  if (!leagues.length) {
-    listEl.innerHTML = `<p class="league-cats__empty">No hay ligas con partidos el ${escapeHtml(
-      formatDateCenter(resolveSelectedDate())
-    )}.</p>`;
+  if (!folders.length) {
+    listEl.innerHTML = `<p class="ligas-standings__empty">No hay ligas disponibles todavía.</p>`;
     return;
   }
 
-  const totalMatches = leagues.reduce((n, l) => n + l.count, 0);
-  listEl.innerHTML = [
-    `<div class="ligas-list__summary muted">${groups.length} país${
-      groups.length === 1 ? '' : 'es'
-    } · ${leagues.length} competicion${leagues.length === 1 ? '' : 'es'} · ${totalMatches} partidos · ${
-      nSel ? `${nSel} seleccionada${nSel === 1 ? '' : 's'}` : 'ningún filtro'
-    }</div>`,
-    ...groups.map((g) => {
-      const ids = g.leagues.map((l) => Number(l.id)).filter((id) => Number.isFinite(id));
-      const selN = ids.filter((id) => leagueFilterIds.has(id)).length;
-      const allOn = ids.length > 0 && selN === ids.length;
-      const someOn = selN > 0 && !allOn;
-      const countryKey = encodeURIComponent(g.country || '_');
-      return `<section class="ligas-country${allOn ? ' is-all-active' : someOn ? ' is-partial' : ''}" data-country-group="${countryKey}">
-        <button type="button" class="ligas-country__head" data-country-toggle="${countryKey}" aria-pressed="${allOn ? 'true' : 'false'}" title="Seleccionar o quitar todas las ligas de ${escapeHtml(g.label)}">
-          <span class="ligas-country__check" aria-hidden="true"></span>
-          <span class="ligas-country__flag" aria-hidden="true">${g.flag}</span>
-          <span class="ligas-country__body">
-            <span class="ligas-country__name">${escapeHtml(g.label)}</span>
-            <span class="ligas-country__meta">${g.leagues.length} liga${
-        g.leagues.length === 1 ? '' : 's'
-      } · ${g.matchCount} partido${g.matchCount === 1 ? '' : 's'}</span>
-          </span>
+  if (!folders.some((f) => f.key === ligasOpenFolder)) {
+    ligasOpenFolder = folders[0].key;
+  }
+
+  listEl.innerHTML = folders
+    .map((folder) => {
+      const open = folder.key === ligasOpenFolder;
+      const flagHtml = folder.flagCountry
+        ? `<span class="ligas-folder__flag" aria-hidden="true">${countryFlag(folder.flagCountry)}</span>`
+        : `<span class="ligas-folder__uefa" aria-hidden="true">★</span>`;
+      return `<section class="ligas-folder${open ? ' is-open' : ''}" data-folder="${escapeHtml(folder.key)}">
+        <button type="button" class="ligas-folder__head" data-folder-toggle="${escapeHtml(
+          folder.key
+        )}" aria-expanded="${open ? 'true' : 'false'}">
+          <span class="ligas-folder__chevron" aria-hidden="true"></span>
+          ${flagHtml}
+          <span class="ligas-folder__label">${escapeHtml(folder.label)}</span>
+          <span class="ligas-folder__badge">${escapeHtml(folder.badge)}</span>
         </button>
-        <div class="ligas-country__leagues" role="group" aria-label="${escapeHtml(g.label)}">
-          ${g.leagues
-            .map((l) => {
-              const id = Number(l.id);
-              const active = leagueFilterIds.has(id);
-              return `<button type="button" class="league-cat league-cat--nested${
-                active ? ' active' : ''
-              }" role="option" aria-selected="${active}" data-liga-id="${id}">
-            <span class="league-cat__check" aria-hidden="true"></span>
-            <span class="league-cat__body">
-              <span class="league-cat__name">${escapeHtml(l.name)}</span>
-              <span class="league-cat__meta">${l.count} partido${l.count === 1 ? '' : 's'}</span>
-            </span>
-          </button>`;
-            })
+        <div class="ligas-folder__body" role="group" aria-label="${escapeHtml(folder.label)}">
+          <div class="ligas-folder__body-inner">
+          ${folder.leagues
+            .map(
+              (l) => `<button type="button" class="ligas-league-row" data-liga-api="${l.apiId}">
+            <span class="ligas-league-row__name">${escapeHtml(l.dbName || l.name)}</span>
+            <span class="ligas-league-row__tag">${escapeHtml(l.tag)}</span>
+          </button>`
+            )
             .join('')}
+          </div>
         </div>
       </section>`;
-    }),
-  ].join('');
+    })
+    .join('');
 
-  listEl.querySelectorAll('[data-country-toggle]').forEach((btn) => {
+  listEl.querySelectorAll('[data-folder-toggle]').forEach((btn) => {
     btn.addEventListener('click', () => {
-      const key = decodeURIComponent(btn.getAttribute('data-country-toggle') || '');
-      const group = groups.find((g) => (g.country || '_') === key);
-      if (!group) return;
-      const ids = group.leagues.map((l) => Number(l.id)).filter((id) => Number.isFinite(id));
-      const allOn = ids.length > 0 && ids.every((id) => leagueFilterIds.has(id));
-      if (allOn) ids.forEach((id) => leagueFilterIds.delete(id));
-      else ids.forEach((id) => leagueFilterIds.add(id));
-      persistFiltersIfAllowed();
-      renderLigasView();
+      const key = btn.getAttribute('data-folder-toggle') || '';
+      ligasOpenFolder = ligasOpenFolder === key ? '' : key;
+      renderLigasFolders(catalog);
     });
   });
 
-  listEl.querySelectorAll('[data-liga-id]').forEach((btn) => {
+  listEl.querySelectorAll('[data-liga-api]').forEach((btn) => {
     btn.addEventListener('click', () => {
-      const id = Number(btn.getAttribute('data-liga-id'));
-      if (!Number.isFinite(id)) return;
-      if (leagueFilterIds.has(id)) leagueFilterIds.delete(id);
-      else leagueFilterIds.add(id);
-      persistFiltersIfAllowed();
-      renderLigasView();
+      const apiId = Number(btn.getAttribute('data-liga-api'));
+      if (!Number.isFinite(apiId)) return;
+      const parent = LIGAS_FOLDERS.find((f) => f.leagues.some((l) => l.apiId === apiId));
+      if (parent) ligasOpenFolder = parent.key;
+      showLigasTable(apiId).catch((err) => showBanner(err.message || 'Error', 'error'));
     });
   });
+}
+
+function renderLigasView() {
+  const deepApiId = parseLigasApiIdFromHash();
+  if (Number.isFinite(deepApiId) && deepApiId > 0) {
+    showLigasTable(deepApiId, { pushHash: false }).catch((err) =>
+      showBanner(err.message || 'Error', 'error')
+    );
+    return;
+  }
+
+  hideLigasTable({ pushHash: false });
+  const listEl = document.getElementById('ligas-list');
+  if (listEl && !ligasLeaguesByApiId) {
+    listEl.innerHTML = Array.from({ length: 4 }, () => `<div class="skeleton" aria-hidden="true"></div>`).join('');
+  }
+
+  ensureLigasCatalog()
+    .then((catalog) => {
+      if (parseLigasApiIdFromHash()) return;
+      renderLigasFolders(catalog);
+    })
+    .catch((err) => {
+      if (listEl) {
+        listEl.innerHTML = `<p class="ligas-standings__error">${escapeHtml(
+          err.message || 'No se pudieron cargar las ligas'
+        )}</p>`;
+      }
+    });
 }
 
 function renderLeagueCategories(matches) {
@@ -1776,6 +2122,8 @@ async function startPremiumCheckout() {
 }
 
 function premiumUpsellHtml(source) {
+  // No paywall while PREMIUM_UNLOCKED (no login yet).
+  if (PREMIUM_UNLOCKED) return '';
   return `
     <div class="premium-upsell" data-premium-source="${escapeHtml(source)}">
       <span class="premium-upsell__lock" aria-hidden="true">🔒</span>
@@ -1810,11 +2158,20 @@ async function handlePremiumReturn() {
   window.history.replaceState({}, '', `${window.location.pathname}${rest ? `?${rest}` : ''}`);
 }
 
-/** Keep the #premium view tuned to the real state (CTA, price text). */
+/** Keep the #premium view as Pronto teaser (no gate while unlocked). */
 function syncPremiumView() {
   const cta = document.getElementById('premium-cta');
   const note = document.querySelector('#premium .premium-note');
   if (!cta) return;
+  if (PREMIUM_UNLOCKED) {
+    cta.disabled = true;
+    cta.textContent = 'Pronto';
+    if (note) {
+      note.textContent =
+        'Todas las funciones están abiertas por ahora. Premium (pago) llegará más adelante.';
+    }
+    return;
+  }
   bindPremiumActivate(cta.closest('#premium') || document);
   if (premiumState.premium) {
     const until = premiumState.premiumUntil ? String(premiumState.premiumUntil).slice(0, 10) : null;
@@ -2020,10 +2377,26 @@ function resolveSelectedDate() {
   return selectedDate || todayYmd();
 }
 
+/** D1 leagueId last requested to matches/today (null = all leagues for the date). */
+let matchesFetchLeagueId = null;
+let matchesReloadQueued = false;
+
 function matchListQuery() {
   const d = resolveSelectedDate();
   selectedDate = d;
-  return `date=${encodeURIComponent(d)}`;
+  let q = `date=${encodeURIComponent(d)}`;
+  // Single D1 league selection → server-side filter (multi stays client-side)
+  if (leagueFilterIds.size === 1) {
+    const lid = [...leagueFilterIds][0];
+    if (Number.isFinite(Number(lid))) q += `&leagueId=${encodeURIComponent(String(lid))}`;
+  }
+  return q;
+}
+
+function desiredMatchesFetchLeagueId() {
+  if (leagueFilterIds.size !== 1) return null;
+  const lid = Number([...leagueFilterIds][0]);
+  return Number.isFinite(lid) ? lid : null;
 }
 
 /** Aciertos + hit-badge: always full tip history (ignore Pronósticos window). */
@@ -2221,6 +2594,10 @@ function renderPartidosList() {
   bindAnalyze(el);
 }
 
+const TOP10_MIN_PROB = 69;
+const TOP10_MIN_ODDS = 1.3;
+const TOP10_MAX_ODDS = 3.5;
+
 function tipValueScore(m) {
   const edge = m.valueEdge != null ? Number(m.valueEdge) : null;
   const hasBook =
@@ -2232,66 +2609,219 @@ function tipValueScore(m) {
   return { score: -Infinity, kind: 'none' };
 }
 
-function selectDiverseTips(sortedTips, limit = 3, maxPerLabel = 1) {
+/** Top 10 rank: P≥69% and cuota 1.30–3.50 → score prob * ln(odds) (+ edge boost). */
+function tipPlayableScore(m) {
+  const prob = tipProbPct(m);
+  if (prob == null || !Number.isFinite(Number(prob)) || Number(prob) < TOP10_MIN_PROB) {
+    return null;
+  }
+  const bookOdds = m.tipOdds != null ? Number(m.tipOdds) : null;
+  const hasBook =
+    Number.isFinite(bookOdds) && bookOdds > 1 && (m.oddsSource === 'book' || bookOdds != null);
+  let odds = hasBook ? bookOdds : null;
+  if (odds == null) {
+    const p = Number(prob) / 100;
+    if (p > 0.01 && p < 0.99) odds = 1 / p;
+  }
+  if (odds == null || !Number.isFinite(odds) || odds < TOP10_MIN_ODDS || odds > TOP10_MAX_ODDS) {
+    return null;
+  }
+  let score = (Number(prob) / 100) * Math.log(Math.max(odds, 1.01));
+  const edge = m.valueEdge != null ? Number(m.valueEdge) : null;
+  if (edge != null && Number.isFinite(edge)) score += Math.max(0, edge) * 0.15;
+  if (!(hasBook && m.oddsSource === 'book')) score -= 0.05;
+  return {
+    score,
+    kind: hasBook && m.oddsSource === 'book' ? 'book' : 'est',
+  };
+}
+
+const TOP10_MAX_PER_FAMILY = 3;
+
+function tipFamilyUi(code) {
+  const b = String(code || '').toUpperCase();
+  if (b === 'HOME_WIN' || b === 'DRAW' || b === 'AWAY_WIN') return '1x2';
+  if (b.startsWith('DC_') || b.startsWith('DNB_')) return 'dc';
+  if (b === 'BTTS_YES' || b === 'BTTS_NO') return 'btts';
+  if (
+    b.startsWith('OVER_') ||
+    b.startsWith('UNDER_') ||
+    b.startsWith('HOME_OVER') ||
+    b.startsWith('HOME_UNDER') ||
+    b.startsWith('AWAY_OVER') ||
+    b.startsWith('AWAY_UNDER')
+  ) {
+    return 'ou';
+  }
+  if (b.startsWith('CORNERS_')) return 'corners';
+  if (b.startsWith('CARDS_')) return 'cards';
+  if (b.startsWith('SHOTS_')) return 'shots';
+  if (b.startsWith('SOT_')) return 'shots_on_target';
+  return 'other';
+}
+
+/**
+ * Top 10 diversity: max 1 per exact label, max 3 per family (pass 1).
+ * Pass 2 fills remaining slots with maxPerLabel only (still no inventing).
+ * At most one tip per matchId when present.
+ */
+function selectDiverseTips(sortedTips, limit = 3, maxPerLabel = 1, maxPerFamily = TOP10_MAX_PER_FAMILY) {
   const selected = [];
-  const used = new Map();
-  const max = Math.max(1, Number(maxPerLabel) || 1);
-  for (const item of sortedTips || []) {
-    const label = item?.m?.suggestedBet || item?.suggestedBet || '';
-    if (!label || (used.get(label) || 0) >= max) continue;
-    selected.push(item);
-    used.set(label, (used.get(label) || 0) + 1);
-    if (selected.length >= limit) return selected;
-  }
-  // If fewer unique labels exist, keep Top 3 useful rather than showing empty slots.
-  if (selected.length < limit) {
-    for (const item of sortedTips || []) {
-      if (selected.includes(item)) continue;
-      selected.push(item);
-      if (selected.length >= limit) break;
+  const usedLabels = new Map();
+  const usedFamilies = new Map();
+  const usedMatches = new Set();
+  const maxLabel = Math.max(1, Number(maxPerLabel) || 1);
+  const maxFam = Math.max(1, Number(maxPerFamily) || TOP10_MAX_PER_FAMILY);
+  const items = [...(sortedTips || [])];
+
+  const labelOf = (item) =>
+    item?.tipLabel || item?.m?.suggestedBet || item?.suggestedBet || '';
+  const matchIdOf = (item) => {
+    const id = item?.matchId ?? item?.m?.id ?? item?.id;
+    return id != null ? Number(id) : null;
+  };
+
+  const tryPick = (enforceFamilyCap) => {
+    while (selected.length < limit) {
+      let best = null;
+      let bestIdx = Infinity;
+      let bestFamMalus = Infinity;
+      for (let i = 0; i < items.length; i += 1) {
+        const item = items[i];
+        if (selected.includes(item)) continue;
+        const label = labelOf(item);
+        if (!label || (usedLabels.get(label) || 0) >= maxLabel) continue;
+        const mid = matchIdOf(item);
+        if (mid != null && usedMatches.has(mid)) continue;
+        const fam = tipFamilyUi(label);
+        const famCount = usedFamilies.get(fam) || 0;
+        if (enforceFamilyCap && famCount >= maxFam) continue;
+        if (famCount < bestFamMalus || (famCount === bestFamMalus && i < bestIdx)) {
+          best = item;
+          bestIdx = i;
+          bestFamMalus = famCount;
+        }
+      }
+      if (!best) break;
+      const label = labelOf(best);
+      const fam = tipFamilyUi(label);
+      const mid = matchIdOf(best);
+      selected.push(best);
+      usedLabels.set(label, (usedLabels.get(label) || 0) + 1);
+      usedFamilies.set(fam, (usedFamilies.get(fam) || 0) + 1);
+      if (mid != null) usedMatches.add(mid);
     }
-  }
+  };
+
+  tryPick(true);
+  if (selected.length < limit) tryPick(false);
   return selected;
 }
 
-function renderTop3() {
+/** Primary + secondary candidates (same match may appear twice until select dedupes). */
+function buildTop10Pool(matches) {
+  const pool = [];
+  const isBannedShots = (lab) => String(lab || '').startsWith('SHOTS_');
+  for (const raw of matches || []) {
+    if (!raw?.suggestedBet || isBannedShots(raw.suggestedBet)) continue;
+    const primaryView = {
+      ...raw,
+      suggestedBet: raw.suggestedBet,
+      tipOdds: raw.tipOdds,
+      oddsSource: raw.oddsSource,
+      confidenceScore: raw.confidenceScore,
+    };
+    const primaryMeta = tipPlayableScore(primaryView);
+    if (primaryMeta) {
+      pool.push({
+        m: primaryView,
+        tipLabel: raw.suggestedBet,
+        matchId: raw.id,
+        isSecondary: false,
+        meta: primaryMeta,
+      });
+    }
+    const sec = raw.secondaryBet;
+    if (!sec || isBannedShots(sec) || tipFamilyUi(sec) === tipFamilyUi(raw.suggestedBet)) {
+      continue;
+    }
+    const secView = {
+      ...raw,
+      suggestedBet: sec,
+      tipOdds: raw.secondaryTipOdds != null ? raw.secondaryTipOdds : raw.tipOdds,
+      oddsSource: raw.secondaryOddsSource || raw.oddsSource,
+      confidenceScore:
+        raw.secondaryConfidence != null ? raw.secondaryConfidence : raw.confidenceScore,
+      valueEdge: null,
+    };
+    const secMeta = tipPlayableScore(secView);
+    if (secMeta) {
+      // Prefer primary rank slightly when both exist.
+      secMeta.score -= 0.01;
+      pool.push({
+        m: secView,
+        tipLabel: sec,
+        matchId: raw.id,
+        isSecondary: true,
+        meta: secMeta,
+      });
+    }
+  }
+  return pool.sort((a, b) => {
+    if (a.meta.kind === 'book' && b.meta.kind !== 'book') return -1;
+    if (b.meta.kind === 'book' && a.meta.kind !== 'book') return 1;
+    return b.meta.score - a.meta.score;
+  });
+}
+
+let top3LoadSeq = 0;
+
+/** Top 10 from server best-bets (same pool as API count), not a stricter client-only filter. */
+async function renderTop3() {
   const el = document.getElementById('top3-list');
   if (!el) return;
-  const rankedTips = scopedMatches()
-    .filter((m) => m.suggestedBet)
-    .map((m) => ({ m, meta: tipValueScore(m) }))
-    .filter((x) => x.meta.kind !== 'none')
-    .sort((a, b) => {
-      if (a.meta.kind === 'value' && b.meta.kind !== 'value') return -1;
-      if (b.meta.kind === 'value' && a.meta.kind !== 'value') return 1;
-      return b.meta.score - a.meta.score;
-    });
-  const tips = selectDiverseTips(rankedTips, 3, 1).map((x) => x.m);
-  if (!tips.length) {
-    el.innerHTML = `<div class="empty-board">Sin tips con valor/prob para ${escapeHtml(
-      formatDateCenter(resolveSelectedDate())
-    )}.</div>`;
-    return;
-  }
-  el.innerHTML = tips
-    .map((m, i) => {
-      const home = m.homeTeam?.name || '';
-      const away = m.awayTeam?.name || '';
-      const tip = m.suggestedBet;
-      const tipLabel = tip ? labelBet(tip, home, away) : 'Sin tip';
-      const prob = tipProbPct(m);
-      const oddsTxt = tipOddsDisplay(m.tipOdds);
-      const edge = m.valueEdge != null ? Number(m.valueEdge) : null;
-      const valueTxt =
-        edge != null && Number.isFinite(edge) && m.oddsSource === 'book'
-          ? `Valor +${(edge * 100).toFixed(0)}%`
-          : edge != null && Number.isFinite(edge)
-            ? `Edge ${(edge * 100).toFixed(0)}%`
-            : '';
-      const rank = i + 1;
-      const liveStrip = m.status === 'live' ? liveStripHtml(m) : '';
-      return `
-      <article class="card card--tip card--row card--top3" data-analyze="${Number(m.id)}">
+  const seq = ++top3LoadSeq;
+  const dayLabel = formatDateCenter(resolveSelectedDate());
+  el.innerHTML = Array.from({ length: 4 }, () => `<div class="skeleton" aria-hidden="true"></div>`).join('');
+  try {
+    const date = resolveSelectedDate();
+    const data = await api(
+      `/api/v1/matches/best-bets?date=${encodeURIComponent(date)}&limit=10`
+    );
+    if (seq !== top3LoadSeq) return;
+    const bets = (data.bets || []).slice(0, 10);
+    if (!bets.length) {
+      el.innerHTML = `<div class="empty-board">Sin tips P≥69% con cuota 1.30–3.50 para ${escapeHtml(
+        dayLabel
+      )}.</div>`;
+      return;
+    }
+    el.innerHTML = bets
+      .map((bet, i) => {
+        const home = bet.homeTeam?.name || '';
+        const away = bet.awayTeam?.name || '';
+        const tip = bet.suggestedBet;
+        const tipLabel = tip ? labelBet(tip, home, away) : 'Sin tip';
+        const m = {
+          ...bet,
+          id: bet.matchId,
+          leagueName: bet.league,
+          suggestedBet: tip,
+        };
+        const prob = tipProbPct(m);
+        const oddsTxt = tipOddsDisplay(bet.tipOdds);
+        const edge = bet.valueEdge != null ? Number(bet.valueEdge) : null;
+        const valueTxt =
+          edge != null && Number.isFinite(edge) && bet.oddsSource === 'book'
+            ? `Valor +${(edge * 100).toFixed(0)}%`
+            : edge != null && Number.isFinite(edge)
+              ? `Edge ${(edge * 100).toFixed(0)}%`
+              : '';
+        const rank = i + 1;
+        const matchId = Number(bet.matchId);
+        const liveStrip = bet.status === 'live' ? liveStripHtml(m) : '';
+        return `
+      <article class="card card--tip card--row card--top3" data-analyze="${matchId}">
         <div class="card-tip__body">
           <div class="top3-rank">#${rank}</div>
           <div class="card-tip__primary">
@@ -2308,17 +2838,23 @@ function renderTop3() {
             ${oddsTxt ? `<span class="top3-metrics__item"><em>Cuota</em> ${escapeHtml(oddsTxt)}</span>` : '<span class="top3-metrics__item muted"><em>Cuota</em> sin book</span>'}
             ${valueTxt ? `<span class="top3-metrics__item top3-metrics__item--value">${escapeHtml(valueTxt)}</span>` : ''}
           </div>
-          ${crestsRowHtml(home, m.homeTeam?.logo, away, m.awayTeam?.logo)}
+          ${crestsRowHtml(home, bet.homeTeam?.logo, away, bet.awayTeam?.logo)}
           <p class="card-tip__match">${escapeHtml(home)} vs ${escapeHtml(away)}</p>
           <p class="card-tip__league muted">${escapeHtml(leagueKey(m))} · ${escapeHtml(
-            formatMatchDate(m.matchDate)
+            formatMatchDate(bet.matchDate)
           )}</p>
         </div>
-        <button class="primary card-tip__action" data-analyze="${Number(m.id)}" type="button">Analizar</button>
+        <button class="primary card-tip__action" data-analyze="${matchId}" type="button">Analizar</button>
       </article>`;
-    })
-    .join('');
-  bindAnalyze(el);
+      })
+      .join('');
+    bindAnalyze(el);
+  } catch (err) {
+    if (seq !== top3LoadSeq) return;
+    el.innerHTML = `<div class="empty-board">No se pudo cargar el Top 10: ${escapeHtml(
+      err.message || 'error'
+    )}</div>`;
+  }
 }
 
 function isDesktopSplit() {
@@ -2372,19 +2908,40 @@ function tipOddsDisplay(tipOdds) {
   return n ? `${n} €` : '';
 }
 
-function tipMetaHtml({ tipOdds, valueEdge, valueMarket, home, away, oddsSource, dataQuality }) {
+function tipMetaHtml({
+  tipOdds,
+  valueEdge,
+  valueMarket,
+  home,
+  away,
+  oddsSource,
+  dataQuality,
+  tipTier = null,
+  conf = null,
+}) {
   const bits = [];
   const oddsTxt = tipOddsDisplay(tipOdds);
   if (oddsTxt) {
-    bits.push(`<span class="tip-odds">${oddsTxt}</span>`);
+    const srcLab =
+      oddsSource && oddsSource !== 'book'
+        ? ` <span class="muted">(${escapeHtml(oddsSourceLabel(oddsSource))})</span>`
+        : '';
+    bits.push(`<span class="tip-odds">${oddsTxt}${srcLab}</span>`);
+  } else if (oddsSource && oddsSource !== 'book') {
+    bits.push(`<span class="muted">sin cuota de casa</span>`);
   }
   if (dataQuality === 'low') bits.push('<span class="data-q data-q--low">muestra baja</span>');
-  if (valueEdge != null && valueEdge >= 0.04 && oddsSource === 'book') {
+  if (valueEdge != null && valueEdge >= MIN_VALUE_EDGE && oddsSource === 'book') {
     bits.push(
       `<span class="value">Valor +${(Number(valueEdge) * 100).toFixed(0)}%${
         valueMarket ? ` · ${escapeHtml(labelBet(valueMarket, home, away))}` : ''
       }</span>`
     );
+  }
+  if (tipTier === 'fallback') {
+    bits.push('<span class="muted">sin tip ≥69%</span>');
+  } else if (tipTier === 'playable' && conf != null && Number(conf) >= 80) {
+    bits.push('<span class="muted">tip seguro</span>');
   }
   return bits.length ? `<div class="tip-meta">${bits.join(' · ')}</div>` : '';
 }
@@ -2405,6 +2962,7 @@ function tipCardHtml({
   valueMarket,
   oddsSource = null,
   dataQuality = null,
+  tipTier = null,
   liveHtml = '',
   clickable = false,
   analyzeBtn = false,
@@ -2431,7 +2989,17 @@ function tipCardHtml({
           <span class="card-tip__bet tip-accent">${tipLabel}</span>
           ${confLabel ? `<span class="${confClass(conf)} card-tip__conf">${confLabel}</span>` : ''}
         </div>
-        ${tipMetaHtml({ tipOdds, valueEdge, valueMarket, home, away, oddsSource, dataQuality })}
+        ${tipMetaHtml({
+          tipOdds,
+          valueEdge,
+          valueMarket,
+          home,
+          away,
+          oddsSource,
+          dataQuality,
+          tipTier,
+          conf,
+        })}
         ${crestsRowHtml(home, homeLogo, away, awayLogo)}
         <p class="card-tip__match">${escapeHtml(home)} vs ${escapeHtml(away)}</p>
         <p class="card-tip__league muted">${escapeHtml(league)}${liveHtml ? ` · ${liveHtml}` : ''}</p>
@@ -2571,10 +3139,25 @@ function matchBoardRowHtml(raw) {
   const liveBits = [liveBadge, score, minute].filter(Boolean).join(' ');
   const tipLabel = tip ? escapeHtml(labelBet(tip, home, away)) : '—';
   const oddsTxt = tipOddsDisplay(tipOdds);
+  const tipTier =
+    raw.tipTier ||
+    (prob != null && Number(prob) >= 69 ? 'playable' : tip ? 'fallback' : null);
   const valueBit =
-    raw.valueEdge != null && Number(raw.valueEdge) >= 0.04
+    raw.valueEdge != null &&
+    Number(raw.valueEdge) >= MIN_VALUE_EDGE &&
+    raw.oddsSource === 'book'
       ? `<span class="sheet__edge">+${(Number(raw.valueEdge) * 100).toFixed(0)}%</span>`
       : '';
+  const oddsSrcBit =
+    oddsTxt && raw.oddsSource && raw.oddsSource !== 'book'
+      ? `<span class="muted sheet__odd-src">${escapeHtml(oddsSourceLabel(raw.oddsSource))}</span>`
+      : '';
+  const tierBit =
+    tipTier === 'fallback'
+      ? '<span class="muted sheet__odd-src">sin tip ≥69%</span>'
+      : tipTier === 'playable' && prob != null && Number(prob) >= 80
+        ? '<span class="muted sheet__odd-src">tip seguro</span>'
+        : '';
 
   return `
     <button type="button" class="sheet__row" data-analyze="${Number(id)}" role="listitem">
@@ -2596,9 +3179,11 @@ function matchBoardRowHtml(raw) {
       <span class="sheet__tip">
         <span class="sheet__tip-bet">${tipLabel}</span>
         ${valueBit}
+        ${tierBit}
       </span>
       <span class="sheet__odd">
-        <span class="sheet__odd-v">${oddsTxt}</span>
+        <span class="sheet__odd-v">${oddsTxt || '—'}</span>
+        ${oddsSrcBit}
       </span>
     </button>`;
 }
@@ -2641,7 +3226,8 @@ function rowsForHoyTab() {
   else if (tab === 'btts') rows = filtered.filter((m) => betFamily(m.suggestedBet) === 'btts');
   else if (tab === 'valor') {
     rows = filtered.filter(
-      (m) => m.valueEdge != null && Number(m.valueEdge) >= 0.04 && m.oddsSource === 'book'
+      (m) =>
+        m.valueEdge != null && Number(m.valueEdge) >= MIN_VALUE_EDGE && m.oddsSource === 'book'
     );
   }
   // All market tabs: kickoff fecha+hora ascending (not prob/cuota/edge rank).
@@ -2683,7 +3269,7 @@ function renderMatchBoard(el, rows, emptyHtml, { locked = 0, lockKind = 'top' } 
 function renderHoyBoard() {
   renderStatusFilters(scopedMatches());
   renderPartidosList();
-  renderTop3();
+  renderTop3().catch(() => {});
   updateFilterChip();
 }
 
@@ -2698,10 +3284,16 @@ function syncMarketTabs() {
 function applyFilters() {
   renderLeagueCategories(cachedMatches);
   renderHoyBoard();
-  if (document.getElementById('views')?.dataset.view === 'bandas') {
-    loadOddsBandBets().catch(() => {});
-  } else if (cachedOddsBandBets.length) {
-    renderOddsBandBets(cachedOddsBandBets);
+  // Semanal has its own selects; do not touch it here.
+  // Refetch Partidos when the server league param should change (0↔1 liga).
+  const want = desiredMatchesFetchLeagueId();
+  if (want !== matchesFetchLeagueId && !matchesReloadQueued) {
+    matchesReloadQueued = true;
+    load()
+      .catch((err) => showBanner(err.message, 'error'))
+      .finally(() => {
+        matchesReloadQueued = false;
+      });
   }
 }
 
@@ -2733,11 +3325,11 @@ function roiTone(value) {
   return 'roi--flat';
 }
 
-/** Profitability block: only meaningful with real bookmaker prices (premium). */
+/** Profitability block: meaningful with real bookmaker prices. */
 function perfRoiHtml(perf) {
   const roi = perf?.roi || null;
   const staked = Number(roi?.staked || 0);
-  if (perf?.premiumRequired && !premiumState.premium && !staked) {
+  if (!PREMIUM_UNLOCKED && perf?.premiumRequired && !premiumState.premium && !staked) {
     return `<div class="perf-roi perf-roi--empty perf-roi--premium">
       <span class="perf-roi__label">Rentabilidad</span>
       <span class="perf-roi__premium">${premiumUpsellHtml('perf-roi')}</span>
@@ -2791,7 +3383,6 @@ function renderPerformance(perf) {
   const summary = document.getElementById('perf-summary');
   const recent = document.getElementById('perf-recent');
   if (!summary || !recent) return;
-  if (perf) applyOddsPerformance(perf);
 
   const hits = Number(perf?.hits || 0);
   const misses = Number(perf?.misses || 0);
@@ -2804,64 +3395,32 @@ function renderPerformance(perf) {
         ? `${Math.round((hits / decided) * 100)}%`
         : '—';
 
-  const calib = perf?.calibration;
-  let calibBit = '';
-  if (calib?.updatedAt) {
-    const d = new Date(calib.updatedAt);
-    const when = Number.isNaN(d.getTime())
-      ? String(calib.updatedAt).slice(0, 10)
-      : d.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
-    calibBit = ` · Calibrado ${escapeHtml(when)}`;
-  }
-
-  const families = (perf?.byFamily || []).filter((f) => (f.hits || 0) + (f.misses || 0) > 0);
-  const familiesHtml = families.length
-    ? `<div class="perf-strip" aria-label="Por mercado">${families
-        .map((f) => {
-          const n = (f.hits || 0) + (f.misses || 0);
-          const hr = f.hitRate != null ? `${(Number(f.hitRate) * 100).toFixed(0)}%` : '—';
-          const roi = roiLabel(f.roi);
-          return `<div class="perf-strip__item"><span class="perf-strip__lab">${escapeHtml(
-            labelFamily(f.family)
-          )}</span><strong>${hr}</strong><span class="muted">${f.hits}/${n}</span>${
-            roi ? `<span class="perf-strip__roi ${roiTone(f.roi)}">${escapeHtml(roi)}</span>` : ''
-          }</div>`;
-        })
-        .join('')}</div>`
-    : '';
-
-  const winBit = perf?.windowLabel ? ` · ${escapeHtml(perf.windowLabel)}` : '';
   summary.innerHTML = `
     <div class="perf-board">
       <div class="perf-board__hero">
         <div class="perf-board__rate">${rate}</div>
-        <div class="perf-board__label">Aciertos${winBit}${calibBit}</div>
+        <div class="perf-board__label">Aciertos</div>
       </div>
       <div class="perf-board__stats">
         ${perfStatCell('Aciertos', hits)}
         ${perfStatCell('Fallos', misses)}
         ${perfStatCell('Pendientes', pending)}
-        ${perfStatCell('Cerrados', decided)}
       </div>
-    </div>
-    ${perfRoiHtml(perf)}
-    ${familiesHtml}`;
+    </div>`;
 
-  const rows = perf?.recent || [];
+  const rows = (perf?.recent || []).slice(0, 8);
   if (!rows.length) {
-    recent.innerHTML =
-      perf?.premiumRequired && !premiumState.premium
-        ? premiumUpsellHtml('perf-recent')
-        : `<div class="perf-empty muted">Sin tips cerrados aún — cuando liquiden partidos, aparecen aquí.</div>`;
-    if (perf?.premiumRequired && !premiumState.premium) bindPremiumActivate(recent);
+    const gated =
+      !PREMIUM_UNLOCKED && perf?.premiumRequired && !premiumState.premium;
+    recent.innerHTML = gated
+      ? premiumUpsellHtml('perf-recent')
+      : `<div class="perf-empty muted">Sin tips cerrados aún</div>`;
+    if (gated) bindPremiumActivate(recent);
     return;
   }
-  recent.innerHTML = `
-    <div class="perf-list__head" aria-hidden="true">
-      <span>Recientes</span>
-      <span>${rows.length}</span>
-    </div>
-    <div class="perf-list" role="list">${rows.map(recentTipRowHtml).join('')}</div>`;
+  recent.innerHTML = `<div class="perf-list" role="list">${rows
+    .map(recentTipRowHtml)
+    .join('')}</div>`;
 }
 
 async function fetchTipPerformance(q) {
@@ -2869,7 +3428,6 @@ async function fetchTipPerformance(q) {
   const perf = await api(`/api/v1/tips/performance?${q}`);
   tipPerfCacheKey = q;
   tipPerfCache = perf;
-  applyOddsPerformance(perf);
   return perf;
 }
 
@@ -2920,7 +3478,8 @@ function closePanel() {
 }
 
 function normalizeViewHash(hash) {
-  const id = (hash || '').replace('#', '');
+  const raw = (hash || '').replace('#', '');
+  const id = raw.split('/')[0];
   if (id === 'mejores' || id === 'hoy' || id === '') return 'partidos';
   if (id === 'aciertos') return 'stats';
   if (id === 'cuotas') return 'bandas';
@@ -2939,309 +3498,99 @@ function normalizeViewHash(hash) {
 }
 
 function setActiveNav(hash, { pushHash = true } = {}) {
-  const view = normalizeViewHash(hash);
+  const incoming = String(hash || '');
+  const view = normalizeViewHash(incoming);
   const views = document.getElementById('views');
   if (views) views.dataset.view = view;
+  const track = document.getElementById('views-track');
+  if (track) track.style.transform = '';
+  if (views) views.classList.remove('views--dragging');
   document.querySelectorAll('.v2-nav__link, .dock__link').forEach((link) => {
     const target = normalizeViewHash(link.getAttribute('href') || '');
+    const href = link.getAttribute('href') || '';
     const active =
-      target === view || (view === 'bandas' && target === 'stats') || (view === 'premium' && false);
+      target === view ||
+      (view === 'bandas' && (href === '#cuotas' || href === '#bandas')) ||
+      (view === 'premium' && false);
     link.classList.toggle('is-active', active);
   });
-  if (pushHash && location.hash !== `#${view}`) {
-    history.replaceState(null, '', `#${view}`);
+  if (pushHash) {
+    let want = view === 'bandas' ? '#cuotas' : `#${view}`;
+    const deep = incoming.replace(/^#/, '');
+    if (view === 'ligas' && /^ligas\/\d+/.test(deep)) want = `#${deep}`;
+    if (location.hash !== want) history.replaceState(null, '', want);
   }
   window.scrollTo(0, 0);
+  if (view !== 'ligas') document.body.classList.remove('has-ligas-selection');
   if (view === 'stats' || view === 'aciertos') loadPerformance().catch(() => {});
-  if (view === 'top3') renderTop3();
+  if (view === 'top3') renderTop3().catch(() => {});
   if (view === 'ligas') renderLigasView();
-  if (view === 'bandas') loadOddsBandBets().catch(() => {});
+  if (view === 'bandas') loadCuotasTarget().catch(() => {});
   if (view === 'ajustes') syncPrivacyToggles();
 }
 
-function syncOddsBandChips() {
-  /* Band picker lives in #odds-band-stats tiles (chips bar removed for iPhone). */
+function pricingLabel(pricing) {
+  if (pricing === 'book') return 'Cuotas de casa';
+  if (pricing === 'mixed') return 'Mixto (casa + estimado)';
+  if (pricing === 'model') return 'Estimado (sin cuota de casa)';
+  return pricing ? String(pricing) : '—';
 }
 
-const ODDS_BAND_RANGES = {
-  '1': '1.05–1.69',
-  '2': '1.65–2.54',
-  '3': '2.55–3.54',
-  '4': '3.55–4.44',
-  '5': '4.45–6.50',
-};
-
-const STAT_BAND_LABELS = {
-  '1': 'Cortas',
-  '2': '2',
-  '3': '3',
-  '4': '4',
-  '5': '5',
-};
-
-function tipStatsBand(row) {
-  const o = Number(row?.tipOdds);
-  if (Number.isFinite(o) && o > 1) {
-    if (o < 1.7) return '1';
-    if (o < 2.5) return '2';
-    if (o < 3.5) return '3';
-    if (o < 4.5) return '4';
-    if (o <= 6.5) return '5';
-  }
-  const b = row?.oddsBand != null ? String(row.oddsBand) : '';
-  return ['1', '2', '3', '4', '5'].includes(b) ? b : null;
-}
-
-function applyOddsPerformance(perf) {
-  if (!perf) return;
-  cachedOddsBandPerf = perf.byOddsBand || null;
-  cachedOddsRecent = Array.isArray(perf.recent) ? perf.recent : [];
-  cachedOddsCombos = Array.isArray(perf.recentCombos) ? perf.recentCombos : [];
-  cachedOddsGlobal = {
-    hits: Number(perf.hits || 0),
-    misses: Number(perf.misses || 0),
-    decided: Number(perf.decided || 0),
-    hitRate: perf.hitRate != null ? Number(perf.hitRate) : null,
-    pending: Number(perf.pending || 0),
-    windowLabel: perf.windowLabel || null,
+function oddsSourceLabel(src) {
+  const map = {
+    book: 'casa',
+    model: 'estimado',
+    derived_1x2: 'deriv. 1X2',
+    stale: 'cuota antigua',
   };
-  renderOddsBandStats(cachedOddsBandPerf);
-  renderOddsBandHistory(oddsBandFilter);
+  return map[src] || (src ? String(src) : '—');
 }
 
-function renderOddsBandStats(byOddsBand) {
-  const wrap = document.getElementById('odds-band-stats');
-  if (!wrap) return;
-  const rows = byOddsBand || [];
-  const map = new Map(rows.map((r) => [String(r.band), r]));
-  const g = cachedOddsGlobal;
-  const gDecided = Number(g?.decided || 0);
-  const gHits = Number(g?.hits || 0);
-  const gRate =
-    g?.hitRate != null && gDecided > 0
-      ? `${Math.round(Number(g.hitRate) * 100)}%`
-      : gDecided > 0
-        ? `${Math.round((gHits / gDecided) * 100)}%`
-        : '—';
-  const period = g?.windowLabel ? escapeHtml(g.windowLabel) : 'ventana';
-  const globalHtml = `<div class="odds-global" aria-label="Aciertos tips">
-    <div class="odds-global__main">
-      <span class="odds-global__label">Tips</span>
-      <span class="odds-global__rate">${gRate}</span>
-      <span class="odds-global__sub">${
-        gDecided > 0 ? `${gHits}/${gDecided}` : 'sin tips cerrados'
-      }</span>
-    </div>
-    <span class="odds-global__period">${period} · Cortas=tips · 2–5=combinadas</span>
-  </div>`;
-  const cards = ['1', '2', '3', '4', '5']
-    .map((band) => {
-      const b = map.get(band);
-      const hits = Number(b?.hits || 0);
-      const misses = Number(b?.misses || 0);
-      const pending = Number(b?.pending || 0);
-      const decided = hits + misses;
-      const lowSample = decided > 0 && decided < 10;
-      const rate =
-        decided <= 0
-          ? '—'
-          : lowSample
-            ? 'muestra baja'
-            : b?.hitRate != null
-              ? `${Math.round(Number(b.hitRate) * 100)}%`
-              : `${Math.round((hits / decided) * 100)}%`;
-      const sub =
-        decided > 0
-          ? lowSample
-            ? `${hits}/${decided} · n<10`
-            : `${hits} aciertos · ${misses} fallos`
-          : pending > 0
-            ? `${pending} pend.`
-            : 'sin muestra';
-      const label = STAT_BAND_LABELS[band] || band;
-      const range = ODDS_BAND_RANGES[band] || '';
-      const kind = band === '1' ? 'tips' : 'comb.';
-      const active = band === oddsBandFilter ? ' is-active' : '';
-      return `<button type="button" class="odds-stat${active}" data-odds-band="${band}" aria-pressed="${
-        band === oddsBandFilter ? 'true' : 'false'
-      }">
-        <span class="odds-stat__band">${escapeHtml(label)}</span>
-        <span class="odds-stat__range">${escapeHtml(range)} · ${kind}</span>
-        <span class="odds-stat__rate">${rate}</span>
-        <span class="odds-stat__sub">${escapeHtml(sub)}</span>
-      </button>`;
-    })
-    .join('');
-  wrap.innerHTML = `${globalHtml}<div class="odds-stats" role="group" aria-label="Bandas">${cards}</div>`;
-  wrap.querySelectorAll('button[data-odds-band]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const band = btn.getAttribute('data-odds-band') || '2';
-      oddsBandFilter = band;
-      renderOddsBandStats(cachedOddsBandPerf);
-      renderOddsBandHistory(band);
-      if (band !== '1') {
-        loadOddsBandBets().catch((err) => showBanner(err.message, 'error'));
-      } else {
-        const hint = document.getElementById('odds-band-hint');
-        const el = document.getElementById('odds-band-bets');
-        if (hint) hint.textContent = 'Cortas = tips individuales · historial arriba · combinadas en bandas 2–5';
-        if (el) {
-          el.className = 'combo-board';
-          el.innerHTML = '';
-        }
-      }
-    });
-  });
+function formatValorEdge(leg) {
+  if (leg?.oddsSource !== 'book' || leg.valueEdge == null) return '—';
+  const edge = Number(leg.valueEdge);
+  if (!Number.isFinite(edge) || Math.abs(edge) < 0.005) return '—';
+  const pct = edge * 100;
+  const rounded = Math.abs(pct) >= 0.5 ? pct.toFixed(0) : pct.toFixed(1);
+  return `${edge >= 0 ? '+' : ''}${rounded}%`;
 }
 
-function tipHistoryRowHtml(r) {
-  const country = r.leagueCountry || '';
-  const flag = countryFlag(country);
-  const countryEs = countryLabel(country);
-  const odds =
-    r.tipOdds != null && !Number.isNaN(Number(r.tipOdds))
-      ? Number(r.tipOdds).toFixed(2)
-      : '—';
-  return `
-    <article class="odds-history__row">
-      <div class="odds-history__top">
-        ${outcomeBadge(r.outcome)}
-        <span class="odds-history__tip tip-accent">${escapeHtml(
-          labelBet(r.suggestedBet, r.homeName, r.awayName)
-        )}</span>
-        <span class="odds-history__odds">@${odds}</span>
-      </div>
-      <p class="odds-history__match">${escapeHtml(r.homeName || '')} vs ${escapeHtml(
-        r.awayName || ''
-      )}</p>
-      <p class="odds-history__meta muted">
-        <span class="odds-history__flag" aria-hidden="true">${flag}</span>
-        ${escapeHtml(countryEs)} · ${escapeHtml(r.leagueName || '—')}
-      </p>
-    </article>`;
-}
-
-function comboHistoryRowHtml(c) {
-  const legs = c.legs || [];
-  const total =
-    c.combinedOdds != null && !Number.isNaN(Number(c.combinedOdds))
-      ? Number(c.combinedOdds).toFixed(2)
-      : '—';
-  const legsHtml = legs
-    .map((leg) => {
-      const home = leg.homeName || leg.homeTeam?.name || '';
-      const away = leg.awayName || leg.awayTeam?.name || '';
-      const flag = countryFlag(leg.leagueCountry || '');
-      return `<li class="odds-history-combo__leg">
-        <span class="odds-history-combo__match">${escapeHtml(home)} · ${escapeHtml(away)}</span>
-        <span class="odds-history-combo__tip tip-accent">${escapeHtml(
-          labelBet(leg.suggestedBet, home, away)
-        )}</span>
-        <span class="odds-history-combo__meta muted">${flag} ${escapeHtml(
-          leg.league || '—'
-        )} · ${leg.tipOdds != null ? Number(leg.tipOdds).toFixed(2) : '—'}</span>
-      </li>`;
-    })
-    .join('');
-  return `
-    <article class="odds-history__row odds-history-combo">
-      <div class="odds-history__top">
-        ${outcomeBadge(c.outcome)}
-        <span class="odds-history__tip">Combinada · ${legs.length} piernas</span>
-        <span class="odds-history__odds">@${total}</span>
-      </div>
-      <ul class="odds-history-combo__legs">${legsHtml}</ul>
-    </article>`;
-}
-
-function renderOddsBandHistory(band) {
-  const el = document.getElementById('odds-band-history');
-  if (!el) return;
-  const b = String(band || oddsBandFilter || '2');
-  const label = STAT_BAND_LABELS[b] || b;
-  const range = ODDS_BAND_RANGES[b] || '';
-  const tabs = [
-    ['all', 'Todos'],
-    ['miss', 'Fallos'],
-    ['hit', 'Aciertos'],
-  ]
-    .map(([id, lab]) => {
-      const active = oddsHistoryFilter === id ? ' is-active' : '';
-      return `<button type="button" class="odds-history__tab${active}" data-hist-filter="${id}">${lab}</button>`;
-    })
-    .join('');
-
-  const wrapHistory = (summaryLabel, closedCount, subtitle, body) => {
-    el.innerHTML = `
-      <details class="odds-history" open>
-        <summary class="odds-history__summary">
-          <span class="odds-history__summary-title">Historial · ${escapeHtml(summaryLabel)}</span>
-          <span class="odds-history__summary-meta muted">${closedCount} cerrada${closedCount === 1 ? '' : 's'}</span>
-        </summary>
-        <div class="odds-history__head">
-          <div>
-            <p class="odds-history__title">${escapeHtml(subtitle)}</p>
-            <p class="odds-history__range muted">${escapeHtml(range)}</p>
-          </div>
-          <div class="odds-history__tabs" role="tablist">${tabs}</div>
-        </div>
-        <div class="odds-history__list">${body}</div>
-      </details>`;
-    const details = el.querySelector('details.odds-history');
-    details?.addEventListener('toggle', (ev) => {
-      if (!details.open) {
-        ev.preventDefault();
-        details.open = true;
-      }
-    });
-    el.querySelectorAll('[data-hist-filter]').forEach((btn) => {
-      btn.addEventListener('click', (ev) => {
-        ev.preventDefault();
-        ev.stopPropagation();
-        oddsHistoryFilter = btn.getAttribute('data-hist-filter') || 'all';
-        renderOddsBandHistory(oddsBandFilter);
-      });
-    });
-  };
-
-  if (b === '1') {
-    const all = (cachedOddsRecent || []).filter((r) => tipStatsBand(r) === '1');
-    let list = all;
-    if (oddsHistoryFilter === 'miss') list = list.filter((r) => r.outcome === 'miss');
-    if (oddsHistoryFilter === 'hit') list = list.filter((r) => r.outcome === 'hit');
-    const body = list.length
-      ? list.slice(0, 12).map(tipHistoryRowHtml).join('')
-      : `<div class="empty-board odds-history__empty">Sin tips Cortas cerrados en esta ventana.</div>`;
-    wrapHistory('Cortas', all.length, 'Tips oficiales por partido', body);
-    return;
+function comboPricingBadge(pricing) {
+  if (pricing === 'book') return '';
+  if (pricing === 'mixed') {
+    return `<span class="combo-card__badge" title="Mezcla cuotas de casa y estimadas">${escapeHtml(
+      pricingLabel('mixed')
+    )}</span>`;
   }
-
-  const all = filterCombosByScope(cachedOddsCombos || []).filter(
-    (c) => String(c.oddsBand) === b
-  );
-  let list = all;
-  if (oddsHistoryFilter === 'miss') list = list.filter((c) => c.outcome === 'miss');
-  if (oddsHistoryFilter === 'hit') list = list.filter((c) => c.outcome === 'hit');
-  const body = list.length
-    ? list.slice(0, 10).map(comboHistoryRowHtml).join('')
-    : `<div class="empty-board odds-history__empty">Sin combinadas cerradas en banda ${escapeHtml(
-        label
-      )} para esta ventana.</div>`;
-  wrapHistory(`banda ${label}`, all.length, `Combinadas · acierto = todas las piernas`, body);
+  if (pricing === 'model') {
+    return `<span class="combo-card__badge" title="Sin cuotas de casa: 1/P del modelo">${escapeHtml(
+      pricingLabel('model')
+    )}</span>`;
+  }
+  return '';
 }
 
 function comboCardHtml(combo) {
   const legs = combo.legs || [];
+  const nLegs = combo.nLegs != null ? Number(combo.nLegs) : legs.length;
   const total =
     combo.combinedOdds != null ? Number(combo.combinedOdds).toFixed(2) : '—';
-  const conf =
-    combo.avgConfidence != null && !Number.isNaN(Number(combo.avgConfidence))
-      ? `${Math.round(Number(combo.avgConfidence))}%`
-      : '';
+  const jointPct =
+    combo.jointProb != null && Number.isFinite(Number(combo.jointProb))
+      ? Number(combo.jointProb) * 100
+      : null;
+  const jointLabel =
+    jointPct != null ? `${jointPct.toFixed(1).replace('.', ',')}%` : null;
   const legsHtml = legs
     .map((leg) => {
       const home = leg.homeTeam?.name || '';
       const away = leg.awayTeam?.name || '';
+      const legP =
+        leg.prob != null && Number.isFinite(Number(leg.prob))
+          ? `${(Number(leg.prob) * 100).toFixed(0)}%`
+          : leg.confidenceScore != null && !Number.isNaN(Number(leg.confidenceScore))
+            ? `${Math.round(Number(leg.confidenceScore))}%`
+            : null;
       return `
       <button type="button" class="combo-leg" data-analyze="${Number(leg.matchId)}">
         <span class="combo-leg__crests" aria-hidden="true">
@@ -3257,11 +3606,9 @@ function comboCardHtml(combo) {
             labelBet(leg.suggestedBet, home, away)
           )}</span>
         </span>
-        <span class="combo-leg__odds">${
-          leg.confidenceScore != null && !Number.isNaN(Number(leg.confidenceScore))
-            ? `${Math.round(Number(leg.confidenceScore))}% · `
-            : ''
-        }${leg.tipOdds != null ? Number(leg.tipOdds).toFixed(2) : '—'}</span>
+        <span class="combo-leg__odds">${legP ? `${legP} · ` : ''}${
+          leg.tipOdds != null ? Number(leg.tipOdds).toFixed(2) : '—'
+        }</span>
       </button>`;
     })
     .join('');
@@ -3270,12 +3617,15 @@ function comboCardHtml(combo) {
     <article class="combo-card" role="listitem">
       <div class="combo-card__head">
         <div>
-          <div class="combo-card__label">Combinada · ${legs.length} piernas</div>
-          <div class="combo-card__odds tip-accent">${total}</div>
+          <div class="combo-card__label">${nLegs} partidos · cuota ${total}</div>
+          ${comboPricingBadge(combo.pricing || combo.oddsSource)}
         </div>
         <div class="combo-card__side">
-          ${conf ? `<span class="${confClass(combo.avgConfidence)}">${conf}</span>` : ''}
-          <span class="muted">media conf.</span>
+          ${
+            jointLabel
+              ? `<span class="combo-card__prob ${confClass(jointPct)}">${jointLabel}</span><span class="combo-card__prob-lab">Probabilidad de acierto</span>`
+              : ''
+          }
         </div>
       </div>
       <div class="combo-card__legs">${legsHtml}</div>
@@ -3290,97 +3640,567 @@ function filterCombosByScope(combos) {
   });
 }
 
-function renderOddsBandBets(combos) {
-  const el = document.getElementById('odds-band-bets');
-  const hint = document.getElementById('odds-band-hint');
-  const wrap = document.getElementById('odds-band-bets-wrap');
-  if (!el) return;
-  syncOddsBandChips();
-  const range = ODDS_BAND_RANGES[oddsBandFilter] || '';
-  const filtered = filterCombosByScope(combos)
-    .slice()
-    .sort(
-      (a, b) =>
-        Number(b.avgConfidence || 0) - Number(a.avgConfidence || 0) ||
-        Number(a.combinedOdds || 0) - Number(b.combinedOdds || 0)
-    )
-    .slice(0, 5);
-  if (hint) {
-    const leagueBit =
-      leagueFilterIds.size > 0
-        ? ` · ${leagueFilterIds.size} liga${leagueFilterIds.size === 1 ? '' : 's'}`
-        : '';
-    hint.innerHTML = filtered.length
-      ? `<span class="odds-board__top-title">Top 5 combinadas · mayor %</span><span class="odds-board__top-meta">${filtered.length} mostrada${filtered.length === 1 ? '' : 's'} · ${escapeHtml(range || '—')}${leagueBit}</span>`
-      : `Sin combinadas en banda ${oddsBandFilter} (${range || '—'}) para esta ventana${leagueBit}`;
-  }
-  if (wrap) wrap.hidden = false;
-  if (!filtered.length) {
-    el.className = 'combo-board';
-    el.innerHTML = `<div class="empty-board">${
-      (combos || []).length
-        ? 'Ninguna combina encaja con estos filtros de liga.'
-        : 'Sin combinadas cerca de banda ' + oddsBandFilter + ' en la ventana.'
-    }</div>`;
-    return;
-  }
-  el.className = 'combo-board';
-  el.innerHTML = filtered.map(comboCardHtml).join('');
-  bindAnalyze(el);
+function syncCuotasTargetUi() {
+  /* Semanal cuota 10: no slider */
 }
 
-async function loadOddsBandBets() {
-  const el = document.getElementById('odds-band-bets');
-  const hint = document.getElementById('odds-band-hint');
-  syncOddsBandChips();
-  const q = matchListQuery();
+function weeklyLegRowHtml(leg, idx) {
+  const home = leg.homeTeam?.name || '';
+  const away = leg.awayTeam?.name || '';
+  const pModel =
+    leg.prob != null ? `${(Number(leg.prob) * 100).toFixed(0)}%` : '—';
+  const pCasa =
+    leg.oddsSource === 'book'
+      ? leg.impliedProb != null
+        ? `${(Number(leg.impliedProb) * 100).toFixed(0)}%`
+        : leg.tipOdds
+          ? `${((1 / Number(leg.tipOdds)) * 100).toFixed(0)}%`
+          : '—'
+      : '—';
+  const valor = formatValorEdge(leg);
+  const src = escapeHtml(oddsSourceLabel(leg.oddsSource));
+  const fam = escapeHtml(leg.marketFamily || '—');
+  const homeLogo = leg.homeTeam?.logo || null;
+  const awayLogo = leg.awayTeam?.logo || null;
+  return `<tr class="weekly-table__row" data-analyze="${Number(leg.matchId)}" data-league="${Number(
+    leg.leagueApiId || 0
+  )}" data-family="${escapeHtml(leg.marketFamily || '')}">
+    <td>${idx + 1}</td>
+    <td>${escapeHtml(leg.league || '—')}</td>
+    <td>
+      <div class="weekly-table__teams">
+        ${crestHtml(home, homeLogo, 'sm')}
+        ${crestHtml(away, awayLogo, 'sm')}
+        <button type="button" class="weekly-table__match" data-analyze="${Number(leg.matchId)}">
+          ${escapeHtml(home)} – ${escapeHtml(away)}
+        </button>
+      </div>
+      <div class="muted weekly-table__when">${escapeHtml(formatMatchDate(leg.matchDate))}</div>
+    </td>
+    <td class="tip-accent">${escapeHtml(labelBet(leg.suggestedBet, home, away))}
+      <div class="muted weekly-table__when">${fam}</div>
+    </td>
+    <td>${leg.tipOdds != null ? Number(leg.tipOdds).toFixed(2) : '—'}</td>
+    <td>${pCasa}</td>
+    <td class="${confClass(Number(leg.prob) * 100)}">${pModel}</td>
+    <td>${valor}</td>
+    <td class="muted">${src}</td>
+  </tr>`;
+}
 
-  // Reuse perf cache when possible (avoid double settle on boot)
-  try {
-    await fetchTipPerformance(q);
-  } catch (_) {
-    renderOddsBandHistory(oddsBandFilter);
+function renderWeeklySummary(primary, meta = {}, why = null) {
+  const box = document.getElementById('cuotas-summary');
+  const whyEl = document.getElementById('weekly-why');
+  const badge = document.getElementById('weekly-filters-badge');
+  if (badge) {
+    badge.hidden = true;
+    badge.textContent = '';
   }
+  if (whyEl) {
+    whyEl.hidden = true;
+    whyEl.innerHTML = '';
+  }
+  if (!box) return;
+  if (!primary) {
+    box.hidden = true;
+    box.innerHTML = '';
+    return;
+  }
+  const pAdj =
+    primary.jointProbAdj != null
+      ? `${(Number(primary.jointProbAdj) * 100).toFixed(1).replace('.', ',')}%`
+      : primary.jointProb != null
+        ? `${(Number(primary.jointProb) * 100).toFixed(1).replace('.', ',')}%`
+        : '—';
+  const pricing = primary.pricing || meta.pricing;
+  const pricingTxt = pricingLabel(pricing);
+  const noBook =
+    pricing === 'model' ||
+    (primary.bookRatio != null && Number(primary.bookRatio) < 0.15);
+  const metaBits = [
+    primary.leagueCount != null ? `Ligas ${primary.leagueCount}` : null,
+    pricingTxt ? pricingTxt : null,
+    noBook ? 'Sin book' : null,
+  ].filter(Boolean);
+  box.hidden = false;
+  box.innerHTML = `
+    <div class="weekly-summary__hero">
+      <div><span class="muted">Cuota 10</span><strong>${Number(
+        primary.combinedOdds
+      ).toFixed(2)}</strong></div>
+      <div><span class="muted">Prob. combinada</span><strong class="${confClass(
+        Number(primary.jointProbAdj ?? primary.jointProb) * 100
+      )}">${pAdj}</strong></div>
+      <div><span class="muted">Selecciones</span><strong>${primary.nLegs}</strong></div>
+    </div>
+    ${
+      metaBits.length
+        ? `<div class="weekly-summary__meta"><span>${metaBits
+            .map((b) => escapeHtml(b))
+            .join(' · ')}</span></div>`
+        : ''
+    }`;
+}
 
-  if (oddsBandFilter === '1') {
-    const wrap = document.getElementById('odds-band-bets-wrap');
-    if (wrap) wrap.hidden = false;
-    if (hint) {
-      hint.innerHTML =
-        '<span class="odds-board__top-title">Top 5 combinadas</span><span class="odds-board__top-meta">Cortas = tips · combinadas solo en bandas 2–5</span>';
+let cachedWeeklyPayload = null;
+let weeklyPickIndex = 0;
+let weeklySeenIds = [];
+
+
+const WEEKLY_LEAGUE_LABELS = {
+  39: 'Premier League',
+  140: 'LaLiga',
+  135: 'Serie A',
+  78: 'Bundesliga',
+  61: 'Ligue 1',
+};
+
+const WEEKLY_FAMILY_LABELS = {
+  result: 'resultado',
+  goals: 'goles',
+  corners: 'córners',
+  cards: 'tarjetas',
+  shots: 'tiros / SOT',
+};
+
+const WEEKLY_WINDOW_LABELS = {
+  weekend: 'Fin de semana',
+  this_week: 'Esta semana',
+  next7: 'Próximos 7 días',
+  next14: 'Próximos 14 días',
+};
+
+
+function weeklyAggressivePicks(data) {
+  const list = [];
+  const seen = new Set();
+  const push = (c) => {
+    if (!c) return;
+    const id = c.id != null ? String(c.id) : null;
+    if (id && seen.has(id)) return;
+    if (id) seen.add(id);
+    list.push(c);
+  };
+  push(data?.primary || null);
+  for (const a of data?.alternatives || []) push(a);
+  if (!list.length) {
+    for (const c of data?.combos || []) push(c);
+  }
+  return list;
+}
+
+function markWeeklyPickSeen(pick) {
+  if (!pick?.id) return;
+  const id = String(pick.id);
+  if (!weeklySeenIds.includes(id)) weeklySeenIds.push(id);
+}
+
+function syncWeeklyOtraButton(data) {
+  const btn = document.getElementById('cuotas-calc-btn');
+  if (!btn) return;
+  const picks = weeklyAggressivePicks(data || cachedWeeklyPayload);
+  const hasLocal = weeklyPickIndex + 1 < picks.length;
+  const canExclude = weeklySeenIds.length > 0;
+  const emptyAfter =
+    data?.emptyReason === 'no_more_after_exclude' && !picks.length;
+  btn.disabled = Boolean(emptyAfter);
+  btn.title = emptyAfter
+    ? 'No hay más combinaciones con estos filtros'
+    : hasLocal || canExclude
+      ? 'Otra combinación cuota 10'
+      : 'Otra combinación';
+}
+
+function readWeeklyFilterParams() {
+  const leagueRaw = document.getElementById('weekly-filter-league')?.value || '';
+  const familyRaw = document.getElementById('weekly-filter-family')?.value || '';
+  const windowRaw =
+    document.getElementById('weekly-filter-window')?.value || 'next14';
+  const leagueApiId = leagueRaw ? Number(leagueRaw) : null;
+  const family = familyRaw || null;
+  return {
+    leagueApiId: Number.isFinite(leagueApiId) ? leagueApiId : null,
+    family,
+    window: windowRaw || 'next14',
+  };
+}
+
+function weeklyFilterQuery() {
+  const { leagueApiId, family, window: win } = readWeeklyFilterParams();
+  let q = `window=${encodeURIComponent(win || 'next14')}`;
+  if (leagueApiId != null) q += `&leagueApiId=${encodeURIComponent(String(leagueApiId))}`;
+  if (family) q += `&family=${encodeURIComponent(family)}`;
+  return q;
+}
+
+function weeklyEmptyMessage(data) {
+  const { leagueApiId, family, window: win } =
+    data?.meta?.activeFilters || readWeeklyFilterParams();
+  const liga =
+    leagueApiId != null
+      ? WEEKLY_LEAGUE_LABELS[leagueApiId] || `liga ${leagueApiId}`
+      : 'las cinco grandes';
+  const fam = family ? WEEKLY_FAMILY_LABELS[family] || family : null;
+  const jornada = win ? WEEKLY_WINDOW_LABELS[win] || win : null;
+  if (data?.emptyReason === 'no_legs_filtered') {
+    const scope = [jornada, liga, fam].filter(Boolean).join(' · ');
+    return `No hay selecciones válidas (${scope}) con cuota ≥1,20. Sin inventar mercados.`;
+  }
+  if (data?.emptyReason === 'no_legs') {
+    return 'No hay suficientes selecciones con cuota verificada o modelo etiquetado (≥1,20) en las cinco grandes. Sin inventar cuotas de casa.';
+  }
+  if (data?.emptyReason === 'no_more_after_exclude') {
+    return 'No hay más combinadas distintas con estos filtros. Cambia jornada/liga/mercado o vuelve más tarde.';
+  }
+  return 'No se encontró una combinada cerca de cuota 10 con criterios de calidad. Prueba más tarde tras el enrich de odds.';
+}
+
+function conservativeBlockHtml(combo, meta = {}) {
+  if (!combo) {
+    return `<div class="weekly-profile">
+      <div class="weekly-profile__head">
+        <h3 class="weekly-profile__title">Conservadora · cuota 5</h3>
+      </div>
+      <p class="muted">Sin combinada conservadora con los filtros actuales.</p>
+    </div>`;
+  }
+  const pAdj =
+    combo.jointProbAdj != null
+      ? `${(Number(combo.jointProbAdj) * 100).toFixed(1).replace('.', ',')}%`
+      : '—';
+  const warn =
+    combo.belowTarget || meta.conservative?.belowTarget
+      ? `<p class="weekly-profile__warn muted">${escapeHtml(
+          meta.conservative?.belowReason ||
+            'No alcanza P conjunta ajustada ≥75%; mejor estimación del modelo.'
+        )}</p>`
+      : '';
+  return `<div class="weekly-profile">
+    <div class="weekly-profile__head">
+      <h3 class="weekly-profile__title">Conservadora · cuota 5</h3>
+      <span class="muted">estimación del modelo · mín. 1,20 por selección</span>
+    </div>
+    <div class="weekly-profile__stats">
+      <span>Cuota <strong>${Number(combo.combinedOdds).toFixed(2)}</strong></span>
+      <span>Prob. combinada <strong class="${confClass(
+        Number(combo.jointProbAdj) * 100
+      )}">${pAdj}</strong></span>
+      <span>Selecciones <strong>${combo.nLegs}</strong></span>
+      <span>Origen cuotas <strong>${escapeHtml(pricingLabel(combo.pricing))}</strong></span>
+    </div>
+    ${warn}
+    <div class="weekly-table-wrap" style="margin-top:0.65rem">
+      <table class="weekly-table">
+        <thead>
+          <tr>
+            <th>#</th><th>Liga</th><th>Partido</th><th>Mercado</th>
+            <th>Cuota</th><th>P modelo</th><th>Fuente</th>
+          </tr>
+        </thead>
+        <tbody>${(combo.legs || [])
+          .map((leg, idx) => {
+            const home = leg.homeTeam?.name || '';
+            const away = leg.awayTeam?.name || '';
+            const src = escapeHtml(oddsSourceLabel(leg.oddsSource));
+            return `<tr class="weekly-table__row" data-analyze="${Number(leg.matchId)}">
+              <td>${idx + 1}</td>
+              <td>${escapeHtml(leg.league || '—')}</td>
+              <td>
+                <div class="weekly-table__teams">
+                  ${crestHtml(home, leg.homeTeam?.logo, 'sm')}
+                  ${crestHtml(away, leg.awayTeam?.logo, 'sm')}
+                  <button type="button" class="weekly-table__match" data-analyze="${Number(
+                    leg.matchId
+                  )}">${escapeHtml(home)} – ${escapeHtml(away)}</button>
+                </div>
+              </td>
+              <td class="tip-accent">${escapeHtml(labelBet(leg.suggestedBet, home, away))}</td>
+              <td>${leg.tipOdds != null ? Number(leg.tipOdds).toFixed(2) : '—'}</td>
+              <td>${leg.prob != null ? `${(Number(leg.prob) * 100).toFixed(0)}%` : '—'}</td>
+              <td class="muted">${src}</td>
+            </tr>`;
+          })
+          .join('')}</tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
+async function loadWeeklySourcesPanel() {
+  const el = document.getElementById('weekly-sources');
+  if (!el) return;
+  el.hidden = true;
+  el.innerHTML = '';
+}
+
+async function loadCrestAuditPanel() {
+  const panel = document.getElementById('crest-audit-panel');
+  const body = document.getElementById('crest-audit-body');
+  if (!panel || !body) return;
+  const params = new URLSearchParams(location.search);
+  if (params.get('admin') !== '1') {
+    panel.hidden = true;
+    return;
+  }
+  panel.hidden = false;
+  try {
+    const data = await api('/api/v1/crests/audit');
+    const blocks = (data.reports || [])
+      .map((rep) => {
+        const counts = (rep.rows || []).reduce((acc, r) => {
+          acc[r.status] = (acc[r.status] || 0) + 1;
+          return acc;
+        }, {});
+        const issues = (rep.rows || []).filter(
+          (r) => r.status === 'broken' || r.status === 'mismatch' || r.status === 'pending'
+        );
+        return `<div class="crest-audit__league"><strong>${escapeHtml(
+          rep.name || String(rep.leagueApiId)
+        )}</strong> · ${JSON.stringify(counts)}
+          ${
+            issues.length
+              ? `<ul>${issues
+                  .slice(0, 8)
+                  .map(
+                    (r) =>
+                      `<li>${escapeHtml(r.team)} · ${escapeHtml(r.status)}${
+                        r.problem ? ` · ${escapeHtml(r.problem)}` : ''
+                      }</li>`
+                  )
+                  .join('')}</ul>`
+              : '<p class="muted">Sin incidencias en mapa estático.</p>'
+          }
+        </div>`;
+      })
+      .join('');
+    body.innerHTML = blocks || 'Sin datos';
+  } catch (err) {
+    body.innerHTML = `<span class="conf-lo">${escapeHtml(err.message)}</span>`;
+  }
+}
+
+function renderWeeklyCombos(data) {
+  const el = document.getElementById('cuotas-results');
+  const hint = document.getElementById('cuotas-hint');
+  const wrap = document.getElementById('cuotas-results-wrap');
+  if (!el) return;
+  cachedWeeklyPayload = data;
+  const picks = weeklyAggressivePicks(data);
+  if (weeklyPickIndex >= picks.length) weeklyPickIndex = 0;
+  const primary = picks[weeklyPickIndex] || null;
+  markWeeklyPickSeen(primary);
+  const conservative = data?.conservative || null;
+  const meta = data?.meta || {};
+  renderWeeklySummary(primary, meta, data?.whyPreferred || null);
+  syncWeeklyOtraButton(data);
+
+  if (hint) {
+    if (primary) {
+      const inRange =
+        Number(primary.combinedOdds) >= 9 && Number(primary.combinedOdds) <= 11;
+      const divMeta =
+        primary.familyCount != null
+          ? ` · ${primary.familyCount} familias`
+          : '';
+      hint.innerHTML = `<span class="odds-board__top-title">${
+        inRange ? 'Semanal · cuota 10' : 'Mejor alternativa · cuota 10'
+      }</span><span class="odds-board__top-meta">${
+        inRange
+          ? `objetivo 9–11${divMeta}`
+          : `no hay cuota 10 limpia · mejor cuota ${Number(primary.combinedOdds).toFixed(2)}${divMeta}`
+      }</span>`;
+    } else {
+      const why =
+        data?.emptyReason === 'no_legs_filtered'
+          ? 'Sin selecciones con los filtros activos'
+          : data?.emptyReason === 'no_legs'
+            ? 'Faltan selecciones válidas en top 5 (revisa enrich AF / predicciones)'
+            : data?.emptyReason === 'no_more_after_exclude'
+              ? 'Sin más alternativas distintas'
+              : 'Sin combinada en rango 9–11';
+      hint.innerHTML = `<span class="odds-board__top-title">Sin combinada cuota 10</span><span class="odds-board__top-meta">${escapeHtml(
+        why
+      )}</span>`;
     }
-    if (el) {
-      el.className = 'combo-board';
-      el.innerHTML = '';
-    }
+  }
+  if (wrap) wrap.hidden = false;
+
+  const safeHtml = conservativeBlockHtml(conservative, meta);
+
+  if (!primary) {
+    el.className = 'weekly-results';
+    el.innerHTML = `<div class="empty-board">${escapeHtml(
+      weeklyEmptyMessage(data)
+    )}</div>${safeHtml}`;
+    bindWeeklyAnalyze(el);
     return;
   }
 
+  const af = data?.meta?.activeFilters || {};
+  const filterBadge = [
+    af.window ? WEEKLY_WINDOW_LABELS[af.window] || af.window : null,
+    af.leagueApiId != null
+      ? WEEKLY_LEAGUE_LABELS[af.leagueApiId] || `AF ${af.leagueApiId}`
+      : null,
+    af.family ? WEEKLY_FAMILY_LABELS[af.family] || af.family : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
+  const table = `
+    <div class="weekly-block">
+      <h3 class="weekly-block__title">Semanal · cuota 10${
+        filterBadge
+          ? ` <span class="muted">· ${escapeHtml(filterBadge)}</span>`
+          : ''
+      }</h3>
+      <div class="weekly-table-wrap">
+        <table class="weekly-table">
+          <thead>
+            <tr>
+              <th>#</th><th>Liga</th><th>Partido</th><th>Mercado</th>
+              <th>Cuota</th><th>P casa</th><th>P modelo</th><th>Valor</th><th>Fuente</th>
+            </tr>
+          </thead>
+          <tbody>${(primary.legs || []).map(weeklyLegRowHtml).join('')}</tbody>
+        </table>
+      </div>
+    </div>`;
+
+  const noBookBanner =
+    (primary.pricing || meta.pricing) === 'model'
+      ? `<p class="muted weekly-summary__note">Sin cuotas de casa (falta enrich AF).</p>`
+      : '';
+
+  el.className = 'weekly-results';
+  el.innerHTML = noBookBanner + table + safeHtml;
+  bindWeeklyAnalyze(el);
+}
+
+function bindWeeklyAnalyze(el) {
+  if (!el) return;
+  bindAnalyze(el);
+  el.querySelectorAll('[data-analyze]').forEach((node) => {
+    if (node.dataset.weeklyBound) return;
+    node.dataset.weeklyBound = '1';
+    node.addEventListener('click', (e) => {
+      e.preventDefault();
+      const id = Number(node.getAttribute('data-analyze'));
+      if (id) openPrediction(id).catch(() => {});
+    });
+  });
+}
+
+async function loadCuotasTarget({ excludeIds = null, resetCycle = true } = {}) {
+  const el = document.getElementById('cuotas-results');
+  const hint = document.getElementById('cuotas-hint');
+  const gen = ++cuotasLoadGen;
+  const { leagueApiId, family, window: win } = readWeeklyFilterParams();
+  if (resetCycle && !excludeIds?.length) {
+    weeklyPickIndex = 0;
+    weeklySeenIds = [];
+  }
+  loadWeeklySourcesPanel().catch(() => {});
+  loadCrestAuditPanel().catch(() => {});
+  const scopeHint = [
+    WEEKLY_WINDOW_LABELS[win] || win || '14 días',
+    leagueApiId != null ? WEEKLY_LEAGUE_LABELS[leagueApiId] || String(leagueApiId) : 'top 5',
+    family ? WEEKLY_FAMILY_LABELS[family] || family : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
   if (el) {
     el.className = 'combo-board';
-    el.innerHTML = `<div class="muted odds-board__loading">Cargando combinadas banda ${oddsBandFilter}…</div>`;
+    el.innerHTML = `<div class="muted odds-board__loading">Calculando Semanal cuota 10 + Conservadora cuota 5 (${escapeHtml(
+      scopeHint
+    )})…</div>`;
+  }
+  if (hint) {
+    hint.innerHTML = `<span class="odds-board__top-title">Calculando…</span><span class="odds-board__top-meta">${escapeHtml(
+      scopeHint
+    )}</span>`;
+  }
+  const summary = document.getElementById('cuotas-summary');
+  if (summary) {
+    summary.hidden = true;
+    summary.innerHTML = '';
+  }
+  const whyEl = document.getElementById('weekly-why');
+  if (whyEl) {
+    whyEl.hidden = true;
+    whyEl.innerHTML = '';
+  }
+  const badge = document.getElementById('weekly-filters-badge');
+  if (badge) {
+    badge.hidden = true;
+    badge.textContent = '';
   }
   try {
-    const leagueQ =
-      leagueFilterIds.size > 0
-        ? `&leagueIds=${encodeURIComponent([...leagueFilterIds].join(','))}`
-        : '';
-    const data = await api(
-      `/api/v1/matches/best-bets?${q}&oddsBand=${encodeURIComponent(oddsBandFilter)}&limit=5${leagueQ}`
-    );
+    let q = weeklyFilterQuery();
+    if (excludeIds?.length) {
+      q += `&excludeIds=${encodeURIComponent(excludeIds.join(','))}`;
+    }
+    const data = await api(`/api/v1/combos/weekly?${q}`);
+    if (gen !== cuotasLoadGen) return;
+    weeklyPickIndex = 0;
     cachedOddsBandBets = data.combos || [];
-    renderOddsBandBets(cachedOddsBandBets);
+    renderWeeklyCombos(data);
   } catch (err) {
+    if (gen !== cuotasLoadGen) return;
     cachedOddsBandBets = [];
+    if (hint) {
+      hint.innerHTML =
+        '<span class="odds-board__top-title">Error</span><span class="odds-board__top-meta">no se pudo calcular</span>';
+    }
     if (el) {
-      if (err.code === 'premium_required') {
-        el.innerHTML = premiumUpsellHtml(`banda-${oddsBandFilter}`);
-        bindPremiumActivate(el);
-      } else {
-        el.innerHTML = `<div class="empty-board conf-lo">${escapeHtml(err.message)}</div>`;
-      }
+      el.innerHTML = `<div class="empty-board conf-lo">${escapeHtml(err.message)}</div>`;
     }
   }
+}
+
+function cycleWeeklyAggressive() {
+  const data = cachedWeeklyPayload;
+  if (!data) {
+    loadCuotasTarget().catch(() => {});
+    return;
+  }
+  const picks = weeklyAggressivePicks(data);
+  if (weeklyPickIndex + 1 < picks.length) {
+    weeklyPickIndex += 1;
+    markWeeklyPickSeen(picks[weeklyPickIndex]);
+    renderWeeklyCombos(data);
+    return;
+  }
+  if (!weeklySeenIds.length && picks[0]?.id) {
+    markWeeklyPickSeen(picks[0]);
+  }
+  loadCuotasTarget({ excludeIds: [...weeklySeenIds], resetCycle: false }).catch(
+    () => {}
+  );
+}
+
+function bindCuotasTargetControls() {
+  const btn = document.getElementById('cuotas-calc-btn');
+  if (btn && !btn.dataset.bound) {
+    btn.dataset.bound = '1';
+    btn.textContent = 'Otra';
+    btn.addEventListener('click', () => {
+      cycleWeeklyAggressive();
+    });
+  }
+  ['weekly-filter-window', 'weekly-filter-league', 'weekly-filter-family'].forEach(
+    (id) => {
+      const el = document.getElementById(id);
+      if (el && !el.dataset.bound) {
+        el.dataset.bound = '1';
+        el.addEventListener('change', () => {
+          weeklyPickIndex = 0;
+          weeklySeenIds = [];
+          loadCuotasTarget({ resetCycle: true }).catch(() => {});
+        });
+      }
+    }
+  );
 }
 
 async function openPrediction(id) {
@@ -3504,6 +4324,7 @@ async function openPrediction(id) {
             away: bundle.recentAvgs?.away?.shotsOnTarget,
           },
           leagueAverage: bundle.leagueAvgs?.shotsOnTarget,
+          leagueProxy: Boolean(bundle.leagueAvgs?.proxy?.shotsOnTarget),
           matchLines: [7.5, 8.5, 9.5],
           teamLines: [2.5, 3.5, 4.5, 5.5],
           fallbackHtml: `<div class="market-block"><div class="market-block__title">Tiros a puerta</div><div class="muted">Sin datos suficientes para calcular probabilidades de este mercado.</div></div>`,
@@ -3523,6 +4344,7 @@ async function openPrediction(id) {
             away: bundle.recentAvgs?.away?.corners,
           },
           leagueAverage: bundle.leagueAvgs?.corners,
+          leagueProxy: Boolean(bundle.leagueAvgs?.proxy?.corners),
           matchLines: [8.5, 9.5, 10.5],
           teamLines: [3.5, 4.5, 5.5, 6.5],
           fallbackHtml: `<div class="market-block"><div class="market-block__title">Córners</div><div class="muted">Sin datos suficientes para calcular probabilidades de este mercado.</div></div>`,
@@ -3542,6 +4364,7 @@ async function openPrediction(id) {
             away: bundle.recentAvgs?.away?.yellows,
           },
           leagueAverage: bundle.leagueAvgs?.cards,
+          leagueProxy: Boolean(bundle.leagueAvgs?.proxy?.cards),
           matchLines: [3.5, 4.5],
           teamLines: [0.5, 1.5, 2.5],
           fallbackHtml: `<div class="market-block"><div class="market-block__title">Tarjetas</div><div class="muted">Sin datos suficientes para calcular probabilidades de este mercado.</div></div>`,
@@ -3576,7 +4399,7 @@ async function openPrediction(id) {
             }</span>
             ${tipOdds ? `<span class="tip-odds">${tipOdds} €</span>` : ''}
             ${
-              p.value_edge != null && p.value_edge >= 0.05
+              p.value_edge != null && p.value_edge >= MIN_VALUE_EDGE
                 ? `<span class="value">+${(p.value_edge * 100).toFixed(0)}%</span>`
                 : ''
             }
@@ -3725,16 +4548,12 @@ async function load() {
   const q = matchListQuery();
   const errors = [];
 
-  // Close today's/yesterday's results before reading matches and hit stats.
-  // The endpoint has its own cooldown, so day/filter navigation stays cheap.
+  // Kick off live refresh without blocking the match list (Worker runs it in waitUntil).
   const activeDate = resolveSelectedDate();
-  if (activeDate === todayYmd() || activeDate === yesterdayYmd()) {
-    try {
-      await api('/api/v1/matches/refresh-live', { method: 'POST' });
-    } catch (_) {
-      /* keep the read path available if an upstream result feed is unavailable */
-    }
-  }
+  const refreshP =
+    activeDate === todayYmd() || activeDate === yesterdayYmd()
+      ? api('/api/v1/matches/refresh-live', { method: 'POST' }).catch(() => null)
+      : null;
 
   // Critical path for first screen: partidos + chips + header badge
   const statusP = api('/api/v1/status').then(
@@ -3755,6 +4574,7 @@ async function load() {
     cachedMatches = today.matches || [];
     cachedBets = cachedMatches.filter((m) => m.suggestedBet);
     cachedMode = today.mode || 'live';
+    matchesFetchLeagueId = desiredMatchesFetchLeagueId();
     renderLeagueCategories(cachedMatches);
     renderHoyBoard();
   } catch (err) {
@@ -3770,7 +4590,7 @@ async function load() {
     errors.push('Partidos');
   }
 
-  await Promise.allSettled([statusP, summaryP]);
+  await Promise.allSettled(refreshP ? [statusP, summaryP, refreshP] : [statusP, summaryP]);
 
   if (errors.length >= 2) {
     showBanner('No hay conexión con la API. Revisa la red e inténtalo de nuevo.', 'error');
@@ -3781,9 +4601,9 @@ async function load() {
   }
 
   const view = document.getElementById('views')?.dataset.view;
-  if (view === 'bandas') loadOddsBandBets().catch(() => {});
+  if (view === 'bandas') loadCuotasTarget().catch(() => {});
   else if (view === 'stats' || view === 'aciertos') loadPerformance().catch(() => {});
-  else if (view === 'top3') renderTop3();
+  else if (view === 'top3') renderTop3().catch(() => {});
   else if (view === 'ligas') renderLigasView();
 
   // Ensure list/chips are painted before callers (boot) dismiss splash
@@ -4142,6 +4962,12 @@ window.addEventListener('hashchange', () => {
   setActiveNav(h, { pushHash: false });
 });
 
+window.addEventListener('pageshow', (event) => {
+  if (event.persisted) {
+    setActiveNav(location.hash || '#partidos', { pushHash: false });
+  }
+});
+
 loadPrivacyPrefs();
 restoreFiltersIfAllowed();
 syncWindowChips();
@@ -4149,6 +4975,7 @@ syncLiveChip();
 syncScopeChips();
 syncPrivacyToggles();
 
+bindCuotasTargetControls();
 setActiveNav(location.hash || '#partidos', { pushHash: false });
 
 document.getElementById('hit-badge')?.addEventListener('click', () => setActiveNav('#stats'));
@@ -4206,26 +5033,25 @@ document.getElementById('league-toggle')?.addEventListener('click', () => {
   renderLeagueCategories(cachedMatches);
 });
 
-document.querySelectorAll('.ligas-tabs__btn').forEach((btn) => {
-  btn.addEventListener('click', () => {
-    ligasViewScope = btn.dataset.ligasScope || 'clubs';
-    renderLigasView();
-  });
+document.getElementById('ligas-back')?.addEventListener('click', () => {
+  hideLigasTable({ pushHash: true });
+  ensureLigasCatalog()
+    .then((catalog) => renderLigasFolders(catalog))
+    .catch((err) => showBanner(err.message || 'Error', 'error'));
 });
 
-document.getElementById('ligas-apply')?.addEventListener('click', () => {
-  if (ligasViewScope === 'clubs' || ligasViewScope === 'intl') {
-    scopeFilter = ligasViewScope;
-    syncScopeChips();
+document.getElementById('ligas-see-matches')?.addEventListener('click', () => {
+  const d1Id = Number(ligasActiveD1Id);
+  if (!Number.isFinite(d1Id) || d1Id <= 0) {
+    showBanner('Liga no disponible', 'info');
+    return;
   }
+  leagueFilterIds.clear();
+  leagueFilterIds.add(d1Id);
+  scopeFilter = 'all';
+  syncScopeChips();
   persistFiltersIfAllowed();
   setActiveNav('#partidos');
-  applyFilters();
-});
-
-document.getElementById('ligas-clear')?.addEventListener('click', () => {
-  leagueFilterIds.clear();
-  renderLigasView();
   applyFilters();
 });
 

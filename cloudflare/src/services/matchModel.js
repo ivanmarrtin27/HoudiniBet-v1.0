@@ -168,10 +168,17 @@ export function marketsFromMatrix(matrix) {
   const homeWin = sumMatrix(matrix, (h, a) => h > a);
   const draw = sumMatrix(matrix, (h, a) => h === a);
   const awayWin = sumMatrix(matrix, (h, a) => h < a);
+  const over05 = sumMatrix(matrix, (h, a) => h + a > 0);
   const over15 = sumMatrix(matrix, (h, a) => h + a > 1);
   const over25 = sumMatrix(matrix, (h, a) => h + a > 2);
   const over35 = sumMatrix(matrix, (h, a) => h + a > 3);
+  const over45 = sumMatrix(matrix, (h, a) => h + a > 4);
   const bttsYes = sumMatrix(matrix, (h, a) => h > 0 && a > 0);
+  const dc1x = homeWin + draw;
+  const dcx2 = awayWin + draw;
+  const dnbDenom = homeWin + awayWin;
+  const dnbHome = dnbDenom > 0 ? homeWin / dnbDenom : 0;
+  const dnbAway = dnbDenom > 0 ? awayWin / dnbDenom : 0;
 
   const homeOver05 = sumMatrix(matrix, (h) => h > 0);
   const homeOver15 = sumMatrix(matrix, (h) => h > 1);
@@ -186,12 +193,20 @@ export function marketsFromMatrix(matrix) {
     homeWin,
     draw,
     awayWin,
+    dc1x,
+    dcx2,
+    dnbHome,
+    dnbAway,
+    over05,
+    under05: 1 - over05,
     over15,
     under15: 1 - over15,
     over25,
     under25: 1 - over25,
     over35,
     under35: 1 - over35,
+    over45,
+    under45: 1 - over45,
     bttsYes,
     bttsNo: 1 - bttsYes,
     homeOver05,
@@ -239,10 +254,18 @@ export function coreCandidatesFromMarkets(m) {
 export function allGoalCandidatesFromMarkets(m) {
   return [
     ...coreCandidatesFromMarkets(m),
+    { label: 'DC_1X', prob: m.dc1x },
+    { label: 'DC_X2', prob: m.dcx2 },
+    { label: 'DNB_HOME', prob: m.dnbHome },
+    { label: 'DNB_AWAY', prob: m.dnbAway },
+    { label: 'OVER_05', prob: m.over05 },
+    { label: 'UNDER_05', prob: m.under05 },
     { label: 'OVER_15', prob: m.over15 },
     { label: 'UNDER_15', prob: m.under15 },
     { label: 'OVER_35', prob: m.over35 },
     { label: 'UNDER_35', prob: m.under35 },
+    { label: 'OVER_45', prob: m.over45 },
+    { label: 'UNDER_45', prob: m.under45 },
     { label: 'HOME_OVER_05', prob: m.homeOver05 },
     { label: 'HOME_UNDER_05', prob: m.homeUnder05 },
     { label: 'HOME_OVER_15', prob: m.homeOver15 },
@@ -261,3 +284,45 @@ export function allGoalCandidatesFromMarkets(m) {
     { label: 'AWAY_UNDER_35', prob: m.awayUnder35 },
   ];
 }
+
+/** Markets for weekly @10 combo (top-5 product) — diversified families. */
+export const WEEKLY_COMBO_MARKETS = new Set([
+  'HOME_WIN',
+  'DRAW',
+  'AWAY_WIN',
+  'DC_1X',
+  'DC_X2',
+  'DNB_HOME',
+  'DNB_AWAY',
+  'OVER_05',
+  'OVER_15',
+  'UNDER_15',
+  'OVER_25',
+  'UNDER_25',
+  'OVER_35',
+  'UNDER_35',
+  'OVER_45',
+  'UNDER_45',
+  'BTTS_YES',
+  'BTTS_NO',
+  'CORNERS_OVER_85',
+  'CORNERS_UNDER_85',
+  'CORNERS_OVER_95',
+  'CORNERS_UNDER_95',
+  'CORNERS_OVER_105',
+  'CORNERS_UNDER_105',
+  'CARDS_OVER_35',
+  'CARDS_UNDER_35',
+  'CARDS_OVER_45',
+  'CARDS_UNDER_45',
+  'SHOTS_OVER_225',
+  'SHOTS_UNDER_225',
+  'SHOTS_OVER_255',
+  'SHOTS_UNDER_255',
+  'SOT_OVER_75',
+  'SOT_UNDER_75',
+  'SOT_OVER_85',
+  'SOT_UNDER_85',
+  'SOT_OVER_95',
+  'SOT_UNDER_95',
+]);

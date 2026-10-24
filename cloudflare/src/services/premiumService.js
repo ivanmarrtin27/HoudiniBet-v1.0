@@ -8,8 +8,8 @@
  *    `client_reference_id`. When the `checkout.session.completed` webhook
  *    arrives (signature verified against `STRIPE_WEBHOOK_SECRET`), the
  *    session gets `premium_until` = today + PREMIUM_DAYS.
- *  - Gated features: the odds-band combos (`best-bets?oddsBand=`) and the
- *    ROI details of the performance endpoint. Basic hit rates stay public.
+ *  - Gating is currently OFF (no login yet): combos + full performance are
+ *    public. Stripe/session plumbing remains for a future paid tier.
  *
  * First-order, documented on purpose: one payment buys `PREMIUM_DAYS` days
  * (default 30). Subscriptions would need retries on webhook replays and are
@@ -170,7 +170,7 @@ export function checkoutFormBody({ clientReferenceId, origin, priceId }) {
 
 export async function createStripeCheckout(env, clientReferenceId, { fetchImpl = fetch } = {}) {
   if (!stripeConfigured(env)) return { error: 'stripe_not_configured' };
-  const origin = String(env.PREMIUM_SUCCESS_URL || '').trim() || 'https://houdini-bet.pages.dev';
+  const origin = String(env.PREMIUM_SUCCESS_URL || '').trim() || 'https://houdini-bet.dev';
   const res = await fetchImpl('https://api.stripe.com/v1/checkout/sessions', {
     method: 'POST',
     headers: {

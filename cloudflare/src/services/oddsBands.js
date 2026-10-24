@@ -3,60 +3,41 @@
  * Bookmaker odds when available; else model-implied 1/P.
  */
 
-function familyKey(label) {
+/** Canonical market family for diversity / calibration (plan: result|goals|corners|cards|shots). */
+export function marketFamily(label) {
   const bet = label != null ? String(label) : '';
-  if (['HOME_WIN', 'DRAW', 'AWAY_WIN'].includes(bet)) return '1X2';
+  if (
+    ['HOME_WIN', 'DRAW', 'AWAY_WIN', 'DC_1X', 'DC_X2', 'DNB_HOME', 'DNB_AWAY'].includes(bet)
+  ) {
+    return 'result';
+  }
   if (
     [
+      'OVER_05',
+      'UNDER_05',
       'OVER_15',
       'UNDER_15',
       'OVER_25',
       'UNDER_25',
       'OVER_35',
       'UNDER_35',
+      'OVER_45',
+      'UNDER_45',
       'BTTS_YES',
       'BTTS_NO',
-    ].includes(bet)
+    ].includes(bet) ||
+    /^(HOME|AWAY)_(OVER|UNDER)_/.test(bet)
   ) {
-    return 'goles';
+    return 'goals';
   }
-  if (
-    [
-      'CORNERS_OVER_85',
-      'CORNERS_UNDER_85',
-      'CORNERS_OVER_95',
-      'CORNERS_UNDER_95',
-      'CORNERS_OVER_105',
-      'CORNERS_UNDER_105',
-    ].includes(bet)
-  ) {
-    return 'corners';
-  }
-  if (
-    ['CARDS_OVER_35', 'CARDS_UNDER_35', 'CARDS_OVER_45', 'CARDS_UNDER_45'].includes(bet)
-  ) {
-    return 'cards';
-  }
-  if (
-    ['SHOTS_OVER_225', 'SHOTS_UNDER_225', 'SHOTS_OVER_255', 'SHOTS_UNDER_255'].includes(
-      bet
-    )
-  ) {
-    return 'shots';
-  }
-  if (
-    [
-      'SOT_OVER_75',
-      'SOT_UNDER_75',
-      'SOT_OVER_85',
-      'SOT_UNDER_85',
-      'SOT_OVER_95',
-      'SOT_UNDER_95',
-    ].includes(bet)
-  ) {
-    return 'shots_on_target';
-  }
+  if (bet.startsWith('CORNERS_')) return 'corners';
+  if (bet.startsWith('CARDS_')) return 'cards';
+  if (bet.startsWith('SHOTS_') || bet.startsWith('SOT_')) return 'shots';
   return 'otros';
+}
+
+function familyKey(label) {
+  return marketFamily(label);
 }
 
 /** Prefer markets/bands with better historical mult (from tip_calibration meta). */
@@ -86,12 +67,16 @@ const BOOK_ODDS_FIELD = {
   HOME_WIN: 'home_odds',
   DRAW: 'draw_odds',
   AWAY_WIN: 'away_odds',
+  OVER_05: 'over05_odds',
+  UNDER_05: 'under05_odds',
   OVER_15: 'over15_odds',
   UNDER_15: 'under15_odds',
   OVER_25: 'over25_odds',
   UNDER_25: 'under25_odds',
   OVER_35: 'over35_odds',
   UNDER_35: 'under35_odds',
+  OVER_45: 'over45_odds',
+  UNDER_45: 'under45_odds',
   BTTS_YES: 'btts_yes_odds',
   BTTS_NO: 'btts_no_odds',
   SHOTS_OVER_225: 'shots_over225_odds',
@@ -120,14 +105,22 @@ const MODEL_PROB_FIELD = {
   HOME_WIN: 'home_win_prob',
   DRAW: 'draw_prob',
   AWAY_WIN: 'away_win_prob',
+  OVER_05: 'over05_prob',
+  UNDER_05: 'under05_prob',
   OVER_15: 'over15_prob',
   UNDER_15: 'under15_prob',
   OVER_25: 'over25_prob',
   UNDER_25: 'under25_prob',
   OVER_35: 'over35_prob',
   UNDER_35: 'under35_prob',
+  OVER_45: 'over45_prob',
+  UNDER_45: 'under45_prob',
   BTTS_YES: 'btts_yes_prob',
   BTTS_NO: 'btts_no_prob',
+  DC_1X: null, // derived from 1X2 probs at resolve time
+  DC_X2: null,
+  DNB_HOME: null,
+  DNB_AWAY: null,
   HOME_OVER_05: 'home_over05_prob',
   HOME_UNDER_05: 'home_under05_prob',
   HOME_OVER_15: 'home_over15_prob',
@@ -216,7 +209,25 @@ function numOrNull(v) {
 
 export function modelProbForBet(predictionRow, bet) {
   if (!predictionRow || !bet) return null;
-  const field = MODEL_PROB_FIELD[String(bet)];
+  const label = String(bet);
+  const hw = numOrNull(predictionRow.home_win_prob);
+  const dr = numOrNull(predictionRow.draw_prob);
+  const aw = numOrNull(predictionRow.away_win_prob);
+  if (label === 'DC_1X' && hw != null && dr != null) {
+    const p = hw + dr;
+    return p > 0 && p < 1 ? p : null;
+  }
+  if (label === 'DC_X2' && aw != null && dr != null) {
+    const p = aw + dr;
+    return p > 0 && p < 1 ? p : null;
+  }
+  if (label === 'DNB_HOME' && hw != null && aw != null && hw + aw > 0) {
+    return hw / (hw + aw);
+  }
+  if (label === 'DNB_AWAY' && hw != null && aw != null && hw + aw > 0) {
+    return aw / (hw + aw);
+  }
+  const field = MODEL_PROB_FIELD[label];
   if (!field) return null;
   return numOrNull(predictionRow[field]);
 }
@@ -350,7 +361,7 @@ export function pickLegForCombo(predictionRow, oddsRow, preferredBets = [], opts
   const P_MIN = 0.42;
   const P_MAX = 0.84;
   const calib = opts.calib || null;
-  /** Combinadas only use book odds — no fake 1/p legs. */
+  /** Default book-only; Cuotas may pass bookOnly:false for labeled model fallback. */
   const bookOnly = opts.bookOnly !== false;
 
   const CORE = new Set([

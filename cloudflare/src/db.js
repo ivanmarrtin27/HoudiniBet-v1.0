@@ -37,6 +37,7 @@ const MATCH_SELECT = `
   SELECT m.*,
     l.name AS league_name,
     l.country AS league_country,
+    l.api_id AS league_api_id,
     ht.name AS home_name, ht.logo_url AS home_logo, ht.id AS home_team_id,
     at.name AS away_name, at.logo_url AS away_logo, at.id AS away_team_id
   FROM matches m
@@ -63,6 +64,7 @@ export function mapMatch(row) {
   return {
     id: row.id,
     leagueId: row.league_id,
+    leagueApiId: row.league_api_id != null ? Number(row.league_api_id) : null,
     leagueName: row.league_name,
     leagueCountry: row.league_country || null,
     matchDate: row.match_date,
@@ -160,11 +162,13 @@ export async function getScheduledIdsOnDate(db, dateYmd) {
   return rows.map((r) => r.id);
 }
 
-/** Current primary-tip counts for scheduled matches on one day. */
+/** Current primary + secondary tip counts for scheduled matches on one day. */
 export async function getDailyTipDiversityContext(db, dateYmd, excludeMatchId = null) {
-  if (!dateYmd) return { fixtureCount: 0, maxPerLabel: 1, counts: {} };
+  if (!dateYmd) {
+    return { fixtureCount: 0, maxPerLabel: 1, counts: {}, secondaryCounts: {} };
+  }
   const rows = await db.all(
-    `SELECT m.id, p.suggested_bet
+    `SELECT m.id, p.suggested_bet, p.secondary_bet
      FROM matches m
      JOIN leagues l ON l.id = m.league_id
      LEFT JOIN predictions p ON p.match_id = m.id
@@ -176,16 +180,25 @@ export async function getDailyTipDiversityContext(db, dateYmd, excludeMatchId = 
     dateYmd
   );
   const counts = {};
+  const secondaryCounts = {};
   for (const row of rows) {
-    if (Number(row.id) === Number(excludeMatchId) || !row.suggested_bet) continue;
-    const label = String(row.suggested_bet);
-    counts[label] = (counts[label] || 0) + 1;
+    if (Number(row.id) === Number(excludeMatchId)) continue;
+    if (row.suggested_bet) {
+      const label = String(row.suggested_bet);
+      counts[label] = (counts[label] || 0) + 1;
+    }
+    if (row.secondary_bet) {
+      const sec = String(row.secondary_bet);
+      secondaryCounts[sec] = (secondaryCounts[sec] || 0) + 1;
+    }
   }
   const fixtureCount = rows.length;
   return {
     fixtureCount,
-    maxPerLabel: Math.max(1, Math.floor(fixtureCount * 0.4)),
+    // Cap same-label tips per day (playable diversity).
+    maxPerLabel: Math.min(2, Math.max(1, Math.floor(fixtureCount * 0.4) || 1)),
     counts,
+    secondaryCounts,
   };
 }
 
@@ -257,6 +270,17 @@ export async function listLeagues(db) {
   );
 }
 
+export async function findLeagueByApiId(db, apiId) {
+  const aid = Number(apiId);
+  if (!Number.isFinite(aid) || aid <= 0) return null;
+  return db.first(
+    `SELECT * FROM leagues l
+     WHERE l.api_id = ? ${ALLOWED_LEAGUE_SQL}
+     LIMIT 1`,
+    aid
+  );
+}
+
 export async function searchTeams(db, q, limit = 15) {
   return db.all(
     `SELECT t.*, l.name AS league_name
@@ -302,20 +326,45 @@ export async function lastNForTeamAsOf(db, teamId, n = 10, beforeDate) {
   );
 }
 
+function numOrNull(v) {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/** League avgs with proxy flags when SQL had no samples (hardcoded fallbacks). */
 function mapLeagueAvgs(r) {
+  const avgHomeScored = numOrNull(r?.avg_home_scored);
+  const avgAwayScored = numOrNull(r?.avg_away_scored);
+  const avgScored = numOrNull(r?.avg_scored);
+  const avgConceded = numOrNull(r?.avg_conceded);
+  const avgCornersFor = numOrNull(r?.avg_corners_for);
+  const avgCornersAgainst = numOrNull(r?.avg_corners_against);
+  const avgYellowsFor = numOrNull(r?.avg_yellows_for);
+  const avgYellowsAgainst = numOrNull(r?.avg_yellows_against);
+  const avgShotsFor = numOrNull(r?.avg_shots_for);
+  const avgShotsAgainst = numOrNull(r?.avg_shots_against);
+  const avgShotsOnTargetFor = numOrNull(r?.avg_sot_for);
+  const avgShotsOnTargetAgainst = numOrNull(r?.avg_sot_against);
   return {
-    avgHomeScored: Number(r?.avg_home_scored) || 1.35,
-    avgAwayScored: Number(r?.avg_away_scored) || 1.15,
-    avgScored: Number(r?.avg_scored) || 1.25,
-    avgConceded: Number(r?.avg_conceded) || 1.25,
-    avgCornersFor: Number(r?.avg_corners_for) || 5.0,
-    avgCornersAgainst: Number(r?.avg_corners_against) || 5.0,
-    avgYellowsFor: Number(r?.avg_yellows_for) || 2.0,
-    avgYellowsAgainst: Number(r?.avg_yellows_against) || 2.0,
-    avgShotsFor: Number(r?.avg_shots_for) || 12.0,
-    avgShotsAgainst: Number(r?.avg_shots_against) || 12.0,
-    avgShotsOnTargetFor: Number(r?.avg_sot_for) || 4.5,
-    avgShotsOnTargetAgainst: Number(r?.avg_sot_against) || 4.5,
+    avgHomeScored: avgHomeScored ?? 1.35,
+    avgAwayScored: avgAwayScored ?? 1.15,
+    avgScored: avgScored ?? 1.25,
+    avgConceded: avgConceded ?? 1.25,
+    avgCornersFor: avgCornersFor ?? 5.0,
+    avgCornersAgainst: avgCornersAgainst ?? 5.0,
+    avgYellowsFor: avgYellowsFor ?? 2.0,
+    avgYellowsAgainst: avgYellowsAgainst ?? 2.0,
+    avgShotsFor: avgShotsFor ?? 12.0,
+    avgShotsAgainst: avgShotsAgainst ?? 12.0,
+    avgShotsOnTargetFor: avgShotsOnTargetFor ?? 4.5,
+    avgShotsOnTargetAgainst: avgShotsOnTargetAgainst ?? 4.5,
+    proxy: {
+      goals: avgHomeScored == null || avgAwayScored == null,
+      corners: avgCornersFor == null,
+      cards: avgYellowsFor == null,
+      shots: avgShotsFor == null,
+      shotsOnTarget: avgShotsOnTargetFor == null,
+    },
   };
 }
 
@@ -703,7 +752,8 @@ export async function upsertPrediction(db, p) {
   await db.run(
     `INSERT INTO predictions (
       match_id, home_win_prob, draw_prob, away_win_prob,
-      over15_prob, under15_prob, over25_prob, under25_prob, over35_prob, under35_prob,
+      over05_prob, under05_prob, over15_prob, under15_prob, over25_prob, under25_prob,
+      over35_prob, under35_prob, over45_prob, under45_prob,
       btts_yes_prob, btts_no_prob,
       home_over05_prob, home_under05_prob, home_over15_prob, home_under15_prob,
       home_over25_prob, home_under25_prob, home_over35_prob, home_under35_prob,
@@ -718,17 +768,21 @@ export async function upsertPrediction(db, p) {
       sot_over95_prob, sot_under95_prob,
       suggested_bet, secondary_bet, confidence_score, value_edge, value_market,
       home_xg, away_xg
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(match_id) DO UPDATE SET
       home_win_prob = excluded.home_win_prob,
       draw_prob = excluded.draw_prob,
       away_win_prob = excluded.away_win_prob,
+      over05_prob = excluded.over05_prob,
+      under05_prob = excluded.under05_prob,
       over15_prob = excluded.over15_prob,
       under15_prob = excluded.under15_prob,
       over25_prob = excluded.over25_prob,
       under25_prob = excluded.under25_prob,
       over35_prob = excluded.over35_prob,
       under35_prob = excluded.under35_prob,
+      over45_prob = excluded.over45_prob,
+      under45_prob = excluded.under45_prob,
       btts_yes_prob = excluded.btts_yes_prob,
       btts_no_prob = excluded.btts_no_prob,
       home_over05_prob = excluded.home_over05_prob,
@@ -779,12 +833,16 @@ export async function upsertPrediction(db, p) {
     p.home_win_prob,
     p.draw_prob,
     p.away_win_prob,
+    p.over05_prob ?? null,
+    p.under05_prob ?? null,
     p.over15_prob,
     p.under15_prob,
     p.over25_prob,
     p.under25_prob,
     p.over35_prob,
     p.under35_prob,
+    p.over45_prob ?? null,
+    p.under45_prob ?? null,
     p.btts_yes_prob,
     p.btts_no_prob,
     p.home_over05_prob,
@@ -946,26 +1004,30 @@ export async function upsertOdds(db, o) {
   await db.run(
     `INSERT INTO odds (
        match_id, bookmaker, home_odds, draw_odds, away_odds,
-       over15_odds, under15_odds, over25_odds, under25_odds,
-       over35_odds, under35_odds, btts_yes_odds, btts_no_odds,
+       over05_odds, under05_odds, over15_odds, under15_odds, over25_odds, under25_odds,
+       over35_odds, under35_odds, over45_odds, under45_odds, btts_yes_odds, btts_no_odds,
        shots_over225_odds, shots_under225_odds, shots_over255_odds, shots_under255_odds,
        sot_over75_odds, sot_under75_odds, sot_over85_odds, sot_under85_odds,
        sot_over95_odds, sot_under95_odds,
        corners_over85_odds, corners_under85_odds, corners_over95_odds, corners_under95_odds,
        corners_over105_odds, corners_under105_odds,
        cards_over35_odds, cards_under35_odds, cards_over45_odds, cards_under45_odds,
-       updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+       fetched_at, updated_at
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
      ON CONFLICT(match_id, bookmaker) DO UPDATE SET
        home_odds = COALESCE(excluded.home_odds, odds.home_odds),
        draw_odds = COALESCE(excluded.draw_odds, odds.draw_odds),
        away_odds = COALESCE(excluded.away_odds, odds.away_odds),
+       over05_odds = COALESCE(excluded.over05_odds, odds.over05_odds),
+       under05_odds = COALESCE(excluded.under05_odds, odds.under05_odds),
        over15_odds = COALESCE(excluded.over15_odds, odds.over15_odds),
        under15_odds = COALESCE(excluded.under15_odds, odds.under15_odds),
        over25_odds = COALESCE(excluded.over25_odds, odds.over25_odds),
        under25_odds = COALESCE(excluded.under25_odds, odds.under25_odds),
        over35_odds = COALESCE(excluded.over35_odds, odds.over35_odds),
        under35_odds = COALESCE(excluded.under35_odds, odds.under35_odds),
+       over45_odds = COALESCE(excluded.over45_odds, odds.over45_odds),
+       under45_odds = COALESCE(excluded.under45_odds, odds.under45_odds),
        btts_yes_odds = COALESCE(excluded.btts_yes_odds, odds.btts_yes_odds),
        btts_no_odds = COALESCE(excluded.btts_no_odds, odds.btts_no_odds),
        shots_over225_odds = COALESCE(excluded.shots_over225_odds, odds.shots_over225_odds),
@@ -989,18 +1051,23 @@ export async function upsertOdds(db, o) {
        cards_over45_odds = COALESCE(excluded.cards_over45_odds, odds.cards_over45_odds),
        cards_under45_odds = COALESCE(excluded.cards_under45_odds, odds.cards_under45_odds),
        bookmaker = COALESCE(excluded.bookmaker, odds.bookmaker),
+       fetched_at = datetime('now'),
        updated_at = datetime('now')`,
     o.match_id,
     o.bookmaker || 'avg',
     o.home_odds,
     o.draw_odds,
     o.away_odds,
+    o.over05_odds ?? null,
+    o.under05_odds ?? null,
     o.over15_odds ?? null,
     o.under15_odds ?? null,
     o.over25_odds,
     o.under25_odds,
     o.over35_odds ?? null,
     o.under35_odds ?? null,
+    o.over45_odds ?? null,
+    o.under45_odds ?? null,
     o.btts_yes_odds ?? null,
     o.btts_no_odds ?? null,
     o.shots_over225_odds ?? null,
@@ -1158,7 +1225,7 @@ export async function getLeagueTable(db, leagueId, limit = 20) {
        WHERE league_id = ? AND status = 'finished'
          AND home_goals IS NOT NULL AND away_goals IS NOT NULL
      )
-     SELECT t.id AS team_id, t.name AS team,
+     SELECT t.id AS team_id, t.name AS team, t.logo_url AS logo_url,
             SUM(r.won) AS won, SUM(r.drawn) AS drawn,
             COUNT(*) - SUM(r.won) - SUM(r.drawn) AS lost,
             SUM(r.gf) AS gf, SUM(r.ga) AS ga
@@ -1182,6 +1249,7 @@ export async function getLeagueTable(db, leagueId, limit = 20) {
       position: i + 1,
       teamId: Number(r.team_id),
       team: r.team,
+      logoUrl: r.logo_url || null,
       played: won + drawn + lost,
       won,
       drawn,
@@ -1392,6 +1460,24 @@ export function evaluateSuggestedBet(bet, homeGoals, awayGoals, extras = {}) {
       return h === a;
     case 'AWAY_WIN':
       return h < a;
+    case 'DC_1X':
+      return h >= a;
+    case 'DC_X2':
+      return h <= a;
+    case 'DNB_HOME':
+      if (h === a) return null; // void
+      return h > a;
+    case 'DNB_AWAY':
+      if (h === a) return null; // void
+      return h < a;
+    case 'OVER_05':
+      return h + a > 0;
+    case 'UNDER_05':
+      return h + a <= 0;
+    case 'OVER_45':
+      return h + a > 4;
+    case 'UNDER_45':
+      return h + a <= 4;
     case 'OVER_15':
       return h + a > 1;
     case 'UNDER_15':
@@ -1485,8 +1571,20 @@ export function evaluateSuggestedBet(bet, homeGoals, awayGoals, extras = {}) {
   }
 }
 
-/** Snapshot tips from predictions missing tip_results (upcoming + finished). */
+/** Snapshot tips from predictions missing tip_results (upcoming; finished only if no stats epoch). */
 export async function backfillPendingTips(db, limit = 60) {
+  const epoch = await getMeta(db, 'stats_reset_at');
+  const epochOk = epoch && /^\d{4}-\d{2}-\d{2}$/.test(String(epoch));
+  // After a Stats wipe, never re-materialize finished tips (same-day included).
+  // Only scheduled/live enter the ledger until they finish after the reset.
+  const finishedSql = epochOk
+    ? ''
+    : `OR (
+           m.status = 'finished'
+           AND m.home_goals IS NOT NULL
+           AND m.away_goals IS NOT NULL
+         )`;
+  const params = [Math.max(1, Number(limit) || 60)];
   const rows = await db.all(
     `SELECT p.*, o.home_odds, o.draw_odds, o.away_odds, o.over25_odds, o.under25_odds,
             o.sot_over75_odds, o.sot_under75_odds, o.sot_over85_odds, o.sot_under85_odds,
@@ -1502,15 +1600,11 @@ export async function backfillPendingTips(db, limit = 60) {
        AND NOT EXISTS (SELECT 1 FROM tip_results tr WHERE tr.match_id = p.match_id)
        AND (
          m.status IN ('scheduled', 'live')
-         OR (
-           m.status = 'finished'
-           AND m.home_goals IS NOT NULL
-           AND m.away_goals IS NOT NULL
-         )
+         ${finishedSql}
        )
      ORDER BY CASE WHEN m.status = 'finished' THEN 0 ELSE 1 END, m.match_date DESC
      LIMIT ?`,
-    Math.max(1, Number(limit) || 60)
+    ...params
   );
   let n = 0;
   for (const r of rows) {
@@ -1608,6 +1702,63 @@ export async function backfillTipOddsBands(db, limit = 80) {
     n += 1;
   }
   return n;
+}
+
+/**
+ * Wipe tip + combo ledgers used by Stats / ROI (pending + settled).
+ * Does not touch matches, predictions, odds, or team_stats.
+ * Sets stats_reset_at so backfill cannot resurrect older finished tips.
+ */
+export async function resetStatsLedgers(db) {
+  const tipsBefore = await db.first(`SELECT COUNT(*) AS n FROM tip_results`);
+  const combosBefore = await db.first(`SELECT COUNT(*) AS n FROM combo_results`);
+  await db.run(`DELETE FROM tip_results`);
+  await db.run(`DELETE FROM combo_results`);
+  const statsResetAt = new Date().toISOString().slice(0, 10);
+  await setMeta(db, 'stats_reset_at', statsResetAt);
+  return {
+    tipsDeleted: Number(tipsBefore?.n) || 0,
+    combosDeleted: Number(combosBefore?.n) || 0,
+    statsResetAt,
+  };
+}
+
+/**
+ * Undo phantom "finished" rows whose kickoff is still in the future
+ * (e.g. Atlético–Deportivo painted by a wrong FotMob name-match).
+ */
+export async function repairFutureFinishedMatches(db) {
+  const rows = await db.all(
+    `SELECT id FROM matches
+     WHERE status = 'finished'
+       AND datetime(match_date) > datetime('now')`
+  );
+  const ids = (rows || []).map((r) => Number(r.id)).filter((id) => id > 0);
+  if (!ids.length) {
+    return { repaired: 0, tipResultsDeleted: 0, matchIds: [] };
+  }
+  const ph = ids.map(() => '?').join(',');
+  await db.run(
+    `UPDATE matches
+     SET status = 'scheduled',
+         home_goals = NULL,
+         away_goals = NULL,
+         elapsed_minute = NULL,
+         fotmob_match_id = NULL,
+         events_json = NULL
+     WHERE id IN (${ph})`,
+    ...ids
+  );
+  const tipBefore = await db.first(
+    `SELECT COUNT(*) AS n FROM tip_results WHERE match_id IN (${ph})`,
+    ...ids
+  );
+  await db.run(`DELETE FROM tip_results WHERE match_id IN (${ph})`, ...ids);
+  return {
+    repaired: ids.length,
+    tipResultsDeleted: Number(tipBefore?.n) || 0,
+    matchIds: ids,
+  };
 }
 
 export async function settlePendingTips(db, limit = 80) {
@@ -2153,7 +2304,7 @@ export async function computeMidBandMarketPerf(db, windowSql, windowParams) {
 }
 
 /** Shared match-date window for tip aggregates (badge / Aciertos / Bandas). */
-function tipPerformanceWindow(win = null) {
+async function tipPerformanceWindow(db, win = null) {
   let windowSql = '1=1';
   const windowParams = [];
   let windowLabel = 'histórico';
@@ -2176,12 +2327,20 @@ function tipPerformanceWindow(win = null) {
     windowSql = `DATE(m.match_date) >= DATE('now', '-30 days')`;
     windowLabel = 'últimos 30 días';
   }
+  const epoch = await getMeta(db, 'stats_reset_at');
+  if (epoch && /^\d{4}-\d{2}-\d{2}$/.test(String(epoch))) {
+    windowSql = `(${windowSql}) AND DATE(m.match_date) >= DATE(?)`;
+    windowParams.push(String(epoch));
+    if (win?.mode === 'all' || !win) {
+      windowLabel = `desde ${epoch}`;
+    }
+  }
   return { windowSql, windowParams, windowLabel };
 }
 
 /** Fast badge aggregates only — NO backfill / settle. */
 export async function getTipSummary(db, win = null) {
-  const { windowSql, windowParams, windowLabel } = tipPerformanceWindow(win);
+  const { windowSql, windowParams, windowLabel } = await tipPerformanceWindow(db, win);
   const totals = await db.first(
     `SELECT
        SUM(CASE WHEN tr.outcome = 'hit' THEN 1 ELSE 0 END) AS hits,
@@ -2218,7 +2377,7 @@ export async function getTipPerformance(db, win = null) {
     /* keep read path available even if maintenance fails */
   }
 
-  const { windowSql, windowParams, windowLabel } = tipPerformanceWindow(win);
+  const { windowSql, windowParams, windowLabel } = await tipPerformanceWindow(db, win);
 
   const totals = await db.first(
     `SELECT
@@ -2238,7 +2397,8 @@ export async function getTipPerformance(db, win = null) {
     `SELECT
        CASE
          WHEN tr.suggested_bet IN ('HOME_WIN','DRAW','AWAY_WIN') THEN '1X2'
-         WHEN tr.suggested_bet IN ('OVER_15','UNDER_15','OVER_25','UNDER_25','OVER_35','UNDER_35','BTTS_YES','BTTS_NO') THEN 'goles'
+         WHEN tr.suggested_bet IN ('BTTS_YES','BTTS_NO') THEN 'btts'
+         WHEN tr.suggested_bet IN ('OVER_15','UNDER_15','OVER_25','UNDER_25','OVER_35','UNDER_35') THEN 'ou'
          WHEN tr.suggested_bet IN ('CORNERS_OVER_85','CORNERS_UNDER_85','CORNERS_OVER_95','CORNERS_UNDER_95','CORNERS_OVER_105','CORNERS_UNDER_105') THEN 'corners'
          WHEN tr.suggested_bet IN ('CARDS_OVER_35','CARDS_UNDER_35','CARDS_OVER_45','CARDS_UNDER_45') THEN 'cards'
          WHEN tr.suggested_bet IN ('SOT_OVER_75','SOT_UNDER_75','SOT_OVER_85','SOT_UNDER_85','SOT_OVER_95','SOT_UNDER_95') THEN 'shots_on_target'
@@ -2314,7 +2474,8 @@ export async function getTipPerformance(db, win = null) {
     `SELECT tr.suggested_bet, tr.outcome, tr.tip_odds, tr.odds_source,
             CASE
               WHEN tr.suggested_bet IN ('HOME_WIN','DRAW','AWAY_WIN') THEN '1X2'
-              WHEN tr.suggested_bet IN ('OVER_15','UNDER_15','OVER_25','UNDER_25','OVER_35','UNDER_35','BTTS_YES','BTTS_NO') THEN 'goles'
+              WHEN tr.suggested_bet IN ('BTTS_YES','BTTS_NO') THEN 'btts'
+              WHEN tr.suggested_bet IN ('OVER_15','UNDER_15','OVER_25','UNDER_25','OVER_35','UNDER_35') THEN 'ou'
               WHEN tr.suggested_bet IN ('CORNERS_OVER_85','CORNERS_UNDER_85','CORNERS_OVER_95','CORNERS_UNDER_95','CORNERS_OVER_105','CORNERS_UNDER_105') THEN 'corners'
               WHEN tr.suggested_bet IN ('CARDS_OVER_35','CARDS_UNDER_35','CARDS_OVER_45','CARDS_UNDER_45') THEN 'cards'
               WHEN tr.suggested_bet IN ('SOT_OVER_75','SOT_UNDER_75','SOT_OVER_85','SOT_UNDER_85','SOT_OVER_95','SOT_UNDER_95') THEN 'shots_on_target'
@@ -2502,6 +2663,102 @@ export async function countUpcomingWithOdds(db, days = 14) {
     endModifier
   );
   return Number(row?.c || 0);
+}
+
+const TOP5_LEAGUE_SQL = `AND l.api_id IN (39, 140, 135, 78, 61)`;
+
+export async function countUpcomingTop5(db, days = 14) {
+  const endModifier = `+${Number(days)} days`;
+  const row = await db.first(
+    `SELECT COUNT(*) AS c
+     FROM matches m
+     JOIN leagues l ON l.id = m.league_id
+      WHERE date(m.match_date) >= date('now')
+        AND date(m.match_date) <= date('now', ?)
+        AND m.status IN ('scheduled', 'live')
+        ${TOP5_LEAGUE_SQL}`,
+    endModifier
+  );
+  return Number(row?.c || 0);
+}
+
+export async function countUpcomingTop5WithOdds(db, days = 14) {
+  const endModifier = `+${Number(days)} days`;
+  const row = await db.first(
+    `SELECT COUNT(DISTINCT m.id) AS c
+     FROM matches m
+     JOIN leagues l ON l.id = m.league_id
+     JOIN odds o ON o.match_id = m.id
+      WHERE date(m.match_date) >= date('now')
+        AND date(m.match_date) <= date('now', ?)
+        AND m.status IN ('scheduled', 'live')
+        AND (
+          o.home_odds IS NOT NULL OR o.draw_odds IS NOT NULL OR o.away_odds IS NOT NULL OR
+          o.over25_odds IS NOT NULL OR o.under25_odds IS NOT NULL OR
+          o.btts_yes_odds IS NOT NULL OR o.btts_no_odds IS NOT NULL
+        )
+        ${TOP5_LEAGUE_SQL}`,
+    endModifier
+  );
+  return Number(row?.c || 0);
+}
+
+export async function insertCrestVerification(db, row) {
+  await db.run(
+    `INSERT INTO crest_verifications (
+      league_api_id, team_id, team_api_id, team_name, short_name,
+      logo_url, reference_url, reference_source, status, problem, action, evidence, checked_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+    row.league_api_id,
+    row.team_id ?? null,
+    row.team_api_id ?? null,
+    row.team_name,
+    row.short_name ?? null,
+    row.logo_url ?? null,
+    row.reference_url ?? null,
+    row.reference_source ?? null,
+    row.status,
+    row.problem ?? null,
+    row.action ?? null,
+    row.evidence ?? null
+  );
+}
+
+export async function listCrestVerifications(db, leagueApiId = null, limit = 200) {
+  const lim = Math.max(1, Math.min(500, Number(limit) || 200));
+  if (leagueApiId != null) {
+    return db.all(
+      `SELECT * FROM crest_verifications
+       WHERE league_api_id = ?
+       ORDER BY checked_at DESC, id DESC
+       LIMIT ?`,
+      Number(leagueApiId),
+      lim
+    );
+  }
+  return db.all(
+    `SELECT * FROM crest_verifications ORDER BY checked_at DESC, id DESC LIMIT ?`,
+    lim
+  );
+}
+
+/** Rewrite logos that resolve to a better URL (broken AF → FotMob override). */
+export async function rewriteBrokenTeamLogos(db, resolveLogo) {
+  const rows = await db.all(`SELECT id, name, logo_url FROM teams`);
+  if (!rows.length) return 0;
+  const stmts = [];
+  for (const r of rows) {
+    const next = resolveLogo(r.name, r.logo_url);
+    if (!next || next === r.logo_url) continue;
+    stmts.push({
+      sql: `UPDATE teams SET logo_url = ? WHERE id = ?`,
+      params: [next, r.id],
+    });
+  }
+  for (let i = 0; i < stmts.length; i += 40) {
+    await db.batch(stmts.slice(i, i + 40));
+  }
+  return stmts.length;
 }
 
 /** Finished AF matches missing an extra stat — for API-Football enrichment. */

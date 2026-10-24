@@ -7,19 +7,19 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Houdini Bet" />
-    <meta name="description" content="PronÃ³sticos de fÃºtbol con modelo Poisson: tip, probabilidad y cuota por partido. Top 3 del dÃ­a y ligas europeas." />
-    <meta name="author" content="IvÃ¡n MartÃ­n Molina" />
+    <meta name="description" content="Pronósticos de fútbol con modelo Poisson: tip, probabilidad y cuota por partido. Top 10 del día y ligas europeas." />
+    <meta name="author" content="Iván Martín Molina" />
     <meta property="og:type" content="website" />
     <meta property="og:title" content="Houdini Bet" />
-    <meta property="og:description" content="Predicciones de fÃºtbol (Poisson) â€” tips 1X2, O/U, BTTS y value." />
-    <meta property="og:url" content="https://houdini-bet.pages.dev/" />
-    <meta property="og:image" content="https://houdini-bet.pages.dev/brand/houdini-bet-logo.png" />
+    <meta property="og:description" content="Predicciones de fútbol (Poisson) — tips 1X2, O/U, BTTS y value." />
+    <meta property="og:url" content="https://houdini-bet.dev/" />
+    <meta property="og:image" content="https://houdini-bet.dev/brand/houdini-bet-logo.png" />
     <meta property="og:locale" content="es_ES" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="Houdini Bet" />
-    <meta name="twitter:description" content="Predicciones de fÃºtbol (Poisson) en Cloudflare Workers + D1." />
-    <meta name="twitter:image" content="https://houdini-bet.pages.dev/brand/houdini-bet-logo.png" />
-    <link rel="canonical" href="https://houdini-bet.pages.dev/" />
+    <meta name="twitter:description" content="Predicciones de fútbol (Poisson) en Cloudflare Workers + D1." />
+    <meta name="twitter:image" content="https://houdini-bet.dev/brand/houdini-bet-logo.png" />
+    <link rel="canonical" href="https://houdini-bet.dev/" />
     <title>Houdini Bet</title>
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/favicon-32.png?v=hb1" type="image/png" sizes="32x32" />
@@ -27,7 +27,7 @@
     <link rel="icon" href="/icon-192.png?v=hb1" type="image/png" sizes="192x192" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=hb1" />
     <link rel="preload" href="/brand/houdini-bet-logo.png?v=bm15" as="image" type="image/png" />
-    <link rel="stylesheet" href="/styles.css?v=hb15" />
+    <link rel="stylesheet" href="/styles.css?v=hb20" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -56,12 +56,12 @@
           fetchpriority="high"
         />
       </div>
-      <p class="boot-splash__label">Cargando partidos y datosâ€¦</p>
+      <p class="boot-splash__label">Cargando partidos y datos…</p>
     </div>
 
     <header class="v2-header">
       <div class="shell v2-header-inner">
-        <a class="brand" href="#partidos" aria-label="Houdini Bet â€” inicio">
+        <a class="brand" href="#partidos" aria-label="Houdini Bet — inicio">
           <img
             class="brand__icon"
             src="/brand/houdini-bet-logo.png?v=bm15"
@@ -72,8 +72,9 @@
         </a>
         <nav class="v2-nav" aria-label="Secciones">
           <a class="v2-nav__link is-active" href="#partidos" data-view="partidos">Partidos</a>
-          <a class="v2-nav__link" href="#top3" data-view="top3">Top 3</a>
+          <a class="v2-nav__link" href="#top3" data-view="top3">Top 10</a>
           <a class="v2-nav__link" href="#stats" data-view="stats">Stats</a>
+          <a class="v2-nav__link" href="#cuotas" data-view="bandas">Semanal</a>
           <a class="v2-nav__link" href="#ligas" data-view="ligas">Ligas</a>
         </nav>
         <div class="v2-header__right">
@@ -106,7 +107,7 @@
             title="Ver aciertos"
             aria-label="Ver aciertos"
           >
-            <span class="hit-badge__value">â€”</span>
+            <span class="hit-badge__value">—</span>
             <span class="hit-badge__hint">Aciertos</span>
           </button>
           <a class="premium-chip" href="#premium" data-view="premium">Premium</a>
@@ -123,16 +124,16 @@
             <div class="browse-col browse-col--list" id="listScreen">
               <div id="browseChrome" class="browse-chrome">
                 <div class="date-bar">
-                  <button class="btn-day" id="prevDayBtn" type="button" title="DÃ­a anterior" aria-label="DÃ­a anterior">
+                  <button class="btn-day" id="prevDayBtn" type="button" title="Día anterior" aria-label="Día anterior">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                       <path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
                     </svg>
                   </button>
                   <div class="date-center" id="dateCenter" role="button" tabindex="0" aria-label="Elegir fecha">
-                    <span id="dateCenterLabel">â€”</span>
+                    <span id="dateCenterLabel">—</span>
                     <input id="match-date" type="date" class="date-bar__input" tabindex="-1" aria-hidden="true" />
                   </div>
-                  <button class="btn-day" id="nextDayBtn" type="button" title="DÃ­a siguiente" aria-label="DÃ­a siguiente">
+                  <button class="btn-day" id="nextDayBtn" type="button" title="Día siguiente" aria-label="Día siguiente">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                       <path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
                     </svg>
@@ -141,15 +142,15 @@
                 <div class="browse-chips browse-chips--dates" role="group" aria-label="Atajos de fecha">
                   <button type="button" class="browse-chip" id="yesterdayBtn" data-copy="yesterday" aria-pressed="false">Ayer</button>
                   <button type="button" class="browse-chip is-active" id="todayBtn" data-copy="today" aria-pressed="true">Hoy</button>
-                  <button type="button" class="browse-chip" id="tomorrowBtn" data-copy="tomorrow" aria-pressed="false">MaÃ±ana</button>
+                  <button type="button" class="browse-chip" id="tomorrowBtn" data-copy="tomorrow" aria-pressed="false">Mañana</button>
                 </div>
                 <div class="browse-chips browse-chips--status match-status-filters" id="matchStatusFilters" role="group" aria-label="Estado del partido"></div>
-                <div class="browse-chips browse-chips--scope" role="group" aria-label="Tipo de competiciÃ³n">
+                <div class="browse-chips browse-chips--scope" role="group" aria-label="Tipo de competición">
                   <button
                     type="button"
                     class="browse-chip is-active"
                     data-scope="all"
-                    title="Todas las competiciones del dÃ­a"
+                    title="Todas las competiciones del día"
                   >
                     Todas
                   </button>
@@ -157,7 +158,7 @@
                     type="button"
                     class="browse-chip"
                     data-scope="clubs"
-                    title="Solo ligas domÃ©sticas de clubes (LaLiga, Premier, Serie Aâ€¦)"
+                    title="Solo ligas domésticas de clubes (LaLiga, Premier, Serie A…)"
                   >
                     Ligas de clubes
                   </button>
@@ -165,7 +166,7 @@
                     type="button"
                     class="browse-chip"
                     data-scope="intl"
-                    title="Competiciones internacionales (Champions, Europa League, Nations Leagueâ€¦)"
+                    title="Competiciones internacionales (Champions, Europa League, Nations League…)"
                   >
                     Internacionales
                   </button>
@@ -177,28 +178,28 @@
               <span id="match-count" class="visually-hidden" aria-live="polite"></span>
               <span id="filter-chip" class="visually-hidden"></span>
             </div>
-            <div class="browse-col browse-col--panel" id="browsePanel" aria-label="AnÃ¡lisis">
+            <div class="browse-col browse-col--panel" id="browsePanel" aria-label="Análisis">
               <div id="browsePanelBody" class="browse-panel-body">
-                <div class="browse-panel-empty muted">Selecciona un partido para ver el anÃ¡lisis</div>
+                <div class="browse-panel-empty muted">Selecciona un partido para ver el análisis</div>
               </div>
             </div>
           </div>
         </section>
 
-        <section id="top3" class="view view--top3" aria-label="Top 3">
+        <section id="top3" class="view view--top3" aria-label="Top 10">
           <header class="aciertos-bar">
-            <h2 class="aciertos-bar__title">Top 3 Â· mejor valor</h2>
+            <h2 class="aciertos-bar__title">Top 10 · P≥69% + cuota</h2>
           </header>
           <p class="muted top3-lead">
-            Mejores tips del dÃ­a por relaciÃ³n probabilidad del modelo / precio de la casa (valor).
+            Mejores tips del día con probabilidad ≥69% y cuota entre 1.30 y 3.50 (book preferido).
           </p>
           <div id="top3-list" class="sheet sheet--top3" role="list"></div>
         </section>
 
         <section id="stats" class="view view--aciertos" aria-label="Stats">
           <header class="aciertos-bar">
-            <h2 class="aciertos-bar__title">Stats Â· Aciertos</h2>
-            <a class="aciertos-bar__link" href="#bandas">Combinadas â†’</a>
+            <h2 class="aciertos-bar__title">Stats</h2>
+            <a class="aciertos-bar__link" href="#cuotas">Semanal ←</a>
           </header>
           <div id="perf-summary" class="perf-summary"></div>
           <div id="perf-recent" class="perf-recent"></div>
@@ -207,112 +208,166 @@
         <section id="ligas" class="view view--ligas" aria-label="Ligas">
           <header class="aciertos-bar">
             <h2 class="aciertos-bar__title">Ligas</h2>
-            <a class="aciertos-bar__link" href="#partidos">â† Partidos</a>
+            <a class="aciertos-bar__link" href="#partidos">← Partidos</a>
           </header>
-          <div class="ligas-tabs" role="tablist" aria-label="Tipo de competiciÃ³n">
-            <button type="button" class="ligas-tabs__btn is-active" role="tab" data-ligas-scope="clubs" aria-selected="true">
-              Clubes
-            </button>
-            <button type="button" class="ligas-tabs__btn" role="tab" data-ligas-scope="intl" aria-selected="false">
-              Naciones / UEFA
-            </button>
-            <button type="button" class="ligas-tabs__btn" role="tab" data-ligas-scope="all" aria-selected="false">
-              Todas
-            </button>
+          <div class="browse-split ligas-split">
+            <div class="browse-col browse-col--list" id="ligasListScreen">
+              <div id="ligas-explorer" class="ligas-explorer">
+                <div id="ligas-list" class="ligas-list" role="region" aria-label="Competiciones por país"></div>
+                <p class="muted privacy-lead ligas-explorer__hint">
+                  Elige un país y una liga. En escritorio la tabla aparece a la derecha; en móvil, a pantalla completa.
+                </p>
+              </div>
+            </div>
+            <div class="browse-col browse-col--panel" id="ligasBrowsePanel" aria-label="Clasificación de liga">
+              <div id="ligas-panel-empty" class="browse-panel-empty muted">
+                Selecciona una liga para ver la clasificación
+              </div>
+              <div id="ligas-detail" class="ligas-detail" hidden>
+                <header class="ligas-detail__head">
+                  <button type="button" class="ligas-detail__back" id="ligas-back" aria-label="Volver a carpetas">
+                    ←
+                  </button>
+                  <div class="ligas-detail__titles">
+                    <h3 class="ligas-detail__name" id="ligas-detail-name">Liga</h3>
+                    <p class="ligas-detail__meta" id="ligas-detail-meta"></p>
+                  </div>
+                </header>
+                <div class="ligas-detail__actions">
+                  <button type="button" class="tb-chip" id="ligas-see-matches">Ver partidos de esta liga</button>
+                </div>
+                <div id="ligas-table" class="ligas-table" role="region" aria-label="Clasificación"></div>
+              </div>
+            </div>
           </div>
-          <div class="ligas-actions">
-            <button type="button" class="tb-chip" id="ligas-apply">Ver en Partidos</button>
-            <button type="button" class="tb-chip" id="ligas-clear">Limpiar filtro</button>
-          </div>
-          <div id="ligas-list" class="ligas-list" role="listbox" aria-label="Ligas disponibles"></div>
           <div class="control-block control-block--leagues" id="league-block" hidden>
-            <div id="league-cats" class="league-cats" role="listbox" aria-label="CategorÃ­as de liga"></div>
+            <div id="league-cats" class="league-cats" role="listbox" aria-label="Categorías de liga"></div>
           </div>
-          <p class="muted privacy-lead">
-            Ligas agrupadas por paÃ­s. Toca el paÃ­s para marcar todas sus ligas, o elige una a una. Luego
-            Â«Ver en PartidosÂ». Clubes = domÃ©sticas; Naciones / UEFA = Champions, Europa League, Nations
-            League, etc.
-          </p>
         </section>
 
+        <section id="bandas" class="view" aria-label="Combinada semanal">
+          <header class="aciertos-bar">
+            <h2 class="aciertos-bar__title">Semanal</h2>
+            <a class="aciertos-bar__link" href="#stats">← Stats</a>
+          </header>
+          <div id="weekly-sources" class="weekly-sources muted" aria-live="polite" hidden></div>
+          <div class="cuotas-target cuotas-target--weekly" id="cuotas-target">
+            <div class="weekly-filters" id="weekly-filters">
+              <label class="weekly-filters__item"
+                >Jornada
+                <select id="weekly-filter-window" aria-label="Ventana temporal">
+                  <option value="weekend">Fin de semana</option>
+                  <option value="this_week">Esta semana</option>
+                  <option value="next7">Próximos 7 días</option>
+                  <option value="next14" selected>Próximos 14 días</option>
+                </select>
+              </label>
+              <label class="weekly-filters__item"
+                >Liga
+                <select id="weekly-filter-league" aria-label="Filtrar por liga">
+                  <option value="">Todas</option>
+                  <option value="39">Premier League</option>
+                  <option value="140">LaLiga</option>
+                  <option value="135">Serie A</option>
+                  <option value="78">Bundesliga</option>
+                  <option value="61">Ligue 1</option>
+                </select>
+              </label>
+              <label class="weekly-filters__item"
+                >Mercado
+                <select id="weekly-filter-family" aria-label="Filtrar por familia">
+                  <option value="">Todas</option>
+                  <option value="result">Resultado</option>
+                  <option value="goals">Goles</option>
+                  <option value="corners">Córners</option>
+                  <option value="cards">Tarjetas</option>
+                  <option value="shots">Tiros / SOT</option>
+                </select>
+              </label>
+              <div class="weekly-filters__actions">
+                <button type="button" class="btn primary" id="cuotas-calc-btn">Otra</button>
+              </div>
+            </div>
+            <p class="weekly-filters__badge muted" id="weekly-filters-badge" hidden></p>
+          </div>
+          <div id="cuotas-summary" class="weekly-summary" hidden></div>
+          <div id="weekly-why" class="weekly-why muted" hidden></div>
+          <div id="cuotas-results-wrap">
+            <p id="cuotas-hint" class="odds-board__hint muted"></p>
+            <div id="cuotas-results" class="combo-board" role="list"></div>
+          </div>
+          <div id="crest-audit-panel" class="crest-audit" hidden>
+            <h3 class="weekly-block__title">Auditoría de escudos (admin)</h3>
+            <div id="crest-audit-body" class="muted">Cargando…</div>
+          </div>
+        </section>
+
+      </div>
         <section id="premium" class="view" aria-label="Premium">
           <h2>Premium</h2>
           <div class="premium-grid">
             <article class="premium-card">
-              <h3 class="premium-card__name">Free</h3>
-              <p class="premium-card__price">0 â‚¬</p>
+              <h3 class="premium-card__name">Ahora</h3>
+              <p class="premium-card__price">Gratis</p>
               <ul>
-                <li>Top 10 tips</li>
-                <li>1X2 Â· MÃ¡s/Menos Â· Ambos marcan</li>
-                <li>Valor top 5</li>
+                <li>Tips y valor sin límite</li>
+                <li>Stats, ROI y combinadas</li>
+                <li>1X2 · Más/Menos · BTTS · extras</li>
               </ul>
             </article>
             <article class="premium-card premium-card--pro">
               <h3 class="premium-card__name">Premium</h3>
               <p class="premium-card__price">Pronto</p>
               <ul>
-                <li>Tips sin lÃ­mite</li>
-                <li>Valor completo</li>
                 <li>Alertas</li>
+                <li>Funciones extra</li>
+                <li>Apoyo al proyecto</li>
               </ul>
               <button type="button" class="primary premium-cta" id="premium-cta" data-premium-activate disabled>
-                Sin pago aÃºn
+                Pronto
               </button>
             </article>
           </div>
-          <p class="premium-note">El pago via Stripe se configura en el servidor (STRIPE_* secrets).</p>
-        </section>
-
-        <section id="bandas" class="view" aria-label="Bandas">
-          <h2>Combinadas</h2>
-          <p class="aciertos-sub">
-            <a class="aciertos-sub__link" href="#stats">â† Stats</a>
-          </p>
-          <div id="odds-band-stats" class="odds-stats-wrap" aria-label="Aciertos por cuota"></div>
-          <div id="odds-band-history" aria-label="Historial por banda"></div>
-          <div id="odds-band-bets-wrap">
-            <p id="odds-band-hint" class="odds-board__hint muted"></p>
-            <div id="odds-band-bets" class="combo-board" role="list"></div>
-          </div>
+          <p class="premium-note">Todas las funciones están abiertas por ahora. Premium (pago) llegará más adelante.</p>
         </section>
 
         <section id="ajustes" class="view view--ajustes" aria-label="Ajustes de privacidad">
           <header class="ajustes-bar">
             <h2 class="ajustes-bar__title">Ajustes</h2>
-            <a class="ajustes-bar__link" href="#partidos">â† Partidos</a>
+            <a class="ajustes-bar__link" href="#partidos">← Partidos</a>
           </header>
           <p class="privacy-lead">
             Los tips son informativos. Usamos datos de partidos y cuotas para calcular predicciones.
-            No vendemos datos personales con fines publicitarios. AÃºn no hay cuentas de usuario.
+            No vendemos datos personales con fines publicitarios. Aún no hay cuentas de usuario.
           </p>
           <div class="privacy-toggles" role="group" aria-label="Preferencias locales">
             <label class="privacy-row">
               <span class="privacy-row__text">
-                <span class="privacy-row__title">Analytics / telemetrÃ­a</span>
-                <span class="privacy-row__hint">Desactivado por defecto. No enviamos telemetrÃ­a de terceros.</span>
+                <span class="privacy-row__title">Analytics / telemetría</span>
+                <span class="privacy-row__hint">Desactivado por defecto. No enviamos telemetría de terceros.</span>
               </span>
               <input id="pref-analytics" type="checkbox" class="privacy-switch" role="switch" />
             </label>
             <label class="privacy-row">
               <span class="privacy-row__text">
-                <span class="privacy-row__title">Guardar bÃºsqueda reciente</span>
-                <span class="privacy-row__hint">Recuerda el Ãºltimo equipo buscado en este dispositivo.</span>
+                <span class="privacy-row__title">Guardar búsqueda reciente</span>
+                <span class="privacy-row__hint">Recuerda el último equipo buscado en este dispositivo.</span>
               </span>
               <input id="pref-save-search" type="checkbox" class="privacy-switch" role="switch" />
             </label>
             <label class="privacy-row">
               <span class="privacy-row__text">
                 <span class="privacy-row__title">Recordar filtros</span>
-                <span class="privacy-row__hint">Conserva fecha y Ã¡mbito entre sesiones.</span>
+                <span class="privacy-row__hint">Conserva fecha y ámbito entre sesiones.</span>
               </span>
               <input id="pref-remember-filters" type="checkbox" class="privacy-switch" role="switch" />
             </label>
           </div>
           <div class="privacy-data">
-            <h3 class="privacy-data__title">QuÃ© se guarda</h3>
+            <h3 class="privacy-data__title">Qué se guarda</h3>
             <ul class="privacy-data__list">
-              <li><strong>En este dispositivo</strong> â€” preferencias de privacidad y, si lo activas, bÃºsqueda/filtros.</li>
-              <li><strong>En el servidor (D1)</strong> â€” partidos, tips y resultados agregados. Sin perfil personal.</li>
+              <li><strong>En este dispositivo</strong> — preferencias de privacidad y, si lo activas, búsqueda/filtros.</li>
+              <li><strong>En el servidor (D1)</strong> — partidos, tips y resultados agregados. Sin perfil personal.</li>
             </ul>
           </div>
           <p class="privacy-responsible">
@@ -320,7 +375,7 @@
           </p>
           <details class="admin-fold hidden" id="admin-fold">
             <summary>Admin</summary>
-            <div id="admin-status" class="admin-status muted" aria-live="polite">Cargando coberturaâ€¦</div>
+            <div id="admin-status" class="admin-status muted" aria-live="polite">Cargando cobertura…</div>
             <div class="admin-actions">
               <button id="btn-sync" type="button" class="btn-refresh btn-refresh--footer" title="Actualizar calendario">
                 <span>Calendario</span>
@@ -334,7 +389,6 @@
             </div>
           </details>
         </section>
-      </div>
     </main>
 
     <footer class="site-footer">
@@ -348,10 +402,10 @@
     </footer>
 
     <div id="panel-backdrop" class="panel-backdrop" aria-hidden="true"></div>
-    <aside id="panel" class="panel" aria-label="AnÃ¡lisis del partido" aria-hidden="true">
+    <aside id="panel" class="panel" aria-label="Análisis del partido" aria-hidden="true">
       <div class="panel-header">
-        <p class="panel-header__title">AnÃ¡lisis</p>
-        <button id="close-panel" type="button" class="panel-header__close" aria-label="Cerrar anÃ¡lisis">
+        <p class="panel-header__title">Análisis</p>
+        <button id="close-panel" type="button" class="panel-header__close" aria-label="Cerrar análisis">
           <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
             <path d="M7 7l10 10M17 7 7 17"></path>
           </svg>
@@ -360,6 +414,6 @@
       <div id="panel-body"></div>
     </aside>
 
-    <script src="/app.js?v=hb15"></script>
+    <script src="/app.js?v=hb20"></script>
   </body>
 </html>

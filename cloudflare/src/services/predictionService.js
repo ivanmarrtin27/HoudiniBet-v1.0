@@ -26,24 +26,60 @@ export { TRIVIAL_GOAL_TIPS };
 
 const MIN_TIP_PROB = 0.48;
 const MAX_TIP_PROB = 0.78;
-const MIN_VALUE = 0.04;
+/** Playable tip lane: model P ≥ this (not max-P absolute). */
+const PLAYABLE_MIN_PROB = 0.69;
+/** Optional UI “tip seguro” threshold (subset of playable). */
+const SAFE_TIP_PROB = 0.8;
+/** Min edge (model − fair book) for a value tip. Aligned with UI badge ≥5%. */
+const MIN_VALUE = 0.05;
 const MIN_DRAW_PROB = 0.32;
 const MIN_1X2_TIP_PROB = 0.44;
 const MAX_1X2_TIP_PROB = 0.85;
 const MIN_SAMPLE_FOR_TIP = 3;
 /** Count markets need denser enriched history before they can be tips. */
 const EXTRA_MARKET_MIN_N = 4;
+/** Soft floor/ceiling on book odds for tip ranking (avoid 1.05 favorites / trash longshots). */
+const MIN_TIP_BOOK_ODDS = 1.2;
+const MAX_TIP_BOOK_ODDS = 4.5;
+/** Dead odds: not playable as primary tip. */
+const MIN_PLAYABLE_ODDS = 1.25;
+/** Ultra-safe / boring markets — excluded from tips (SHOTS_* banned via helper). */
+const TRIVIAL_TIP_LABELS = new Set(['OVER_05', 'UNDER_45']);
+/** Soft cap: same label per day. */
+const MAX_LABEL_PER_DAY = 2;
+/** Soft cap: share of day's tips per family (~35%). */
+const MAX_FAMILY_DAY_SHARE = 0.35;
+/** Expanded tip pool: core + O/U ladder + DC/DNB (extras still via extraCandidates). */
+const TIP_POOL_LABELS = new Set([
+  ...CORE_MARKETS,
+  'DC_1X',
+  'DC_X2',
+  'DNB_HOME',
+  'DNB_AWAY',
+  'OVER_05',
+  'UNDER_05',
+  'OVER_15',
+  'UNDER_15',
+  'OVER_35',
+  'UNDER_35',
+  'OVER_45',
+  'UNDER_45',
+]);
 
 const BOOK_ODDS_MAP = {
   HOME_WIN: 'home_odds',
   DRAW: 'draw_odds',
   AWAY_WIN: 'away_odds',
+  OVER_05: 'over05_odds',
+  UNDER_05: 'under05_odds',
   OVER_15: 'over15_odds',
   UNDER_15: 'under15_odds',
   OVER_25: 'over25_odds',
   UNDER_25: 'under25_odds',
   OVER_35: 'over35_odds',
   UNDER_35: 'under35_odds',
+  OVER_45: 'over45_odds',
+  UNDER_45: 'under45_odds',
   BTTS_YES: 'btts_yes_odds',
   BTTS_NO: 'btts_no_odds',
   SHOTS_OVER_225: 'shots_over225_odds',
@@ -120,19 +156,11 @@ function strength(teamAvg, leagueAvg, fallback = 1) {
 
 function familyOf(label) {
   if (['HOME_WIN', 'DRAW', 'AWAY_WIN'].includes(label)) return '1X2';
+  if (['BTTS_YES', 'BTTS_NO'].includes(label)) return 'btts';
   if (
-    [
-      'OVER_15',
-      'UNDER_15',
-      'OVER_25',
-      'UNDER_25',
-      'OVER_35',
-      'UNDER_35',
-      'BTTS_YES',
-      'BTTS_NO',
-    ].includes(label)
+    ['OVER_15', 'UNDER_15', 'OVER_25', 'UNDER_25', 'OVER_35', 'UNDER_35'].includes(label)
   ) {
-    return 'goles';
+    return 'ou';
   }
   if (String(label).startsWith('HOME_') || String(label).startsWith('AWAY_')) {
     return 'goles_equipo';
@@ -187,7 +215,9 @@ function computeValue(candidates, oddsRow) {
   }
 
   const fair1x2 = fairImpliedFromOdds(oddsMap, ['HOME_WIN', 'DRAW', 'AWAY_WIN']);
-  const fairOu = fairImpliedFromOdds(oddsMap, ['OVER_25', 'UNDER_25']);
+  const fairOu15 = fairImpliedFromOdds(oddsMap, ['OVER_15', 'UNDER_15']);
+  const fairOu25 = fairImpliedFromOdds(oddsMap, ['OVER_25', 'UNDER_25']);
+  const fairOu35 = fairImpliedFromOdds(oddsMap, ['OVER_35', 'UNDER_35']);
   const fairBtts = fairImpliedFromOdds(oddsMap, ['BTTS_YES', 'BTTS_NO']);
   const fairShots225 = fairImpliedFromOdds(oddsMap, ['SHOTS_OVER_225', 'SHOTS_UNDER_225']);
   const fairShots255 = fairImpliedFromOdds(oddsMap, ['SHOTS_OVER_255', 'SHOTS_UNDER_255']);
@@ -207,7 +237,9 @@ function computeValue(candidates, oddsRow) {
     if (book == null) continue;
     let fair =
       fair1x2?.[c.label] ??
-      fairOu?.[c.label] ??
+      fairOu15?.[c.label] ??
+      fairOu25?.[c.label] ??
+      fairOu35?.[c.label] ??
       fairBtts?.[c.label] ??
       fairShots225?.[c.label] ??
       fairShots255?.[c.label] ??
@@ -234,7 +266,31 @@ function computeValue(candidates, oddsRow) {
 
 function isExtraFamily(label) {
   const f = familyOf(label);
-  return f === 'shots' || f === 'shots_on_target' || f === 'corners' || f === 'cards';
+  // Total SHOTS_* banned from tips; SOT/corners/cards still extras.
+  return f === 'shots_on_target' || f === 'corners' || f === 'cards';
+}
+
+function secondaryTipScore(c, dailyTipContext) {
+  let score = isPlayableCandidate(c)
+    ? playableTipScore(c, null)
+    : (c.edge != null && Number.isFinite(Number(c.edge)) ? Number(c.edge) : -1);
+  if (isExtraFamily(c.label)) score += 0.02;
+  const fam = tipFamily(c.label);
+  const secCounts = dailyTipContext?.secondaryCounts || {};
+  const fixtureCount = Number(dailyTipContext?.fixtureCount) || 0;
+  if (fixtureCount > 0) {
+    const famCount = Object.entries(secCounts).reduce(
+      (sum, [bet, n]) => sum + (tipFamily(bet) === fam ? Number(n) || 0 : 0),
+      0
+    );
+    const famCap = Math.max(1, Math.ceil(fixtureCount * MAX_FAMILY_DAY_SHARE));
+    if (famCount >= famCap) {
+      score -= fam === 'btts' || fam === 'ou' ? 0.12 : 0.08;
+    } else {
+      score -= famCount * (fam === 'btts' || fam === 'ou' ? 0.025 : 0.015);
+    }
+  }
+  return score;
 }
 
 /** Compact 5x5 exact-score grid (0-4 goals each side) for the panel. */
@@ -272,7 +328,10 @@ function tipProbabilityAllowed(candidate, { valueCandidate = false } = {}) {
 
 function dailyQuotaCandidates(candidates, dailyTipContext) {
   if (!dailyTipContext || dailyTipContext.fixtureCount <= 0) return candidates;
-  const cap = Math.max(1, Number(dailyTipContext.maxPerLabel) || 1);
+  const cap = Math.min(
+    MAX_LABEL_PER_DAY,
+    Math.max(1, Number(dailyTipContext.maxPerLabel) || MAX_LABEL_PER_DAY)
+  );
   const underCap = candidates.filter(
     (candidate) => (Number(dailyTipContext.counts?.[candidate.label]) || 0) < cap
   );
@@ -283,17 +342,79 @@ function dailyQuotaCandidates(candidates, dailyTipContext) {
 
 function dailyFamilyCount(label, dailyTipContext) {
   if (!dailyTipContext) return 0;
-  const family = familyOf(label);
+  const family = tipFamily(label);
   return Object.entries(dailyTipContext.counts || {}).reduce(
-    (sum, [bet, count]) => sum + (familyOf(bet) === family ? Number(count) || 0 : 0),
+    (sum, [bet, count]) => sum + (tipFamily(bet) === family ? Number(count) || 0 : 0),
     0
   );
 }
 
+function tipOddsForCandidate(c) {
+  const book = Number(c.book);
+  if (Number.isFinite(book) && book > 1) return book;
+  const p = Number(c.prob);
+  if (Number.isFinite(p) && p > 0.01 && p < 0.99) return 1 / p;
+  return null;
+}
+
+/** Total match shots — never tip primary/secondary (ladders UI still OK). */
+function isBannedShotTotalLabel(label) {
+  return String(label || '').startsWith('SHOTS_');
+}
+
+function isTrivialTipLabel(label) {
+  const lab = String(label || '');
+  return TRIVIAL_TIP_LABELS.has(lab) || isBannedShotTotalLabel(lab);
+}
+
+function isPlayableCandidate(c) {
+  if (!c || isTrivialTipLabel(c.label)) return false;
+  const p = Number(c.prob);
+  if (!Number.isFinite(p) || p < PLAYABLE_MIN_PROB) return false;
+  const odds = tipOddsForCandidate(c);
+  if (odds == null || odds < MIN_PLAYABLE_ODDS) return false;
+  return true;
+}
+
+function playableTipScore(c, dailyTipContext) {
+  const p = Number(c.prob);
+  const odds = tipOddsForCandidate(c) || 1 / Math.max(p, 0.05);
+  let score = p * Math.log(Math.max(odds, 1.01));
+  if (c.edge != null && Number.isFinite(Number(c.edge))) {
+    score += Math.max(0, Number(c.edge)) * 0.15;
+  }
+  if (dailyTipContext?.fixtureCount > 0) {
+    const labelCount = Number(dailyTipContext.counts?.[c.label]) || 0;
+    score -= Math.min(0.12, Math.max(0, labelCount + 1 - MAX_LABEL_PER_DAY) * 0.04);
+    const famCount = dailyFamilyCount(c.label, dailyTipContext);
+    const famCap = Math.max(
+      1,
+      Math.ceil(dailyTipContext.fixtureCount * MAX_FAMILY_DAY_SHARE)
+    );
+    if (famCount >= famCap) score -= 0.08;
+    else score -= famCount * 0.01;
+  }
+  return score;
+}
+
+function oddsQualityPenalty(bookOdds) {
+  const o = Number(bookOdds);
+  if (!Number.isFinite(o) || o <= 1) return 0.05;
+  if (o < MIN_TIP_BOOK_ODDS) return Math.min(0.08, (MIN_TIP_BOOK_ODDS - o) * 0.25);
+  if (o > MAX_TIP_BOOK_ODDS) return Math.min(0.06, (o - MAX_TIP_BOOK_ODDS) * 0.02);
+  return 0;
+}
+
+/**
+ * Rank by value edge (model − fair book), with light malus for daily quota,
+ * short/long odds, then family diversity and probability.
+ */
 function compareTipCandidates(a, b, value, dailyTipContext) {
   const score = (candidate) => {
-    const edge = value.byLabel?.[candidate.label]?.edge;
-    const base = edge != null ? Number(edge) : -1;
+    const meta = value.byLabel?.[candidate.label];
+    const edge = meta?.edge;
+    let base = edge != null ? Number(edge) : -1;
+    if (meta?.book != null) base -= oddsQualityPenalty(meta.book);
     if (!dailyTipContext || dailyTipContext.fixtureCount <= 0) return base;
     const cap = Math.max(1, Number(dailyTipContext.maxPerLabel) || 1);
     const count = Number(dailyTipContext.counts?.[candidate.label]) || 0;
@@ -301,8 +422,6 @@ function compareTipCandidates(a, b, value, dailyTipContext) {
     return base - Math.min(0.1, excess * 0.02);
   };
   const scoreDiff = score(b) - score(a);
-  // When candidates are within 2pp, use family frequency as a deterministic
-  // tiebreak so 1X2/count markets can edge out an overrepresented goals family.
   if (Math.abs(scoreDiff) > 0.02) return scoreDiff;
   const familyDiff =
     dailyFamilyCount(a.label, dailyTipContext) - dailyFamilyCount(b.label, dailyTipContext);
@@ -311,11 +430,8 @@ function compareTipCandidates(a, b, value, dailyTipContext) {
 }
 
 /**
- * Book-first tip selection:
- * 1) Best EV among core markets with book odds
- * 2) If hasBook: soft fallback only among labels that have book cuota
- * 3) Else highest core model prob
- * Extras (shots/corners/cards): secondary (or primary when no core book but extra has book+edge)
+ * Tip selection: playable lane (P≥69%, non-trivial, odds≥1.25) first,
+ * else book-first value edge. Never invents book odds.
  */
 function pickBets(candidates, value, calib = null, opts = {}) {
   const {
@@ -331,89 +447,120 @@ function pickBets(candidates, value, calib = null, opts = {}) {
     return !isFamilyBlocked(calib, tipFamily(c.label));
   };
 
-  const core = nonTrivial.filter((c) => CORE_MARKETS.has(c.label)).filter(familyOk);
+  const tipPool = nonTrivial.filter((c) => TIP_POOL_LABELS.has(c.label)).filter(familyOk);
   const extras = (extraCandidates || shotCandidates || []).filter(familyOk);
   const annotate = (c) => {
     const meta = value.byLabel?.[c.label];
     return meta
-      ? { ...c, edge: meta.edge, hasBook: true }
-      : { ...c, edge: null, hasBook: false };
+      ? { ...c, edge: meta.edge, hasBook: true, book: meta.book }
+      : { ...c, edge: null, hasBook: false, book: null };
   };
-  const withBookEv = core.map(annotate).filter((c) => c.hasBook && c.edge != null);
-  const extrasWithBook = extras.map(annotate).filter((c) => c.hasBook && c.edge != null);
+
+  const allAnnotated = [...tipPool, ...extras].map(annotate);
+  const withBookEv = allAnnotated.filter((c) => c.hasBook && c.edge != null);
+  const byRank = (pool) =>
+    [...pool].sort((a, b) => compareTipCandidates(a, b, value, dailyTipContext));
 
   let primary = null;
+  let tipTier = 'fallback';
 
-  if (hasBook && withBookEv.length) {
+  // Lane 1: playable (corners/cards/SOT/O-U medios/1X2…) — exclude trivial ultra-safe lines.
+  const playablePool = allAnnotated.filter(isPlayableCandidate);
+  if (playablePool.length) {
+    const quotaPool = dailyQuotaCandidates(playablePool, dailyTipContext);
+    const ranked = [...(quotaPool.length ? quotaPool : playablePool)].sort(
+      (a, b) => playableTipScore(b, dailyTipContext) - playableTipScore(a, dailyTipContext)
+    );
+    primary = ranked[0];
+    tipTier = 'playable';
+  }
+
+  if (!primary && hasBook && withBookEv.length) {
     const valuePoolBase = withBookEv.filter(
       (c) =>
+        !isTrivialTipLabel(c.label) &&
         c.edge >= MIN_VALUE &&
-        tipProbabilityAllowed(c, { valueCandidate: true })
+        tipProbabilityAllowed(c, { valueCandidate: true }) &&
+        (c.book == null || Number(c.book) >= MIN_PLAYABLE_ODDS)
     );
     const valuePool = dailyQuotaCandidates(valuePoolBase, dailyTipContext);
     if (valuePool.length) {
-      primary = [...valuePool].sort((a, b) => compareTipCandidates(a, b, value, dailyTipContext))[0];
+      primary = byRank(valuePool)[0];
+    } else if (valuePoolBase.length) {
+      primary = byRank(valuePoolBase)[0];
     } else {
-      const pool = valuePoolBase.length ? valuePoolBase : withBookEv;
-      primary = [...pool].sort((a, b) => compareTipCandidates(a, b, value, dailyTipContext))[0];
-    }
-  }
-
-  // No core book tip: allow extras primary when book edge is strong
-  if (!primary && extrasWithBook.length) {
-    const extraValueBase = extrasWithBook.filter(
-      (c) => c.edge >= MIN_VALUE && tipProbabilityAllowed(c, { valueCandidate: true })
-    );
-    const extraValue = dailyQuotaCandidates(extraValueBase, dailyTipContext);
-    if (extraValue.length) {
-      primary = [...extraValue].sort((a, b) => compareTipCandidates(a, b, value, dailyTipContext))[0];
-    } else if (extraValueBase.length) {
-      primary = [...extraValueBase].sort((a, b) => compareTipCandidates(a, b, value, dailyTipContext))[0];
+      const nonTrivialBook = withBookEv.filter((c) => !isTrivialTipLabel(c.label));
+      primary = byRank(nonTrivialBook.length ? nonTrivialBook : withBookEv)[0];
     }
   }
 
   if (!primary) {
-    const bookBacked = core.filter((c) => value.byLabel?.[c.label] != null);
-    const poolSource = hasBook && bookBacked.length ? bookBacked : core;
-    const usableBase = poolSource.filter((c) => tipProbabilityAllowed(c));
+    const bookBacked = tipPool.filter((c) => value.byLabel?.[c.label] != null);
+    const poolSource = hasBook && bookBacked.length ? bookBacked : tipPool;
+    const usableBase = poolSource.filter(
+      (c) => !isTrivialTipLabel(c.label) && tipProbabilityAllowed(c)
+    );
     const usable = dailyQuotaCandidates(usableBase, dailyTipContext);
     const pool = usable.length ? usable : usableBase.length ? usableBase : poolSource;
-    primary = [...pool].sort((a, b) => compareTipCandidates(a, b, value, dailyTipContext))[0];
+    primary = byRank(pool)[0];
   }
 
   if (!primary && nonTrivial.length) {
     const fallbackBase = nonTrivial.filter(
-      (c) => CORE_MARKETS.has(c.label) || familyOf(c.label) === 'goles'
+      (c) => TIP_POOL_LABELS.has(c.label) && !isTrivialTipLabel(c.label)
     );
-    primary = [...dailyQuotaCandidates(fallbackBase, dailyTipContext)]
-      .sort((a, b) => compareTipCandidates(a, b, value, dailyTipContext))[0];
+    primary = byRank(dailyQuotaCandidates(fallbackBase, dailyTipContext))[0];
   }
   if (!primary) primary = candidates[0] || extras[0];
 
-  // Thin sample: prefer safer core under (book-aligned when hasBook); don't force extras
-  if (sampleSize < MIN_SAMPLE_FOR_TIP && primary && !isExtraFamily(primary.label)) {
+  // Thin sample: only nudge toward safer labels when primary has no clear value edge
+  // and was not already chosen as playable.
+  const primaryEdge = value.byLabel?.[primary?.label]?.edge;
+  if (
+    tipTier !== 'playable' &&
+    sampleSize < MIN_SAMPLE_FOR_TIP &&
+    primary &&
+    !isExtraFamily(primary.label) &&
+    !(primaryEdge != null && primaryEdge >= MIN_VALUE)
+  ) {
     const safePool = hasBook
-      ? core.filter((c) => value.byLabel?.[c.label] != null)
-      : core;
+      ? tipPool.filter((c) => value.byLabel?.[c.label] != null)
+      : tipPool;
     const safePoolBase = safePool.filter((c) =>
       ['UNDER_25', 'BTTS_NO', 'HOME_WIN', 'AWAY_WIN'].includes(c.label)
     );
     const safePoolByQuota = dailyQuotaCandidates(safePoolBase, dailyTipContext);
-    const safe = (safePoolByQuota.length ? safePoolByQuota : safePoolBase)
-      .sort((a, b) => b.prob - a.prob)[0];
+    const safe = (safePoolByQuota.length ? safePoolByQuota : safePoolBase).sort(
+      (a, b) => b.prob - a.prob
+    )[0];
     if (safe && safe.prob >= primary.prob - 0.03) primary = safe;
   }
 
-  const secondaryPool = [
-    ...core.filter((c) => c.label !== primary?.label),
-    ...extras.filter((c) => c.label !== primary?.label),
-  ];
-  const secondary =
-    [...secondaryPool]
-      .filter((c) => familyOf(c.label) !== familyOf(primary.label))
-      .sort((a, b) => compareTipCandidates(a, b, value, dailyTipContext))[0] || null;
+  if (primary && isPlayableCandidate(primary)) tipTier = 'playable';
 
-  return { primary, secondary };
+  // tipFamily (not local familyOf): DC/DNB share 1X2 with HOME/AWAY/DRAW so
+  // secondary never repeats the same result side as primary (e.g. HOME + DNB_HOME).
+  const secondaryPool = allAnnotated.filter(
+    (c) =>
+      c.label !== primary?.label &&
+      !isTrivialTipLabel(c.label) &&
+      tipFamily(c.label) !== tipFamily(primary?.label)
+  );
+  const playableSecondary = secondaryPool.filter(isPlayableCandidate);
+  const valueSecondary = secondaryPool.filter(
+    (c) => c.hasBook && c.edge != null && c.edge >= MIN_VALUE
+  );
+  const secRank = (pool) =>
+    [...pool].sort(
+      (a, b) => secondaryTipScore(b, dailyTipContext) - secondaryTipScore(a, dailyTipContext)
+    );
+  const secondary =
+    (playableSecondary.length ? secRank(playableSecondary)[0] : null) ||
+    (valueSecondary.length ? secRank(valueSecondary)[0] : null) ||
+    (secondaryPool.length ? secRank(secondaryPool)[0] : null) ||
+    null;
+
+  return { primary, secondary, tipTier };
 }
 
 /** Build over-line ladder: lines like 8.5 → P(X > 8). */
@@ -440,7 +587,8 @@ function cornersModel(homeStats, awayStats, league, { degraded = false } = {}) {
   const strict = hasCornerSamples(homeStats) && hasCornerSamples(awayStats);
   const homeSamples = countStatSamples(homeStats, 'corners_for');
   const awaySamples = countStatSamples(awayStats, 'corners_for');
-  if (!strict && (!degraded || homeSamples === 0 || awaySamples === 0)) return null;
+  // Display-only: allow 0 samples on either side — missing side uses league-neutral strength.
+  if (!strict && !degraded) return null;
   const homeCornersFor = weightedAvg(homeStats, 'corners_for');
   const awayCornersFor = weightedAvg(awayStats, 'corners_for');
   const homeCornersAgainst = weightedAvg(homeStats, 'corners_against');
@@ -504,7 +652,8 @@ function cardsModel(homeStats, awayStats, league, { degraded = false } = {}) {
   const strict = hasCardSamples(homeStats) && hasCardSamples(awayStats);
   const homeSamples = countStatSamples(homeStats, 'yellows_for');
   const awaySamples = countStatSamples(awayStats, 'yellows_for');
-  if (!strict && (!degraded || homeSamples === 0 || awaySamples === 0)) return null;
+  // Display-only: allow 0 samples on either side — missing side uses league-neutral strength.
+  if (!strict && !degraded) return null;
   const homeYellowsFor = avg(homeStats, 'yellows_for');
   const awayYellowsFor = avg(awayStats, 'yellows_for');
   const homeYellowsAgainst = avg(homeStats, 'yellows_against');
@@ -602,7 +751,8 @@ function shotsOnTargetModel(homeStats, awayStats, league, { degraded = false } =
   const strict = hasSotSamples(homeStats) && hasSotSamples(awayStats);
   const homeSamples = countStatSamples(homeStats, 'shots_on_target_for');
   const awaySamples = countStatSamples(awayStats, 'shots_on_target_for');
-  if (!strict && (!degraded || homeSamples === 0 || awaySamples === 0)) return null;
+  // Display-only: allow 0 samples on either side — missing side uses league-neutral strength.
+  if (!strict && !degraded) return null;
   const homeFor = weightedAvg(homeStats, 'shots_on_target_for');
   const awayFor = weightedAvg(awayStats, 'shots_on_target_for');
   const homeAgainst = weightedAvg(homeStats, 'shots_on_target_against');
@@ -792,18 +942,15 @@ export async function predictMatch(db, matchId) {
   const shotsOnTargetDisplay =
     shotsOnTarget || shotsOnTargetModel(homeStats, awayStats, league, { degraded: true });
 
-  // Tip pool = core + O/U 1.5/3.5 for value; shots/corners/cards as secondary extras.
+  // Tip pool = core + O/U 1.5/3.5; extras compete on book edge for primary too.
   let candidates = allGoalCandidatesFromMarkets(m);
-  const tipCandidates = candidates.filter(
-    (c) =>
-      CORE_MARKETS.has(c.label) ||
-      ['OVER_15', 'UNDER_15', 'OVER_35', 'UNDER_35'].includes(c.label)
-  );
-  const shotCands = shotCandidatesFromModel(shots);
+  const tipCandidates = candidates.filter((c) => TIP_POOL_LABELS.has(c.label));
   const sotCands = sotCandidatesFromModel(shotsOnTarget);
   const cornerCands = cornerCandidatesFromModel(corners);
   const cardCands = cardCandidatesFromModel(cards);
-  const extraCands = [...sotCands, ...cornerCands, ...cardCands, ...shotCands];
+  // SHOTS_* never enter tip extras; kept only for value/ladder book maps.
+  const shotCandsForValue = shotCandidatesFromModel(shots);
+  const extraCands = [...sotCands, ...cornerCands, ...cardCands];
 
   const oddsRow = await store.getOddsForMatch(db, matchId);
   const hasBook = Boolean(
@@ -822,13 +969,16 @@ export async function predictMatch(db, matchId) {
         bookOddsForLabel(oddsRow, 'CARDS_OVER_45'))
   );
 
-  const value = computeValue([...tipCandidates, ...extraCands], oddsRow);
+  const value = computeValue(
+    [...tipCandidates, ...extraCands, ...shotCandsForValue],
+    oddsRow
+  );
   const calib = await loadTipCalibration(db);
   const calibrated = applyCalibrationToCandidates(tipCandidates, calib);
   const calibratedExtras = applyCalibrationToCandidates(extraCands, calib);
   const sampleSize = Math.min(nHome, nAway);
   const dailyTipContext = await store.getDailyTipDiversityContext(db, match.matchDate, matchId);
-  const { primary, secondary } = pickBets(calibrated, value, calib, {
+  const { primary, secondary, tipTier } = pickBets(calibrated, value, calib, {
     hasBook,
     sampleSize,
     extraCandidates: calibratedExtras,
@@ -841,13 +991,14 @@ export async function predictMatch(db, matchId) {
     tipResolved = {
       tipOdds: tipResolved.tipOdds,
       oddsBand: tipResolved.oddsBand,
-      oddsSource: 'model',
+      oddsSource: tipResolved.oddsSource === 'derived_1x2' ? 'derived_1x2' : 'model',
     };
   }
 
   let confidence = primary.prob * 100;
   let dataQuality = sampleSize >= MIN_SAMPLE_FOR_TIP ? 'ok' : 'low';
-  if (tipResolved.oddsSource !== 'book') {
+  // Keep playable tip confidence readable; light haircut only on fallback model tips.
+  if (tipTier !== 'playable' && tipResolved.oddsSource !== 'book') {
     confidence = Number((confidence * 0.94).toFixed(2));
   }
   if (sampleSize < MIN_SAMPLE_FOR_TIP) {
@@ -864,12 +1015,16 @@ export async function predictMatch(db, matchId) {
     home_win_prob: Number(m.homeWin.toFixed(4)),
     draw_prob: Number(m.draw.toFixed(4)),
     away_win_prob: Number(m.awayWin.toFixed(4)),
+    over05_prob: Number(m.over05.toFixed(4)),
+    under05_prob: Number(m.under05.toFixed(4)),
     over15_prob: Number(m.over15.toFixed(4)),
     under15_prob: Number(m.under15.toFixed(4)),
     over25_prob: Number(m.over25.toFixed(4)),
     under25_prob: Number(m.under25.toFixed(4)),
     over35_prob: Number(m.over35.toFixed(4)),
     under35_prob: Number(m.under35.toFixed(4)),
+    over45_prob: Number(m.over45.toFixed(4)),
+    under45_prob: Number(m.under45.toFixed(4)),
     btts_yes_prob: Number(m.bttsYes.toFixed(4)),
     btts_no_prob: Number(m.bttsNo.toFixed(4)),
     home_over05_prob: Number(m.homeOver05.toFixed(4)),
@@ -950,17 +1105,25 @@ export async function predictMatch(db, matchId) {
       ? Number(primary.rawProb)
       : primary.prob;
 
-  await store.upsertTipResult(db, {
-    match_id: matchId,
-    suggested_bet: payload.suggested_bet,
-    confidence_score: payload.confidence_score,
-    model_prob: modelProb,
-    value_edge: payload.value_edge,
-    value_market: payload.value_market,
-    tip_odds: storeOdds.tipOdds,
-    odds_band: storeOdds.oddsBand,
-    odds_source: storeOdds.oddsSource || tipResolved.oddsSource || null,
-  });
+  // After stats epoch wipe, do not re-ledger finished matches (keeps Stats clean).
+  const statsEpoch = await store.getMeta(db, 'stats_reset_at');
+  const skipFinishedLedger =
+    match.status === 'finished' &&
+    statsEpoch &&
+    /^\d{4}-\d{2}-\d{2}$/.test(String(statsEpoch));
+  if (!skipFinishedLedger) {
+    await store.upsertTipResult(db, {
+      match_id: matchId,
+      suggested_bet: payload.suggested_bet,
+      confidence_score: payload.confidence_score,
+      model_prob: modelProb,
+      value_edge: payload.value_edge,
+      value_market: payload.value_market,
+      tip_odds: storeOdds.tipOdds,
+      odds_band: storeOdds.oddsBand,
+      odds_source: storeOdds.oddsSource || tipResolved.oddsSource || null,
+    });
+  }
 
   const homeCornerAvg = avg(homeStats, 'corners_for');
   const awayCornerAvg = avg(awayStats, 'corners_for');
@@ -1014,9 +1177,11 @@ export async function predictMatch(db, matchId) {
       cards: Number(((league.avgYellowsFor || 2) * 2).toFixed(2)),
       shots: Number(((league.avgShotsFor || 12) * 2).toFixed(2)),
       shotsOnTarget: Number(((league.avgShotsOnTargetFor || 4.5) * 2).toFixed(2)),
+      proxy: league.proxy || null,
     },
     dataQuality,
     sampleSize,
+    tipTier,
     scoreGrid: scoreGridFromMatrix(matrix),
     topScores: topScoresFromMatrix(matrix),
     h2h,
