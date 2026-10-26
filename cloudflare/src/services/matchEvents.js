@@ -19,13 +19,36 @@ export function fotmobMatchIdFromApiId(apiId) {
 
 function pushEvent(out, ev) {
   if (!ev || !ev.type || ev.minute == null) return;
+  if (ev.type === 'goal' && ev.isHome !== true && ev.isHome !== false) return;
   out.push({
     type: ev.type,
     minute: Number(ev.minute),
     player: ev.player || null,
-    isHome: Boolean(ev.isHome),
+    isHome: ev.isHome === true,
     detail: ev.detail || null,
   });
+}
+
+/** Goal tallies from stored incidents (own goals count for the side credited in `isHome`). */
+export function countGoalEventsBySide(events) {
+  let home = 0;
+  let away = 0;
+  for (const e of events || []) {
+    if (!e || e.type !== 'goal') continue;
+    if (e.isHome === true) home += 1;
+    else if (e.isHome === false) away += 1;
+  }
+  return { home, away };
+}
+
+/** True when the scoreboard has more goals than we have goal events for either side. */
+export function matchEventsLagScore(match) {
+  if (!match || (match.status !== 'live' && match.status !== 'finished')) return false;
+  const hg = Number(match.homeGoals);
+  const ag = Number(match.awayGoals);
+  if (!Number.isFinite(hg) || !Number.isFinite(ag)) return false;
+  const { home, away } = countGoalEventsBySide(match.events);
+  return home < hg || away < ag;
 }
 
 function namesMatch(a, b) {
@@ -53,12 +76,12 @@ export function normalizeAfEvents(response, homeTeamId, awayTeamId, homeName = '
     const player = row.player?.name || null;
     const teamId = row.team?.id != null ? Number(row.team.id) : null;
     const teamName = row.team?.name || '';
-    let isHome = true;
+    let isHome = null;
     if (homeTeamId != null && teamId === Number(homeTeamId)) isHome = true;
     else if (awayTeamId != null && teamId === Number(awayTeamId)) isHome = false;
-    else if (namesMatch(teamName, awayName)) isHome = false;
     else if (namesMatch(teamName, homeName)) isHome = true;
-    else isHome = true;
+    else if (namesMatch(teamName, awayName)) isHome = false;
+    if (isHome == null) continue;
 
     if (type === 'Goal') {
       if (/Missed Penalty/i.test(detail)) {

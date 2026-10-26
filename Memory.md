@@ -14,7 +14,8 @@
 - Ban SHOTS_* + secondary diversity (tipFamily vs primary); Leverkusen crest; Top 10 caps; Stats epoch wipe
 - Unlock público si `PREMIUM_UNLOCKED`
 - Ligas explorer: split países+banderas | tabla; nextMatch/análisis; `#ligas/<apiId>`
-- pages.dev: SW `hb20`; track sin premium/ajustes (fix refresh); Semanal Otra cicla alts; Conservadora ancla
+- pages.dev: SW `hb24` brand + `og-share.png` negro 1200×630 (WA); Semanal Otra; track sin premium/ajustes
+- Live cron `*/10 11-23` UTC + lookback 2d; alias Man City; Stats historial paginado (Cargar más); Partidos sin marcador (sí en análisis)
 
 ## Pendiente
 - **API_FOOTBALL_KEY** válida (book real)

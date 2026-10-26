@@ -1,7 +1,8 @@
-/** Live name-match threshold + pre-kickoff guard. */
+/** Live name-match threshold + pre-kickoff guard + PL aliases. */
 import {
   findBestFixtureMatch,
   isPreKickoff,
+  isInPostKickoffLiveWindow,
   LIVE_NAME_MATCH_MIN,
   teamNameScore,
 } from '../src/services/syncService.js';
@@ -55,6 +56,44 @@ const past = new Date(Date.now() - 3 * 60 * 60 * 1000)
 check('future kickoff is pre-kickoff', isPreKickoff(future) === true);
 check('past kickoff is not pre-kickoff', isPreKickoff(past) === false);
 check('empty date is not pre-kickoff', isPreKickoff(null) === false);
+
+check(
+  'Man City alias scores 100 vs Manchester City',
+  teamNameScore('Man City', 'Manchester City') === 100
+);
+check(
+  'Aston Villa exact still 100',
+  teamNameScore('Aston Villa', 'Aston Villa') === 100
+);
+
+const villaCityFm = {
+  teams: { home: { name: 'Aston Villa' }, away: { name: 'Manchester City' } },
+};
+const otherPl = {
+  teams: { home: { name: 'Arsenal' }, away: { name: 'Chelsea' } },
+};
+check(
+  'kickoff pasado sin fotmob id: Villa–Man City name-matches FotMob Manchester City',
+  findBestFixtureMatch([otherPl, villaCityFm], 'Aston Villa', 'Man City') === villaCityFm
+);
+check(
+  'past kickoff is in post-kickoff live window',
+  isInPostKickoffLiveWindow(past) === true
+);
+check(
+  'future kickoff is not in post-kickoff live window',
+  isInPostKickoffLiveWindow(future) === false
+);
+
+check('Hull vs Hull City scores 100', teamNameScore('Hull', 'Hull City') === 100);
+check('Getafe CF vs Getafe scores 100', teamNameScore('Getafe CF', 'Getafe') === 100);
+check(
+  'Liverpool vs Brighton & Hove Albion scores at least 85',
+  Math.min(
+    teamNameScore('Liverpool', 'Liverpool'),
+    teamNameScore('Brighton', 'Brighton & Hove Albion')
+  ) >= 85
+);
 
 console.log(failed ? `\n${failed} checks failed` : `\n${passed}/${passed} checks passed`);
 process.exit(failed ? 1 : 0);

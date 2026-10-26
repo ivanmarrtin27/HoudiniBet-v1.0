@@ -1,81 +1,126 @@
-# Houdini Bet
+<p align="center">
+  <img src="cloudflare/public/brand/houdini-bet-mark.png" alt="Houdini Bet" width="96" />
+</p>
 
-Predicciones de fútbol con modelo **Poisson** (shrinkage + Dixon–Coles).  
-Runtime en **Cloudflare Workers + D1** con UI estática (PWA). **En desarrollo activo** (MVP usable).
+<h1 align="center">Houdini Bet</h1>
 
-[![Live](https://img.shields.io/badge/live-pages.dev-DC2626?style=flat-square)](https://houdini-bet.pages.dev)
-[![Stack](https://img.shields.io/badge/stack-Workers%20%2B%20D1-0A0A0A?style=flat-square)](./cloudflare)
+<p align="center">
+  <strong>Predicciones de fútbol con modelo Poisson</strong> (shrinkage + Dixon–Coles) · Worker + D1 en Cloudflare · PWA estática
+</p>
 
-## Demo
+<p align="center">
+  <a href="https://houdini-bet.pages.dev"><img src="https://img.shields.io/badge/demo-pages.dev-DC2626?style=for-the-badge" alt="Live demo"></a>
+  <a href="./cloudflare"><img src="https://img.shields.io/badge/runtime-Workers%20%2B%20D1-0A0A0A?style=for-the-badge" alt="Stack"></a>
+  <img src="https://img.shields.io/badge/status-MVP%20%2F%20beta-F59E0B?style=for-the-badge" alt="Status">
+</p>
 
-**App (día a día):** https://houdini-bet.pages.dev  
+<p align="center">
+  <a href="https://houdini-bet.pages.dev">Abrir app</a>
+  ·
+  <a href="#desarrollo">Desarrollo local</a>
+  ·
+  <a href="#api-resumen">API</a>
+</p>
 
-Origen Worker/API: `https://houdini-bet.ivanmarrtin2703.workers.dev`  
-Dominio custom `houdini-bet.dev` — opcional cuando el producto esté listo (auth + Premium).
+---
 
-| | |
+## Vista previa
+
+<p align="center">
+  <a href="https://houdini-bet.pages.dev">
+    <img src="cloudflare/public/brand/og-share.png" alt="Houdini Bet — vista previa para compartir" width="720" />
+  </a>
+</p>
+
+> Imagen generada desde los assets de marca del repo. La experiencia real está en [houdini-bet.pages.dev](https://houdini-bet.pages.dev).
+
+## Enlaces
+
+| | URL |
 |---|---|
-| UI | Misma URL Pages |
-| API | `/api/v1/...` |
-| Health | `/health` |
+| **App (día a día)** | https://houdini-bet.pages.dev |
+| **Worker / API** | https://houdini-bet.ivanmarrtin2703.workers.dev |
+| **Health** | `/health` |
+| **REST** | `/api/v1/...` |
 
-## Qué hace
+Dominio custom `houdini-bet.dev` — previsto cuando auth y Premium estén listos para producción.
 
-- **Partidos** día a día (ligas top EU + Segunda + UEFA), con live y panel de análisis
-- Tips por partido: **1X2 · DC/DNB · O/U · BTTS · córners / tarjetas / SOT** (sin tiros totales)
-- **Top 10** del día (P≥69% + cuota 1.30–3.50; diversidad por familia)
-- **Stats** de tips recomendados (aciertos / fallos / pendientes)
-- **Semanal**: combinada ~cuota 10 + Conservadora ~cuota 5 (estimación del modelo; botón «Otra» cicla alternativas)
-- **Ligas**: explorador por país → clasificación D1 → próximo partido
-- Sync automático (FixtureDownload + FotMob; enrich opcional con API-Football)
+## Características
 
-Los tips son **orientativos**. No garantizan acierto ni beneficio.
+- **Partidos** — ventana hoy + 14 días; ligas top europeas, Segunda y competiciones UEFA; live con refresco y proyección en tiempo real
+- **Mercados** — 1X2 · doble oportunidad / DNB · over/under · BTTS · córners, tarjetas y tiros a puerta (sin mercados de tiros totales)
+- **Top 10 del día** — probabilidad ≥69% y cuota en rango razonable; diversidad por familia de mercado
+- **Semanal** — combinada ~cuota 10 y conservadora ~cuota 5 (estimación del modelo; alternativas con «Otra»)
+- **Stats** — seguimiento de tips recomendados (aciertos, fallos, pendientes)
+- **Ligas** — explorador por país, clasificación y acceso al próximo partido del equipo
+- **UI** — interfaz móvil pulida (cabecera compacta, navegación con indicador deslizante, PWA instalable)
+- **Datos** — sync programado (FixtureDownload + FotMob; enriquecimiento opcional vía API-Football)
 
-## Roadmap
+**Premium / pagos:** hay trabajo previo de activación con Stripe; el producto público en Pages sigue en fase **beta gratuita** — no prometemos funciones de pago hasta el lanzamiento formal.
 
-Cuando el producto esté estable:
+## Aviso
 
-1. Registro + login (cuentas de usuario)
-2. Planes **Premium** con suscripción / pago
-3. Dominio custom opcional
+Los pronósticos y tips son **informativos y orientativos**. No constituyen asesoramiento financiero ni garantizan resultados. Juega con responsabilidad y dentro de tus límites.
 
 ## Stack
 
 | Pieza | Detalle |
 |-------|---------|
 | Runtime | Cloudflare Worker `houdini-bet` |
-| DB | D1 `houdini-bet-db` |
-| Front | `cloudflare/public` (HTML/CSS/JS) |
-| Cron | sync `0 6 * * *` · enrich `30 6 * * *` |
-| Ligas | `LEAGUE_IDS=140,141,39,135,78,61,5,2,3` |
+| Base de datos | D1 `houdini-bet-db` |
+| Frontend | `cloudflare/public` — HTML, CSS, JS (sin framework) |
+| Cron | sync `0 6 * * *` · enrich `30 6 * * *` (con clave API) |
+| Ligas allowlist | `LEAGUE_IDS=140,141,39,135,78,61,5,2,3` |
 
-Código de producción: carpeta [`cloudflare/`](./cloudflare).
+Código de producción: [`cloudflare/`](./cloudflare). Backend Express + MySQL archivado en [`legacy/`](./legacy/).
+
+## Estructura del proyecto
+
+```
+Houdini Bet/
+├── cloudflare/          # Worker, D1, UI estática, scripts de test
+│   ├── public/          # PWA (app.js, styles, brand, icons)
+│   ├── src/             # index.js, servicios, modelo live
+│   └── migrations/      # esquema D1
+├── legacy/              # CLI / backend local (referencia)
+├── AGENTS.md            # guía para agentes de código
+└── Memory.md            # notas internas del proyecto
+```
 
 ## Desarrollo
+
+Requisitos: Node.js LTS, cuenta Cloudflare, [Wrangler](https://developers.cloudflare.com/workers/wrangler/).
 
 ```bash
 cd cloudflare
 npm install
 npx wrangler d1 migrations apply houdini-bet-db --local
-npx wrangler dev
+npm run dev
+# o: npx wrangler dev
 ```
 
-Deploy:
+**Deploy Worker:**
 
 ```bash
 cd cloudflare
-npx wrangler deploy
-# alias Pages (proxy):
+npm run deploy
+# alias Pages (proxy estático):
 npx wrangler pages deploy pages --project-name houdini-bet --branch main
 ```
 
-Migraciones remotas:
+**Migraciones remotas:**
 
 ```bash
 npx wrangler d1 migrations apply houdini-bet-db --remote
 ```
 
-Secrets (Wrangler): `SYNC_SECRET`, opcional `API_FOOTBALL_KEY`.
+**Secrets (Wrangler):** `SYNC_SECRET` (sync manual); opcional `API_FOOTBALL_KEY` (cuotas/stats).
+
+**Tests:**
+
+```bash
+cd cloudflare && npm test
+```
 
 ## API (resumen)
 
@@ -87,7 +132,7 @@ Secrets (Wrangler): `SYNC_SECRET`, opcional `API_FOOTBALL_KEY`.
 | GET | `/api/v1/combos/weekly` |
 | GET | `/api/v1/matches/:id/prediction` |
 | GET | `/api/v1/leagues/:apiId/table` |
-| POST | `/api/v1/sync/manual` (`x-sync-secret`) |
+| POST | `/api/v1/sync/manual` (header `x-sync-secret`) |
 
 ## CLI opcional (legacy)
 
@@ -97,7 +142,13 @@ cd legacy/backend
 npm install && npm run cli
 ```
 
-Sin `API_BASE_URL` usa MySQL local (legacy, archivado en `legacy/`): el runtime de producción es Cloudflare (`cloudflare/`).
+Sin `API_BASE_URL` apunta a MySQL local (solo desarrollo legacy).
+
+## Roadmap
+
+1. Registro e inicio de sesión
+2. Planes Premium con suscripción
+3. Dominio custom opcional
 
 ## Autor
 
@@ -105,4 +156,4 @@ Sin `API_BASE_URL` usa MySQL local (legacy, archivado en `legacy/`): el runtime 
 
 ## Licencia
 
-Uso personal / portfolio. Sin licencia open-source publicada de momento.
+Uso personal / portfolio. No hay licencia open-source publicada por el momento.

@@ -862,12 +862,72 @@ function matchStatusPill(m) {
     return `${min} · EN VIVO`;
   }
   if (m.status === 'finished') {
-    if (m.homeGoals != null && m.awayGoals != null) {
-      return `${Number(m.homeGoals)}-${Number(m.awayGoals)} · FT`;
-    }
     return 'FT';
   }
   return time ? `${time} · NS` : 'NS';
+}
+
+function mpVsMidLabel(m, live) {
+  if (m.status !== 'live' && m.status !== 'finished') {
+    return { text: 'VS', score: false };
+  }
+  const hg = live?.homeGoals ?? m.homeGoals;
+  const ag = live?.awayGoals ?? m.awayGoals;
+  if (hg != null && ag != null) {
+    return { text: `${Number(hg)}-${Number(ag)}`, score: true };
+  }
+  return { text: 'VS', score: false };
+}
+
+function mpVsMidHtml(m, live) {
+  const mid = mpVsMidLabel(m, live);
+  const labelCls = mid.score ? ' mp-vs__label--score' : '';
+  return `<div class="mp-vs">
+    <span class="mp-vs__label${labelCls}">${escapeHtml(mid.text)}</span>
+    <span class="mp-status">${escapeHtml(matchStatusPill(m))}</span>
+  </div>`;
+}
+
+function refreshMpVsMid(root, m, live) {
+  const vs = root.querySelector('.mp-vs');
+  if (!vs) return;
+  const mid = mpVsMidLabel(m, live);
+  const label = vs.querySelector('.mp-vs__label');
+  const status = vs.querySelector('.mp-status');
+  if (label) {
+    label.textContent = mid.text;
+    label.classList.toggle('mp-vs__label--score', mid.score);
+  }
+  if (status) status.textContent = matchStatusPill(m);
+}
+
+function refreshMpLiveEvents(root, events, m) {
+  const teams = root.querySelector('.mp-teams');
+  if (!teams) return;
+  const show =
+    m && (m.status === 'live' || m.status === 'finished') && Array.isArray(events) && events.length;
+  const html = show ? matchEventsHtml(events, { split: true }) : '';
+  if (!html) {
+    teams.classList.remove('mp-teams--events');
+    teams.querySelectorAll('.mp-live-events__col, .mp-live-events__mid').forEach((el) => el.remove());
+    return;
+  }
+  teams.classList.add('mp-teams--events');
+  let homeCol = teams.querySelector('.mp-live-events__col--home');
+  let awayCol = teams.querySelector('.mp-live-events__col--away');
+  if (!homeCol || !awayCol) {
+    teams.querySelectorAll('.mp-live-events__col, .mp-live-events__mid').forEach((el) => el.remove());
+    teams.insertAdjacentHTML('beforeend', html);
+    return;
+  }
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  const newHome = tmp.querySelector('.mp-live-events__col--home');
+  const newAway = tmp.querySelector('.mp-live-events__col--away');
+  if (newHome) homeCol.innerHTML = newHome.innerHTML;
+  if (newAway) awayCol.innerHTML = newAway.innerHTML;
+  const mid = teams.querySelector('.mp-live-events__mid');
+  if (mid && !mid.innerHTML) mid.innerHTML = '';
 }
 
 function eventIconSvg(type) {
@@ -896,8 +956,8 @@ function matchEventsHtml(events, { stack = false, split = false } = {}) {
   const focus = list.filter((e) => e && (e.type === 'goal' || e.type === 'red' || e.type === 'missed_pen'));
   if (!focus.length) return '';
   if (split) {
-    const home = focus.filter((e) => e.isHome);
-    const away = focus.filter((e) => !e.isHome);
+    const home = focus.filter((e) => e.isHome === true);
+    const away = focus.filter((e) => e.isHome === false);
     // Three grid cells for .mp-teams (1fr auto 1fr) — home | spacer | away
     return `<div class="mp-live-events__col mp-live-events__col--home" aria-label="Eventos local">${home.map(eventChipHtml).join('')}</div>
       <div class="mp-live-events__mid" aria-hidden="true"></div>
@@ -1227,27 +1287,6 @@ function extrasPanel({
   const homeRows = ladderProbRows(ladders?.home, teamLines);
   const awayRows = ladderProbRows(ladders?.away, teamLines);
   const hasRows = Boolean(matchRows || homeRows || awayRows);
-  const homeN = Number(ladders?.samples?.home) || 0;
-  const awayN = Number(ladders?.samples?.away) || 0;
-  const leagueOnly = Boolean(ladders?.degraded) && homeN === 0 && awayN === 0;
-  const oneSided =
-    Boolean(ladders?.degraded) && !leagueOnly && (homeN === 0 || awayN === 0);
-  let degradedNote = '';
-  if (leagueOnly || (leagueProxy && !ladders?.degraded && !hasRows)) {
-    degradedNote = `<div class="market-estimate-note" role="status">Estimación con media de liga${leagueProxy ? ' (proxy)' : ''} · sin muestras de equipo · no es tip</div>`;
-  } else if (oneSided) {
-    degradedNote = `<div class="market-estimate-note" role="status">Estimación parcial · ${homeN} local / ${awayN} visitante (lado sin datos = media liga) · tip exige ≥4 por lado · no es tip</div>`;
-  } else if (ladders?.degraded) {
-    // EXTRA_MARKET_MIN_N = 4: stronger wording only when a side has <2 games.
-    const veryThin = homeN < 2 || awayN < 2;
-    degradedNote = veryThin
-      ? `<div class="market-estimate-note" role="status">Muestras muy escasas · ${homeN} local / ${awayN} visitante · tip exige ≥4 por lado · no es tip</div>`
-      : `<div class="market-estimate-note" role="status">Datos limitados · ${homeN} local / ${awayN} visitante (tip exige ≥4 por lado) · estimación orientativa, no es tip</div>`;
-  } else if (leagueProxy) {
-    degradedNote = `<div class="market-estimate-note" role="status">Media de liga proxy (sin stats reales de liga) · probabilidades del modelo Poisson</div>`;
-  } else if (hasRows) {
-    degradedNote = `<div class="market-estimate-note market-estimate-note--ok muted" role="status">Probabilidades Poisson del modelo · medias = últimos partidos</div>`;
-  }
   const averages = marketAveragesHtml({
     unit,
     homeName,
@@ -1265,7 +1304,7 @@ function extrasPanel({
     homeExp: expected?.home,
     awayExp: expected?.away,
     matchExp: expected?.match,
-  })}${degradedNote}${averages}`;
+  })}${averages}`;
   if (!hasRows) return `${header}${fallbackHtml || ''}`;
   return `
     ${header}
@@ -1406,7 +1445,7 @@ function mpTeamCol(name, logo, side, form) {
       ${crestHtml(name, logo, 'lg')}
       <div class="mp-team__name">${escapeHtml(name || '—')}</div>
       <div class="mp-team__side">${label}</div>
-      <div class="mp-team__form">${formHtml(form)}</div>
+      <div class="mp-team__form">${formHtml(form, side)}</div>
     </div>`;
 }
 
@@ -1593,11 +1632,15 @@ const FORM_BADGE = {
   E: { letter: 'E', cls: 'E', title: 'Empate' },
 };
 
-function formHtml(form) {
+/** Last 7 results; newest toward VS (home: reverse DOM; away: newest-first). */
+function formHtml(form, side = 'home') {
   if (!form || !form.length) {
     return `<span class="muted">Sin historial suficiente</span>`;
   }
-  return form
+  // API form is newest-first; cap at 7 for the panel strip.
+  const newestFirst = form.slice(0, 7);
+  const ordered = side === 'away' ? newestFirst : [...newestFirst].reverse();
+  return ordered
     .map((f) => {
       const raw = String(f || '').toUpperCase();
       const mapped = FORM_BADGE[raw] || { letter: raw || '—', cls: raw || 'E', title: raw || '—' };
@@ -1741,11 +1784,14 @@ async function ensureLigasCatalog() {
 }
 
 function setLigasSelectionVisible(hasSelection) {
-  document.body.classList.toggle('has-ligas-selection', !!hasSelection);
+  const on = !!hasSelection;
+  document.body.classList.toggle('has-ligas-selection', on);
+  const panel = document.getElementById('ligasBrowsePanel');
+  if (panel) panel.classList.toggle('ligas-browse-panel--detail', on);
   const empty = document.getElementById('ligas-panel-empty');
   const detail = document.getElementById('ligas-detail');
-  if (empty) empty.hidden = !!hasSelection;
-  if (detail) detail.hidden = !hasSelection;
+  if (empty) empty.hidden = on;
+  if (detail) detail.hidden = !on;
 }
 
 function ligasStandingsHtml(table) {
@@ -2544,7 +2590,6 @@ function browseRowHtml(m) {
   const awayLogo = m.awayTeam?.logo;
   const sel = selectedMatchId === id ? ' is-selected' : '';
   const liveCls = m.status === 'live' ? ' league-match--live' : '';
-  const showEvents = m.status === 'live' || m.status === 'finished';
   const liveStrip = m.status === 'live' ? liveStripHtml(m) : '';
   return `
     <button type="button" class="league-match${liveCls}${sel}" data-analyze="${id}" role="listitem">
@@ -2559,7 +2604,6 @@ function browseRowHtml(m) {
           ${crestHtml(away, awayLogo, 'sm')}
         </span>
       </span>
-      ${showEvents ? matchEventsHtml(m.events) : ''}
       ${liveStrip}
     </button>`;
 }
@@ -3022,6 +3066,8 @@ function tipCardHtml({
 
 function bindAnalyze(root) {
   root.querySelectorAll('[data-analyze]').forEach((node) => {
+    if (node.dataset.analyzeBound === '1') return;
+    node.dataset.analyzeBound = '1';
     const open = () => {
       const id = Number(node.dataset.analyze);
       selectedMatchId = id;
@@ -3356,14 +3402,19 @@ function perfRoiHtml(perf) {
 }
 
 function recentTipRowHtml(r) {
+  const matchId = Number(r.matchId);
+  const clickable = Number.isFinite(matchId) && matchId > 0;
   const tip = escapeHtml(labelBet(r.suggestedBet, r.homeName, r.awayName));
   const score =
     r.homeGoals != null && r.awayGoals != null
       ? `${Number(r.homeGoals)}-${Number(r.awayGoals)}`
       : '—';
   const odds = tipOddsDisplay(r.tipOdds);
+  const attrs = clickable
+    ? ` data-analyze="${matchId}" role="button" tabindex="0"`
+    : '';
   return `
-    <article class="perf-row" role="listitem">
+    <article class="perf-row" role="listitem"${attrs}>
       <span class="perf-row__crests" aria-hidden="true">
         ${crestHtml(r.homeName, r.homeLogo, 'sm')}
         ${crestHtml(r.awayName, r.awayLogo, 'sm')}
@@ -3379,23 +3430,29 @@ function recentTipRowHtml(r) {
     </article>`;
 }
 
-function renderPerformance(perf) {
+const PERF_RECENT_PAGE = 50;
+let perfRecentOffset = 0;
+let perfRecentHasMore = false;
+let perfRecentLoadingMore = false;
+
+function renderPerformance(perf, { append = false } = {}) {
   const summary = document.getElementById('perf-summary');
   const recent = document.getElementById('perf-recent');
   if (!summary || !recent) return;
 
-  const hits = Number(perf?.hits || 0);
-  const misses = Number(perf?.misses || 0);
-  const pending = Number(perf?.pending || 0);
-  const decided = Number(perf?.decided || hits + misses);
-  const rate =
-    perf?.hitRate != null && decided > 0
-      ? `${(Number(perf.hitRate) * 100).toFixed(0)}%`
-      : decided > 0
-        ? `${Math.round((hits / decided) * 100)}%`
-        : '—';
+  if (!append) {
+    const hits = Number(perf?.hits || 0);
+    const misses = Number(perf?.misses || 0);
+    const pending = Number(perf?.pending || 0);
+    const decided = Number(perf?.decided || hits + misses);
+    const rate =
+      perf?.hitRate != null && decided > 0
+        ? `${(Number(perf.hitRate) * 100).toFixed(0)}%`
+        : decided > 0
+          ? `${Math.round((hits / decided) * 100)}%`
+          : '—';
 
-  summary.innerHTML = `
+    summary.innerHTML = `
     <div class="perf-board">
       <div class="perf-board__hero">
         <div class="perf-board__rate">${rate}</div>
@@ -3407,20 +3464,50 @@ function renderPerformance(perf) {
         ${perfStatCell('Pendientes', pending)}
       </div>
     </div>`;
+  }
 
-  const rows = (perf?.recent || []).slice(0, 8);
-  if (!rows.length) {
-    const gated =
-      !PREMIUM_UNLOCKED && perf?.premiumRequired && !premiumState.premium;
-    recent.innerHTML = gated
-      ? premiumUpsellHtml('perf-recent')
-      : `<div class="perf-empty muted">Sin tips cerrados aún</div>`;
-    if (gated) bindPremiumActivate(recent);
+  const rows = perf?.recent || [];
+  perfRecentHasMore = Boolean(perf?.recentHasMore);
+  perfRecentOffset =
+    Number(perf?.recentOffset || 0) + Number(perf?.recentLimit || rows.length || PERF_RECENT_PAGE);
+
+  if (!append) {
+    if (!rows.length) {
+      const gated =
+        !PREMIUM_UNLOCKED && perf?.premiumRequired && !premiumState.premium;
+      recent.innerHTML = gated
+        ? premiumUpsellHtml('perf-recent')
+        : `<div class="perf-empty muted">Sin tips cerrados aún</div>`;
+      if (gated) bindPremiumActivate(recent);
+      return;
+    }
+    recent.innerHTML = `<div class="perf-list" role="list">${rows
+      .map(recentTipRowHtml)
+      .join('')}</div>
+      <div class="perf-more-wrap" id="perf-more-wrap"></div>`;
+  } else {
+    const list = recent.querySelector('.perf-list');
+    if (list && rows.length) {
+      list.insertAdjacentHTML('beforeend', rows.map(recentTipRowHtml).join(''));
+    }
+  }
+  if (rows.length) bindAnalyze(recent);
+  renderPerfLoadMore();
+}
+
+function renderPerfLoadMore() {
+  const wrap = document.getElementById('perf-more-wrap');
+  if (!wrap) return;
+  if (!perfRecentHasMore) {
+    wrap.innerHTML = '';
     return;
   }
-  recent.innerHTML = `<div class="perf-list" role="list">${rows
-    .map(recentTipRowHtml)
-    .join('')}</div>`;
+  wrap.innerHTML = `<button type="button" class="btn btn--ghost perf-more" id="perf-load-more"${
+    perfRecentLoadingMore ? ' disabled' : ''
+  }>Cargar más</button>`;
+  document.getElementById('perf-load-more')?.addEventListener('click', () => {
+    loadMorePerformance().catch(() => {});
+  });
 }
 
 async function fetchTipPerformance(q) {
@@ -3435,8 +3522,13 @@ async function loadPerformance() {
   const summary = document.getElementById('perf-summary');
   const recent = document.getElementById('perf-recent');
   if (summary && !summary.querySelector('.perf-hero')) setLoading('perf-summary', 1);
+  perfRecentOffset = 0;
+  perfRecentHasMore = false;
   try {
-    const perf = await fetchTipPerformance(TIPS_PERF_GLOBAL_Q);
+    const q = `${TIPS_PERF_GLOBAL_Q}&limit=${PERF_RECENT_PAGE}&offset=0`;
+    tipPerfCache = null;
+    tipPerfCacheKey = null;
+    const perf = await fetchTipPerformance(q);
     renderPerformance(perf);
     setHitBadge(perf);
     cachedTipSummary = perf;
@@ -3445,6 +3537,22 @@ async function loadPerformance() {
       summary.innerHTML = `<div class="empty-board conf-lo">${escapeHtml(err.message)}</div>`;
     }
     if (recent) recent.innerHTML = '';
+  }
+}
+
+async function loadMorePerformance() {
+  if (perfRecentLoadingMore || !perfRecentHasMore) return;
+  perfRecentLoadingMore = true;
+  renderPerfLoadMore();
+  try {
+    const q = `${TIPS_PERF_GLOBAL_Q}&limit=${PERF_RECENT_PAGE}&offset=${perfRecentOffset}`;
+    const perf = await api(`/api/v1/tips/performance?${q}`);
+    renderPerformance(perf, { append: true });
+  } catch (_) {
+    /* keep existing list */
+  } finally {
+    perfRecentLoadingMore = false;
+    renderPerfLoadMore();
   }
 }
 
@@ -3497,6 +3605,48 @@ function normalizeViewHash(hash) {
   return 'partidos';
 }
 
+let navIndicatorReady = false;
+
+function prefersReducedMotion() {
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+function syncNavIndicator({ instant = false } = {}) {
+  const nav = document.querySelector('.v2-nav');
+  const indicator = nav?.querySelector('.v2-nav__indicator');
+  const active = nav?.querySelector('.v2-nav__link.is-active');
+  if (!nav || !indicator) return;
+  if (!active) {
+    indicator.style.opacity = '0';
+    return;
+  }
+  const navRect = nav.getBoundingClientRect();
+  const linkRect = active.getBoundingClientRect();
+  const left = linkRect.left - navRect.left + nav.scrollLeft;
+  const width = linkRect.width;
+  const snap = instant || prefersReducedMotion() || !navIndicatorReady;
+  if (snap) {
+    indicator.style.transition = 'none';
+  }
+  indicator.style.width = `${Math.max(0, width)}px`;
+  indicator.style.transform = `translateX(${Math.max(0, left)}px)`;
+  indicator.style.opacity = width > 0 ? '1' : '0';
+  if (snap) {
+    void indicator.offsetWidth;
+    indicator.style.transition = '';
+  }
+  navIndicatorReady = true;
+  try {
+    active.scrollIntoView({
+      block: 'nearest',
+      inline: 'nearest',
+      behavior: prefersReducedMotion() ? 'auto' : 'smooth',
+    });
+  } catch {
+    /* ignore */
+  }
+}
+
 function setActiveNav(hash, { pushHash = true } = {}) {
   const incoming = String(hash || '');
   const view = normalizeViewHash(incoming);
@@ -3513,6 +3663,10 @@ function setActiveNav(hash, { pushHash = true } = {}) {
       (view === 'bandas' && (href === '#cuotas' || href === '#bandas')) ||
       (view === 'premium' && false);
     link.classList.toggle('is-active', active);
+    if (link.classList.contains('v2-nav__link')) {
+      if (active) link.setAttribute('aria-current', 'page');
+      else link.removeAttribute('aria-current');
+    }
   });
   if (pushHash) {
     let want = view === 'bandas' ? '#cuotas' : `#${view}`;
@@ -3527,6 +3681,7 @@ function setActiveNav(hash, { pushHash = true } = {}) {
   if (view === 'ligas') renderLigasView();
   if (view === 'bandas') loadCuotasTarget().catch(() => {});
   if (view === 'ajustes') syncPrivacyToggles();
+  requestAnimationFrame(() => syncNavIndicator({ instant: !navIndicatorReady }));
 }
 
 function pricingLabel(pricing) {
@@ -3688,6 +3843,20 @@ function weeklyLegRowHtml(leg, idx) {
   </tr>`;
 }
 
+function weeklyPricingShort(pricing) {
+  if (pricing === 'book') return 'Casa';
+  if (pricing === 'mixed') return 'Mixto';
+  if (pricing === 'model') return 'Estimado';
+  return pricing ? String(pricing) : '—';
+}
+
+function weeklyMetricCell(label, valueHtml) {
+  return `<div class="perf-stat weekly-metric">
+    <span class="perf-stat__v">${valueHtml}</span>
+    <span class="perf-stat__k">${escapeHtml(label)}</span>
+  </div>`;
+}
+
 function renderWeeklySummary(primary, meta = {}, why = null) {
   const box = document.getElementById('cuotas-summary');
   const whyEl = document.getElementById('weekly-why');
@@ -3713,33 +3882,28 @@ function renderWeeklySummary(primary, meta = {}, why = null) {
         ? `${(Number(primary.jointProb) * 100).toFixed(1).replace('.', ',')}%`
         : '—';
   const pricing = primary.pricing || meta.pricing;
-  const pricingTxt = pricingLabel(pricing);
   const noBook =
     pricing === 'model' ||
     (primary.bookRatio != null && Number(primary.bookRatio) < 0.15);
-  const metaBits = [
-    primary.leagueCount != null ? `Ligas ${primary.leagueCount}` : null,
-    pricingTxt ? pricingTxt : null,
-    noBook ? 'Sin book' : null,
-  ].filter(Boolean);
+  const probClass = confClass(Number(primary.jointProbAdj ?? primary.jointProb) * 100);
   box.hidden = false;
   box.innerHTML = `
-    <div class="weekly-summary__hero">
-      <div><span class="muted">Cuota 10</span><strong>${Number(
-        primary.combinedOdds
-      ).toFixed(2)}</strong></div>
-      <div><span class="muted">Prob. combinada</span><strong class="${confClass(
-        Number(primary.jointProbAdj ?? primary.jointProb) * 100
-      )}">${pAdj}</strong></div>
-      <div><span class="muted">Selecciones</span><strong>${primary.nLegs}</strong></div>
+    <div class="weekly-summary__stats">
+      ${weeklyMetricCell(
+        'Cuota 10',
+        escapeHtml(Number(primary.combinedOdds).toFixed(2))
+      )}
+      ${weeklyMetricCell('Prob. combinada', `<span class="${probClass}">${pAdj}</span>`)}
+      ${weeklyMetricCell('Selecciones', escapeHtml(String(primary.nLegs)))}
     </div>
-    ${
-      metaBits.length
-        ? `<div class="weekly-summary__meta"><span>${metaBits
-            .map((b) => escapeHtml(b))
-            .join(' · ')}</span></div>`
-        : ''
-    }`;
+    <div class="weekly-summary__stats weekly-summary__stats--secondary">
+      ${weeklyMetricCell(
+        'Ligas',
+        primary.leagueCount != null ? escapeHtml(String(primary.leagueCount)) : '—'
+      )}
+      ${weeklyMetricCell('Origen', escapeHtml(weeklyPricingShort(pricing)))}
+      ${weeklyMetricCell('Book', escapeHtml(noBook ? 'Sin' : 'Sí'))}
+    </div>`;
 }
 
 let cachedWeeklyPayload = null;
@@ -3880,13 +4044,14 @@ function conservativeBlockHtml(combo, meta = {}) {
       <h3 class="weekly-profile__title">Conservadora · cuota 5</h3>
       <span class="muted">estimación del modelo · mín. 1,20 por selección</span>
     </div>
-    <div class="weekly-profile__stats">
-      <span>Cuota <strong>${Number(combo.combinedOdds).toFixed(2)}</strong></span>
-      <span>Prob. combinada <strong class="${confClass(
-        Number(combo.jointProbAdj) * 100
-      )}">${pAdj}</strong></span>
-      <span>Selecciones <strong>${combo.nLegs}</strong></span>
-      <span>Origen cuotas <strong>${escapeHtml(pricingLabel(combo.pricing))}</strong></span>
+    <div class="weekly-summary__stats weekly-summary__stats--quad">
+      ${weeklyMetricCell('Cuota', escapeHtml(Number(combo.combinedOdds).toFixed(2)))}
+      ${weeklyMetricCell(
+        'Prob. combinada',
+        `<span class="${confClass(Number(combo.jointProbAdj) * 100)}">${pAdj}</span>`
+      )}
+      ${weeklyMetricCell('Selecciones', escapeHtml(String(combo.nLegs)))}
+      ${weeklyMetricCell('Origen', escapeHtml(weeklyPricingShort(combo.pricing)))}
     </div>
     ${warn}
     <div class="weekly-table-wrap" style="margin-top:0.65rem">
@@ -4380,10 +4545,7 @@ async function openPrediction(id) {
         <div class="mp-meta muted">${escapeHtml(formatMatchDate(m.matchDate))}</div>
         <div class="mp-teams${liveEvents ? ' mp-teams--events' : ''}">
           ${mpTeamCol(homeName, m.homeTeam?.logo, 'home', bundle.form?.home)}
-          <div class="mp-vs">
-            <span class="mp-vs__label">VS</span>
-            <span class="mp-status">${escapeHtml(matchStatusPill(m))}</span>
-          </div>
+          ${mpVsMidHtml(m, bundle.live)}
           ${mpTeamCol(awayName, m.awayTeam?.logo, 'away', bundle.form?.away)}
           ${liveEvents}
         </div>
@@ -4663,6 +4825,8 @@ async function refreshOpenPanelLive() {
     // Also update cached objects so the panel sees fresh data on next open/re-render
     const freshMatch = data.match;
     if (freshMatch) {
+      refreshMpVsMid(root, freshMatch, data.live);
+      refreshMpLiveEvents(root, freshMatch.events || [], freshMatch);
       for (const m of cachedMatches) {
         if (Number(m.id) === Number(id)) {
           m.status = freshMatch.status;
@@ -4977,6 +5141,18 @@ syncPrivacyToggles();
 
 bindCuotasTargetControls();
 setActiveNav(location.hash || '#partidos', { pushHash: false });
+
+(function bindNavIndicatorLayout() {
+  const nav = document.querySelector('.v2-nav');
+  if (!nav) return;
+  const snap = () => syncNavIndicator({ instant: true });
+  window.addEventListener('resize', snap);
+  if (typeof ResizeObserver !== 'undefined') {
+    const ro = new ResizeObserver(snap);
+    ro.observe(nav);
+  }
+  document.fonts?.ready?.then?.(snap);
+})();
 
 document.getElementById('hit-badge')?.addEventListener('click', () => setActiveNav('#stats'));
 

@@ -16,6 +16,8 @@ import {
   normalizeAfEvents,
   normalizeFotmobEvents,
   normalizeFotmobStats,
+  matchEventsLagScore,
+  parseEventsJson,
 } from './matchEvents.js';
 import { fetchSegundaFixtures } from './fotmobDomestic.js';
 import { clubLogoUrl, flagLogoForTeamName, resolveTeamLogoUrl } from './teamLogos.js';
@@ -485,13 +487,100 @@ function normalizeTeamName(name) {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\band\b/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
 
+/** Strip book/feed noise before alias lookup (FC, TSG, 04, etc.). */
+function compactTeamKey(name) {
+  return normalizeTeamName(name)
+    .replace(/\b(fc|cf|afc|sc|ud|tsg|sco|04)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Short book/FD names → FotMob-style canonical form (keeps LIVE_NAME_MATCH_MIN at 85). */
+const TEAM_NAME_ALIASES = new Map([
+  ['man city', 'manchester city'],
+  ['manchester city', 'manchester city'],
+  ['man utd', 'manchester united'],
+  ['man united', 'manchester united'],
+  ['manchester utd', 'manchester united'],
+  ['manchester united', 'manchester united'],
+  ['spurs', 'tottenham hotspur'],
+  ['tottenham', 'tottenham hotspur'],
+  ['tottenham hotspur', 'tottenham hotspur'],
+  ['wolves', 'wolverhampton wanderers'],
+  ['wolverhampton', 'wolverhampton wanderers'],
+  ['wolverhampton wanderers', 'wolverhampton wanderers'],
+  ['newcastle', 'newcastle united'],
+  ['newcastle united', 'newcastle united'],
+  ['nottingham forest', 'nottingham forest'],
+  ["nott'm forest", 'nottingham forest'],
+  ['nottm forest', 'nottingham forest'],
+  ['west ham', 'west ham united'],
+  ['west ham united', 'west ham united'],
+  ['brighton', 'brighton hove albion'],
+  ['brighton hove albion', 'brighton hove albion'],
+  ['hull', 'hull city'],
+  ['hull city', 'hull city'],
+  ['getafe', 'getafe'],
+  ['getafe cf', 'getafe'],
+  ['celta', 'celta vigo'],
+  ['celta vigo', 'celta vigo'],
+  ['levante', 'levante'],
+  ['levante ud', 'levante'],
+  ['bournemouth', 'bournemouth'],
+  ['afc bournemouth', 'bournemouth'],
+  ['inter', 'inter'],
+  ['internazionale', 'inter'],
+  ['lille', 'lille'],
+  ['losc lille', 'lille'],
+  ['monaco', 'monaco'],
+  ['as monaco', 'monaco'],
+  ['troyes', 'troyes'],
+  ['estac troyes', 'troyes'],
+  ['lorient', 'lorient'],
+  ['fc lorient', 'lorient'],
+  ['angers', 'angers'],
+  ['angers sco', 'angers'],
+  ['auxerre', 'auxerre'],
+  ['aj auxerre', 'auxerre'],
+  ['le mans', 'le mans'],
+  ['le mans fc', 'le mans'],
+  ['marseille', 'marseille'],
+  ['olympique de marseille', 'marseille'],
+  ['le havre', 'le havre'],
+  ['havre athletic club', 'le havre'],
+  ['rennes', 'rennes'],
+  ['stade rennais', 'rennes'],
+  ['stade rennais fc', 'rennes'],
+  ['strasbourg', 'strasbourg'],
+  ['rc strasbourg alsace', 'strasbourg'],
+  ['freiburg', 'freiburg'],
+  ['sport club freiburg', 'freiburg'],
+  ['bayern munchen', 'bayern munchen'],
+  ['fc bayern munchen', 'bayern munchen'],
+  ['hoffenheim', 'hoffenheim'],
+  ['tsg hoffenheim', 'hoffenheim'],
+  ['bayer leverkusen', 'bayer leverkusen'],
+  ['bayer 04 leverkusen', 'bayer leverkusen'],
+  ['leeds', 'leeds united'],
+  ['leeds united', 'leeds united'],
+]);
+
+function canonicalTeamName(name) {
+  const full = normalizeTeamName(name);
+  if (TEAM_NAME_ALIASES.has(full)) return TEAM_NAME_ALIASES.get(full);
+  const compact = compactTeamKey(name);
+  if (TEAM_NAME_ALIASES.has(compact)) return TEAM_NAME_ALIASES.get(compact);
+  return compact;
+}
+
 function teamNameScore(a, b) {
-  const na = normalizeTeamName(a);
-  const nb = normalizeTeamName(b);
+  const na = canonicalTeamName(a);
+  const nb = canonicalTeamName(b);
   if (!na || !nb) return 0;
   if (na === nb) return 100;
   if (na.includes(nb) || nb.includes(na)) return 80;
@@ -539,10 +628,31 @@ export { teamNameScore };
 /** Significant words of a team name (drops "fc", "cf", "club", numbers). */
 function nameTokens(name) {
   return new Set(
-    normalizeTeamName(name)
+    canonicalTeamName(name)
       .split(' ')
       .filter((w) => w.length > 2)
   );
+}
+
+/** Kickoff is in the post-kickoff live window (−15m … +6h from now). */
+export function isInPostKickoffLiveWindow(matchDate, nowMs = Date.now()) {
+  if (!matchDate) return false;
+  const raw = String(matchDate).trim().replace(' ', 'T');
+  let ms = Date.parse(/Z$/i.test(raw) ? raw : `${raw}Z`);
+  if (Number.isNaN(ms)) ms = Date.parse(String(matchDate));
+  if (Number.isNaN(ms)) return false;
+  const age = nowMs - ms;
+  return age >= -15 * 60 * 1000 && age <= 6 * 60 * 60 * 1000;
+}
+
+/** Kickoff was more than N hours ago (stuck scheduled detector). */
+function isKickoffOlderThanHours(matchDate, hours = 3, nowMs = Date.now()) {
+  if (!matchDate) return false;
+  const raw = String(matchDate).trim().replace(' ', 'T');
+  let ms = Date.parse(/Z$/i.test(raw) ? raw : `${raw}Z`);
+  if (Number.isNaN(ms)) ms = Date.parse(String(matchDate));
+  if (Number.isNaN(ms)) return false;
+  return nowMs - ms > hours * 60 * 60 * 1000;
 }
 
 /**
@@ -1608,6 +1718,47 @@ async function fetchEventsForMatchRow(env, m, hasAfKey, fotmobIdByMatchId = null
   return [];
 }
 
+function rowEventsLagScore(row) {
+  if (!row || (row.status !== 'live' && row.status !== 'finished')) return false;
+  const events = parseEventsJson(row.events_json);
+  return matchEventsLagScore({
+    status: row.status,
+    homeGoals: row.home_goals,
+    awayGoals: row.away_goals,
+    events,
+  });
+}
+
+/**
+ * Fetch and persist incidents for one match when live/finished and events are
+ * missing or behind the scoreboard (panel poll path — cheap vs full refresh).
+ */
+export async function ensureMatchEventsFresh(env, db, matchId) {
+  const id = Number(matchId);
+  if (!Number.isFinite(id)) return null;
+  let match = await store.findMatchById(db, id);
+  if (!match || (match.status !== 'live' && match.status !== 'finished')) return match;
+  const stale =
+    !Array.isArray(match.events) ||
+    !match.events.length ||
+    matchEventsLagScore(match);
+  if (!stale) return match;
+
+  const row = await store.getMatchRowForEvents(db, id);
+  if (!row) return match;
+  const hasKey = Boolean(env.API_FOOTBALL_KEY);
+  try {
+    const events = await fetchEventsForMatchRow(env, row, hasKey);
+    if (events?.length) {
+      await store.updateMatchEventsJson(db, id, events);
+      match = { ...match, events };
+    }
+  } catch {
+    /* keep last stored events */
+  }
+  return match;
+}
+
 /**
  * Lightweight status refresh for today and yesterday.
  * The one-day lookback closes matches that crossed midnight without an active client.
@@ -1646,7 +1797,7 @@ export async function runLiveStatusRefresh(env, db, { force = false } = {}) {
   const fotmobIdByMatchId = new Map();
 
   try {
-    const { fixtures, errors: fdErrs } = await fetchTodayFixtures(-1, 0);
+    const { fixtures, errors: fdErrs } = await fetchTodayFixtures(-2, 0);
     errors.push(...(fdErrs || []));
     for (const fx of fixtures) {
       if (fx.status !== 'finished') continue;
@@ -1664,7 +1815,8 @@ export async function runLiveStatusRefresh(env, db, { force = false } = {}) {
 
   try {
     const dbMatches = await store.getTodayMatchesForLiveRefresh(db);
-    const { fixtures: liveSnap, all: allLive, errors: fmErrs } = await fetchFotmobLiveSnapshot(-1, 0, {
+    // Lookback 2 days so late finishes after midnight still match D1 rows.
+    const { fixtures: liveSnap, all: allLive, errors: fmErrs } = await fetchFotmobLiveSnapshot(-2, 0, {
       includeAll: true,
     });
     errors.push(...(fmErrs || []).map((e) => ({ source: 'fotmob', ...e })));
@@ -1709,6 +1861,7 @@ export async function runLiveStatusRefresh(env, db, { force = false } = {}) {
 
     // Rows from other feeds (FixtureDownload domestic leagues) have no FotMob id.
     // Resolve one by name so the live score, the minute and the incidents arrive.
+    // Scheduled post-kickoff rows without fotmob_match_id are included (alias-aware ≥85).
     const liveIndex = buildLiveNameIndex(allLive);
     for (const m of dbMatches) {
       if (updatedIds.has(m.id)) continue;
@@ -1742,7 +1895,7 @@ export async function runLiveStatusRefresh(env, db, { force = false } = {}) {
       const liveData = await apiGet(env, '/fixtures', { live: 'all' });
       const liveItems = liveData.response || [];
       const dayItems = [];
-      for (const date of dateOffsets(-1, 0)) {
+      for (const date of dateOffsets(-2, 0)) {
         const dayData = await apiGet(env, '/fixtures', { date });
         dayItems.push(...(dayData.response || []));
       }
@@ -1792,6 +1945,41 @@ export async function runLiveStatusRefresh(env, db, { force = false } = {}) {
     }
   }
 
+  // Evidence for scheduled rows stuck long after kickoff with no score (do not void tips).
+  let stuckScheduled = [];
+  try {
+    const afterRows = await store.getTodayMatchesForLiveRefresh(db);
+    stuckScheduled = afterRows
+      .filter(
+        (m) =>
+          m.status === 'scheduled' &&
+          m.home_goals == null &&
+          m.away_goals == null &&
+          isKickoffOlderThanHours(m.match_date, 3)
+      )
+      .map((m) => ({
+        id: m.id,
+        home: m.home_name,
+        away: m.away_name,
+        matchDate: m.match_date,
+        fotmobMatchId: m.fotmob_match_id != null ? Number(m.fotmob_match_id) : null,
+      }));
+    if (stuckScheduled.length) {
+      errors.push({
+        source: 'stuck_scheduled',
+        count: stuckScheduled.length,
+        ids: stuckScheduled.map((s) => s.id).slice(0, 20),
+      });
+      await store.setMeta(
+        db,
+        'last_stuck_scheduled',
+        JSON.stringify({ at: new Date().toISOString(), matches: stuckScheduled.slice(0, 20) })
+      );
+    }
+  } catch (err) {
+    errors.push({ source: 'stuck_scheduled', error: err.message || String(err) });
+  }
+
   // Incidents for live and newly-finished matches — capped for Worker CPU/API budget.
   // Finished rows are fetched only when events_json is empty, avoiding repeated detail calls.
   try {
@@ -1802,8 +1990,15 @@ export async function runLiveStatusRefresh(env, db, { force = false } = {}) {
         const raw = String(m.events_json || '').trim();
         return !raw || raw === '[]';
       })
-      // Running matches first: they are the ones whose timeline is still moving.
-      .sort((a, b) => (a.status === 'live' ? 0 : 1) - (b.status === 'live' ? 0 : 1));
+      // Running matches first; then rows whose incidents trail the scoreboard.
+      .sort((a, b) => {
+        const liveA = a.status === 'live' ? 0 : 1;
+        const liveB = b.status === 'live' ? 0 : 1;
+        if (liveA !== liveB) return liveA - liveB;
+        const lagA = rowEventsLagScore(a) ? 0 : 1;
+        const lagB = rowEventsLagScore(b) ? 0 : 1;
+        return lagA - lagB;
+      });
     const eventWrites = [];
     for (const m of eventRows.slice(0, 14)) {
       try {
@@ -1874,6 +2069,7 @@ export async function runLiveStatusRefresh(env, db, { force = false } = {}) {
     tipsSettled,
     calibrationUpdatedAt,
     ratingsMaint,
+    stuckScheduled: stuckScheduled.length,
     errors,
     lastLiveRefreshAt: now,
     staleLive,

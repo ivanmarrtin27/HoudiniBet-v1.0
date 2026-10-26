@@ -5,6 +5,7 @@ import {
   runDailySync,
   runAfEnrichOnly,
   handleLiveRefreshRequest,
+  ensureMatchEventsFresh,
   runLiveCron,
   runLiveCronSafe,
 } from './services/syncService.js';
@@ -36,8 +37,8 @@ import * as premiumService from './services/premiumService.js';
 
 const STALE_MS = 12 * 60 * 60 * 1000;
 const SYNC_LOCK_MS = 5 * 60 * 1000;
-/** Live refresh cron: every 10 minutes during the European match window (UTC). */
-const LIVE_CRON = '*/10 15-23 * * *';
+/** Live refresh cron: every 10 minutes from late morning (covers early PL) through evening UTC. */
+const LIVE_CRON = '*/10 11-23 * * *';
 
 /** Anti-trivial tips still stored from older pickBets — refresh on list. */
 const STALE_TRIVIAL_TIPS = new Set(['OVER_05', 'UNDER_45']);
@@ -775,7 +776,12 @@ async function handleApi(request, env, ctx) {
 
   if (method === 'GET' && path === '/api/v1/tips/performance') {
     const win = parseMatchWindow(url);
-    const perf = await store.getTipPerformance(db, win);
+    const recentLimit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit')) || 50));
+    const recentOffset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
+    const perf = await store.getTipPerformance(db, win, {
+      limit: recentLimit,
+      offset: recentOffset,
+    });
     let calib = await loadTipCalibration(db);
     if (!calib) {
       try {
@@ -807,7 +813,11 @@ async function handleApi(request, env, ctx) {
           }
         : null,
       recentCombos: perf.recentCombos || [],
+      recentOffset: perf.recentOffset ?? recentOffset,
+      recentLimit: perf.recentLimit ?? recentLimit,
+      recentHasMore: Boolean(perf.recentHasMore),
       recent: (perf.recent || []).map((r) => ({
+        matchId: r.match_id != null ? Number(r.match_id) : null,
         suggestedBet: r.suggested_bet,
         confidenceScore: r.confidence_score != null ? Number(r.confidence_score) : null,
         tipOdds: r.tip_odds != null ? Number(r.tip_odds) : null,
@@ -935,7 +945,8 @@ async function handleApi(request, env, ctx) {
     const wait = url.searchParams.get('wait') === '1';
     // Shares the cooldown of the global refresh: it stays cheap on repeated calls.
     await handleLiveRefreshRequest(env, db, ctx, { force, wait });
-    const fresh = (await store.findMatchById(db, matchId)) || match;
+    let fresh = (await store.findMatchById(db, matchId)) || match;
+    fresh = (await ensureMatchEventsFresh(env, db, matchId)) || fresh;
     const prediction = await store.getPredictionByMatchId(db, matchId);
     return json({
       ok: true,

@@ -226,6 +226,21 @@ export async function findMatchById(db, id) {
   return mapMatch(row);
 }
 
+/** Row shape for upstream incident fetch (AF / FotMob). */
+export async function getMatchRowForEvents(db, id) {
+  return db.first(
+    `SELECT m.id, m.api_id, m.af_fixture_id, m.fotmob_match_id, m.status,
+            m.home_goals, m.away_goals, m.events_json,
+            ht.name AS home_name, ht.api_id AS home_team_api_id,
+            at.name AS away_name, at.api_id AS away_team_api_id
+     FROM matches m
+     JOIN teams ht ON ht.id = m.home_team_id
+     JOIN teams at ON at.id = m.away_team_id
+     WHERE m.id = ?`,
+    id
+  );
+}
+
 export async function getScheduledTodayIds(db) {
   return getScheduledUpcomingIds(db, 14);
 }
@@ -977,7 +992,7 @@ export async function getBestBetsOnDate(db, dateYmd, limit = 3) {
 }
 
 /** Matches for live/result refresh matching (today + recent days, all visible states). */
-export async function getTodayMatchesForLiveRefresh(db, lookbackDays = 1) {
+export async function getTodayMatchesForLiveRefresh(db, lookbackDays = 2) {
   const startModifier = `-${Math.max(0, Number(lookbackDays) || 0)} days`;
   return db.all(
     `SELECT m.id, m.api_id, m.af_fixture_id, m.fotmob_match_id, m.match_date, m.status,
@@ -1104,16 +1119,21 @@ export async function getLiveWorkStatus(db) {
        (SELECT COUNT(*) FROM tip_results WHERE outcome = 'pending') AS pending_tips,
        (SELECT COUNT(*) FROM matches
          WHERE status IN ('scheduled','live')
-           AND datetime(match_date) BETWEEN datetime('now', '-3 hours') AND datetime('now', '+3 hours')) AS kicking`
+           AND datetime(match_date) BETWEEN datetime('now', '-3 hours') AND datetime('now', '+3 hours')) AS kicking,
+       (SELECT COUNT(*) FROM matches
+         WHERE status = 'scheduled'
+           AND datetime(match_date) BETWEEN datetime('now', '-6 hours') AND datetime('now', '-15 minutes')) AS overdue_scheduled`
   );
   const live = Number(row?.live || 0);
   const pendingTips = Number(row?.pending_tips || 0);
   const kicking = Number(row?.kicking || 0);
+  const overdueScheduled = Number(row?.overdue_scheduled || 0);
   return {
     live,
     pendingTips,
     kicking,
-    needsWork: live > 0 || pendingTips > 0 || kicking > 0,
+    overdueScheduled,
+    needsWork: live > 0 || pendingTips > 0 || kicking > 0 || overdueScheduled > 0,
   };
 }
 
@@ -2366,7 +2386,7 @@ export async function getTipSummary(db, win = null) {
   };
 }
 
-export async function getTipPerformance(db, win = null) {
+export async function getTipPerformance(db, win = null, { limit = 50, offset = 0 } = {}) {
   // Settle pending tips/combos on read; do NOT invent historical combos here.
   try {
     await backfillPendingTips(db, 80);
@@ -2376,6 +2396,8 @@ export async function getTipPerformance(db, win = null) {
   } catch (_) {
     /* keep read path available even if maintenance fails */
   }
+  const recentLimit = Math.min(100, Math.max(1, Number(limit) || 50));
+  const recentOffset = Math.max(0, Number(offset) || 0);
 
   const { windowSql, windowParams, windowLabel } = await tipPerformanceWindow(db, win);
 
@@ -2502,8 +2524,9 @@ export async function getTipPerformance(db, win = null) {
     tipBandOne.avgOdds = roi.avgOdds;
   }
 
+  // Fetch one extra row to know if more pages exist without a COUNT(*).
   const recentTips = await db.all(
-    `SELECT tr.suggested_bet, tr.confidence_score, tr.outcome, tr.home_goals, tr.away_goals,
+    `SELECT tr.match_id, tr.suggested_bet, tr.confidence_score, tr.outcome, tr.home_goals, tr.away_goals,
             tr.settled_at, tr.tip_odds, tr.odds_band, tr.odds_source, m.match_date,
             ht.name AS home_name, at.name AS away_name, l.name AS league_name,
             l.country AS league_country,
@@ -2515,10 +2538,13 @@ export async function getTipPerformance(db, win = null) {
      JOIN leagues l ON l.id = m.league_id
      WHERE tr.outcome IN ('hit', 'miss') AND ${windowSql}
      ORDER BY tr.settled_at DESC
-     LIMIT 60`,
-    ...windowParams
+     LIMIT ? OFFSET ?`,
+    ...windowParams,
+    recentLimit + 1,
+    recentOffset
   );
-  const recent = recentTips;
+  const recentHasMore = recentTips.length > recentLimit;
+  const recent = recentHasMore ? recentTips.slice(0, recentLimit) : recentTips;
   let recentCombos = [];
   try {
     recentCombos = await getRecentComboResults(db, { limit: 40, win });
@@ -2550,6 +2576,9 @@ export async function getTipPerformance(db, win = null) {
     roiByFamily,
     byOddsBand,
     recent,
+    recentOffset,
+    recentLimit,
+    recentHasMore,
     recentCombos,
   };
 }
