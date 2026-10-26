@@ -130,11 +130,6 @@ def on_canvas(im: Image.Image, size: int, bg: tuple[int, int, int, int] | None =
     return canvas
 
 
-def crop_wizard_mark(im: Image.Image) -> Image.Image:
-    w, h = im.size
-    return trim_alpha(im.crop((0, 0, w, int(h * 0.58))), pad=4)
-
-
 def save(im: Image.Image, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     im.save(path, "PNG", optimize=True)
@@ -174,12 +169,6 @@ def main() -> None:
     logo512 = on_canvas(clean, 512, bg=None)
     save(logo512, BRAND / "houdini-bet-logo-512.png")
 
-    # Wizard mark crop (exact colors) — black tiles for PWA/favicons
-    mark = crop_wizard_mark(clean)
-    mark = trim_alpha(mark, pad=4)
-    mark_sq = on_canvas(mark, 512, bg=None)
-    save(mark_sq, BRAND / "houdini-bet-mark.png")
-
     for name, size in (
         ("favicon-32.png", 32),
         ("favicon-48.png", 48),
@@ -187,9 +176,9 @@ def main() -> None:
         ("icon-512.png", 512),
         ("apple-touch-icon.png", 180),
     ):
-        save(on_canvas(mark, size, bg=DARK), ROOT / name)
+        save(on_canvas(clean, size, bg=DARK), ROOT / name)
 
-    write_icon_svg(BRAND / "houdini-bet-mark.png", ROOT / "icon.svg")
+    write_icon_svg(BRAND / "houdini-bet-logo-512.png", ROOT / "icon.svg")
 
     # QA previews: lockup on dark (needs CSS light pad in UI) + on light
     preview_dark = Image.new("RGBA", (logo.width + 48, logo.height + 48), DARK)
@@ -216,8 +205,7 @@ def main() -> None:
     paste_centered(og, share_lockup)
     save(og, BRAND / "og-share.png")
 
-    og512 = Image.new("RGBA", (512, 512), DARK)
-    paste_centered(og512, fit_width(share_src, 420))
+    og512 = on_canvas(clean, 512, bg=DARK)
     save(og512, BRAND / "og-share-512.png")
     print("DONE (exact colors, no recolor_for_dark; og-share black plate)")
 

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="cloudflare/public/brand/houdini-bet-mark.png" alt="Houdini Bet" width="96" />
+  <img src="cloudflare/public/brand/houdini-bet-logo.png" alt="Houdini Bet" width="360" />
 </p>
 
 <h1 align="center">Houdini Bet</h1>

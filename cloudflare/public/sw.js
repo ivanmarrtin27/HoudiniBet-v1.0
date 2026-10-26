@@ -11,7 +11,7 @@
  * the shell changes, so clients pick the new files.
  */
 
-const VERSION = 'hb-v37';
+const VERSION = 'hb-v38';
 const SHELL_CACHE = `houdini-shell-${VERSION}`;
 const DATA_CACHE = `houdini-data-${VERSION}`;
 const DATA_TTL_MS = 60_000;
@@ -29,7 +29,7 @@ const SHELL_ASSETS = [
   '/favicon-32.png',
   '/favicon-48.png',
   '/brand/houdini-bet-logo.png',
-  '/brand/houdini-bet-mark.png',
+  '/brand/houdini-bet-logo-512.png',
 ];
 
 const NEVER_CACHE = ['/api/v1/admin', '/api/v1/sync'];
