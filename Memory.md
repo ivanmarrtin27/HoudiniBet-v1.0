@@ -2,8 +2,9 @@
 
 ## Decisiones
 - CF Worker + D1; FD + FotMob + AF enrich
-- Tips: anti-trivial (no O0.5 / U4.5); **nunca SHOTS_*** (tiros totales; SOT ok); lane **P≥69%** + cuota≥1.25; secondary con `secondaryCounts` anti-BTTS-spam; secondary excluye misma `tipFamily` (1X2+DC/DNB) que primary
-- UI: Partidos · **Top 10** (P≥69% cuota 1.30–3.50; máx 3/familia; pool primary+secondary) · Stats · Semanal · **Ligas** explorador (Europeas+top5 → tabla D1+crests → próximo partido); `#top3` / `#ligas/<apiId>`
+- Tips: anti-trivial (no O0.5 / U4.5); **nunca SHOTS_***; lane **P≥75%** + cuota≥1.25; **solo playable** entra en `tip_results` (sin fallback Stats); BTTS secondary-only; secondary diversa / no misma `tipFamily` que primary
+- UI: Partidos · **Top 10** (P≥75% cuota 1.30–3.50; máx 3/familia; pool primary+secondary) · Stats · Semanal · **Ligas** explorador; `#top3` / `#ligas/<apiId>`
+- UNDO tip-policy: baseline `a31f4b5`; revert commits `tip-policy:*` + redeploy Worker (no wipe tip_results)
 - Crests: FotMob PSG/Elche/Deportivo/**Leverkusen 8178**; AF 85/3751/1102/168 broken
 - Reset Stats: `POST /api/v1/admin/stats/reset` → wipe + `stats_reset_at`; backfill solo scheduled/live (no finished)
 - Odds: sin key → sin book; Semanal cuota 10 + Conservadora 5

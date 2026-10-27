@@ -2991,7 +2991,7 @@ function renderPartidosList() {
   bindAnalyze(el);
 }
 
-const TOP10_MIN_PROB = 69;
+const TOP10_MIN_PROB = 75;
 const TOP10_MIN_ODDS = 1.3;
 const TOP10_MAX_ODDS = 3.5;
 

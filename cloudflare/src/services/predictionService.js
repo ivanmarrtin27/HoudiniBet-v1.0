@@ -26,10 +26,12 @@ export { TRIVIAL_GOAL_TIPS };
 
 const MIN_TIP_PROB = 0.48;
 const MAX_TIP_PROB = 0.78;
-/** Playable tip lane: model P ≥ this (not max-P absolute). */
-const PLAYABLE_MIN_PROB = 0.69;
+/** Playable tip lane: model P ≥ this (not max-P absolute). Raised 0.69→0.75 for hit-rate. */
+const PLAYABLE_MIN_PROB = 0.75;
 /** Optional UI “tip seguro” threshold (subset of playable). */
 const SAFE_TIP_PROB = 0.8;
+/** BTTS stays secondary-only (weak primary hit rate ~43% / 30d). */
+const PRIMARY_BLOCKED_FAMILIES = new Set(['btts']);
 /** Min edge (model − fair book) for a value tip. Aligned with UI badge ≥5%. */
 const MIN_VALUE = 0.05;
 const MIN_DRAW_PROB = 0.32;
@@ -430,13 +432,12 @@ function compareTipCandidates(a, b, value, dailyTipContext) {
 }
 
 /**
- * Tip selection: playable lane (P≥69%, non-trivial, odds≥1.25) first,
- * else book-first value edge. Never invents book odds.
+ * Tip selection: playable lane only for primary (P≥75%, non-trivial, odds≥1.25).
+ * No fallback primary — weak tips must not enter tip_results / Stats.
+ * Never invents book odds. BTTS is secondary-only.
  */
 function pickBets(candidates, value, calib = null, opts = {}) {
   const {
-    hasBook = false,
-    sampleSize = 0,
     shotCandidates = [],
     extraCandidates = null,
     dailyTipContext = null,
@@ -457,15 +458,14 @@ function pickBets(candidates, value, calib = null, opts = {}) {
   };
 
   const allAnnotated = [...tipPool, ...extras].map(annotate);
-  const withBookEv = allAnnotated.filter((c) => c.hasBook && c.edge != null);
-  const byRank = (pool) =>
-    [...pool].sort((a, b) => compareTipCandidates(a, b, value, dailyTipContext));
 
   let primary = null;
-  let tipTier = 'fallback';
+  let tipTier = 'none';
 
-  // Lane 1: playable (corners/cards/SOT/O-U medios/1X2…) — exclude trivial ultra-safe lines.
-  const playablePool = allAnnotated.filter(isPlayableCandidate);
+  // Primary: playable only — exclude trivial ultra-safe lines and BTTS (secondary OK).
+  const playablePool = allAnnotated.filter(
+    (c) => isPlayableCandidate(c) && !PRIMARY_BLOCKED_FAMILIES.has(tipFamily(c.label))
+  );
   if (playablePool.length) {
     const quotaPool = dailyQuotaCandidates(playablePool, dailyTipContext);
     const ranked = [...(quotaPool.length ? quotaPool : playablePool)].sort(
@@ -475,76 +475,13 @@ function pickBets(candidates, value, calib = null, opts = {}) {
     tipTier = 'playable';
   }
 
-  if (!primary && hasBook && withBookEv.length) {
-    const valuePoolBase = withBookEv.filter(
-      (c) =>
-        !isTrivialTipLabel(c.label) &&
-        c.edge >= MIN_VALUE &&
-        tipProbabilityAllowed(c, { valueCandidate: true }) &&
-        (c.book == null || Number(c.book) >= MIN_PLAYABLE_ODDS)
-    );
-    const valuePool = dailyQuotaCandidates(valuePoolBase, dailyTipContext);
-    if (valuePool.length) {
-      primary = byRank(valuePool)[0];
-    } else if (valuePoolBase.length) {
-      primary = byRank(valuePoolBase)[0];
-    } else {
-      const nonTrivialBook = withBookEv.filter((c) => !isTrivialTipLabel(c.label));
-      primary = byRank(nonTrivialBook.length ? nonTrivialBook : withBookEv)[0];
-    }
-  }
-
-  if (!primary) {
-    const bookBacked = tipPool.filter((c) => value.byLabel?.[c.label] != null);
-    const poolSource = hasBook && bookBacked.length ? bookBacked : tipPool;
-    const usableBase = poolSource.filter(
-      (c) => !isTrivialTipLabel(c.label) && tipProbabilityAllowed(c)
-    );
-    const usable = dailyQuotaCandidates(usableBase, dailyTipContext);
-    const pool = usable.length ? usable : usableBase.length ? usableBase : poolSource;
-    primary = byRank(pool)[0];
-  }
-
-  if (!primary && nonTrivial.length) {
-    const fallbackBase = nonTrivial.filter(
-      (c) => TIP_POOL_LABELS.has(c.label) && !isTrivialTipLabel(c.label)
-    );
-    primary = byRank(dailyQuotaCandidates(fallbackBase, dailyTipContext))[0];
-  }
-  if (!primary) primary = candidates[0] || extras[0];
-
-  // Thin sample: only nudge toward safer labels when primary has no clear value edge
-  // and was not already chosen as playable.
-  const primaryEdge = value.byLabel?.[primary?.label]?.edge;
-  if (
-    tipTier !== 'playable' &&
-    sampleSize < MIN_SAMPLE_FOR_TIP &&
-    primary &&
-    !isExtraFamily(primary.label) &&
-    !(primaryEdge != null && primaryEdge >= MIN_VALUE)
-  ) {
-    const safePool = hasBook
-      ? tipPool.filter((c) => value.byLabel?.[c.label] != null)
-      : tipPool;
-    const safePoolBase = safePool.filter((c) =>
-      ['UNDER_25', 'BTTS_NO', 'HOME_WIN', 'AWAY_WIN'].includes(c.label)
-    );
-    const safePoolByQuota = dailyQuotaCandidates(safePoolBase, dailyTipContext);
-    const safe = (safePoolByQuota.length ? safePoolByQuota : safePoolBase).sort(
-      (a, b) => b.prob - a.prob
-    )[0];
-    if (safe && safe.prob >= primary.prob - 0.03) primary = safe;
-  }
-
-  if (primary && isPlayableCandidate(primary)) tipTier = 'playable';
-
   // tipFamily (not local familyOf): DC/DNB share 1X2 with HOME/AWAY/DRAW so
   // secondary never repeats the same result side as primary (e.g. HOME + DNB_HOME).
   const secondaryPool = allAnnotated.filter(
     (c) =>
       c.label !== primary?.label &&
       !isTrivialTipLabel(c.label) &&
-      tipFamily(c.label) !== tipFamily(primary?.label)
+      (!primary || tipFamily(c.label) !== tipFamily(primary.label))
   );
   const playableSecondary = secondaryPool.filter(isPlayableCandidate);
   const valueSecondary = secondaryPool.filter(
@@ -985,9 +922,13 @@ export async function predictMatch(db, matchId) {
     dailyTipContext,
   });
 
-  let tipResolved = resolveTipOdds(primary.label, null, oddsRow);
+  const hasPlayablePrimary = tipTier === 'playable' && primary?.label;
+
+  let tipResolved = hasPlayablePrimary
+    ? resolveTipOdds(primary.label, null, oddsRow)
+    : { tipOdds: null, oddsBand: null, oddsSource: 'model' };
   // Book-first: do not store model-implied as tip_odds when we want honesty in bands.
-  if (tipResolved.oddsSource !== 'book') {
+  if (hasPlayablePrimary && tipResolved.oddsSource !== 'book') {
     tipResolved = {
       tipOdds: tipResolved.tipOdds,
       oddsBand: tipResolved.oddsBand,
@@ -995,18 +936,19 @@ export async function predictMatch(db, matchId) {
     };
   }
 
-  let confidence = primary.prob * 100;
+  let confidence = hasPlayablePrimary ? primary.prob * 100 : 0;
   let dataQuality = sampleSize >= MIN_SAMPLE_FOR_TIP ? 'ok' : 'low';
-  // Keep playable tip confidence readable; light haircut only on fallback model tips.
-  if (tipTier !== 'playable' && tipResolved.oddsSource !== 'book') {
-    confidence = Number((confidence * 0.94).toFixed(2));
-  }
   if (sampleSize < MIN_SAMPLE_FOR_TIP) {
     confidence = Number((confidence * 0.9).toFixed(2));
     dataQuality = 'low';
   }
   // Prefer book tips in Mejores ranking
-  if (tipResolved.oddsSource === 'book' && value.value_edge != null && value.value_edge > 0) {
+  if (
+    hasPlayablePrimary &&
+    tipResolved.oddsSource === 'book' &&
+    value.value_edge != null &&
+    value.value_edge > 0
+  ) {
     confidence = Number(Math.min(92, confidence + value.value_edge * 40).toFixed(2));
   }
 
@@ -1085,33 +1027,37 @@ export async function predictMatch(db, matchId) {
       shotsOnTarget?.sotUnder95 != null ? Number(shotsOnTarget.sotUnder95.toFixed(4)) : null,
     home_xg: Number(homeXg.toFixed(4)),
     away_xg: Number(awayXg.toFixed(4)),
-    suggested_bet: primary.label,
+    suggested_bet: hasPlayablePrimary ? primary.label : null,
     secondary_bet: secondary ? secondary.label : null,
     confidence_score: Number(confidence.toFixed(2)),
-    value_edge: value.value_edge,
-    value_market: value.value_market,
+    value_edge: hasPlayablePrimary ? value.value_edge : null,
+    value_market: hasPlayablePrimary ? value.value_market : null,
   };
 
   await store.upsertPrediction(db, payload);
   // Re-resolve with full prediction for model fallback display only
-  tipResolved = resolveTipOdds(payload.suggested_bet, payload, oddsRow);
+  if (hasPlayablePrimary) {
+    tipResolved = resolveTipOdds(payload.suggested_bet, payload, oddsRow);
+  }
   const storeOdds =
     tipResolved.oddsSource === 'book'
       ? tipResolved
       : { tipOdds: null, oddsBand: null, oddsSource: 'model' };
 
-  const modelProb =
-    primary.rawProb != null && Number.isFinite(Number(primary.rawProb))
+  const modelProb = hasPlayablePrimary
+    ? primary.rawProb != null && Number.isFinite(Number(primary.rawProb))
       ? Number(primary.rawProb)
-      : primary.prob;
+      : primary.prob
+    : null;
 
   // After stats epoch wipe, do not re-ledger finished matches (keeps Stats clean).
+  // Hit-rate policy: only playable primaries enter tip_results (no fallback dilution).
   const statsEpoch = await store.getMeta(db, 'stats_reset_at');
   const skipFinishedLedger =
     match.status === 'finished' &&
     statsEpoch &&
     /^\d{4}-\d{2}-\d{2}$/.test(String(statsEpoch));
-  if (!skipFinishedLedger) {
+  if (!skipFinishedLedger && hasPlayablePrimary) {
     await store.upsertTipResult(db, {
       match_id: matchId,
       suggested_bet: payload.suggested_bet,

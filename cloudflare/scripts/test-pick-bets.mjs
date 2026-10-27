@@ -1,4 +1,4 @@
-/** Regression tests for diverse primary/secondary tip selection. */
+/** Regression tests for diverse primary/secondary tip selection (playable-only primary). */
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -58,7 +58,7 @@ const trivialTips = ['UNDER_35', 'HOME_UNDER_35', 'AWAY_UNDER_35'];
 const api = new Function(
   `const MIN_TIP_PROB = 0.48;
    const MAX_TIP_PROB = 0.78;
-   const PLAYABLE_MIN_PROB = 0.69;
+   const PLAYABLE_MIN_PROB = 0.75;
    const SAFE_TIP_PROB = 0.8;
    const MIN_VALUE = 0.04;
    const MIN_DRAW_PROB = 0.32;
@@ -71,6 +71,7 @@ const api = new Function(
    const MAX_LABEL_PER_DAY = 2;
    const MAX_FAMILY_DAY_SHARE = 0.35;
    const TRIVIAL_TIP_LABELS = new Set(['OVER_05','UNDER_45']);
+   const PRIMARY_BLOCKED_FAMILIES = new Set(['btts']);
    void SAFE_TIP_PROB;
    const CORE_MARKETS = new Set(${JSON.stringify(coreMarkets)});
    const TRIVIAL_GOAL_TIPS = new Set(${JSON.stringify(trivialTips)});
@@ -127,7 +128,7 @@ const value = (entries) => ({
 let result = api.pickBets(
   [
     { label: 'HOME_WIN', prob: 0.82 },
-    { label: 'BTTS_YES', prob: 0.74 },
+    { label: 'BTTS_YES', prob: 0.8 },
   ],
   value({
     HOME_WIN: { edge: 0.09, book: 1.5 },
@@ -136,7 +137,26 @@ let result = api.pickBets(
   null,
   { hasBook: true, sampleSize: 5 }
 );
-check('1X2 favorite up to 85% can win the playable lane', result.primary.label === 'HOME_WIN');
+check('1X2 favorite wins playable lane over BTTS primary', result.primary.label === 'HOME_WIN');
+check('playable primary tipTier', result.tipTier === 'playable');
+
+result = api.pickBets(
+  [
+    { label: 'BTTS_YES', prob: 0.82 },
+    { label: 'OVER_25', prob: 0.62 },
+  ],
+  value({
+    BTTS_YES: { edge: 0.1, book: 1.45 },
+    OVER_25: { edge: 0.08, book: 1.5 },
+  }),
+  null,
+  { hasBook: true, sampleSize: 5 }
+);
+check(
+  'BTTS excluded from primary even when highest P; no sub-75% fallback',
+  result.primary == null && result.tipTier === 'none'
+);
+check('BTTS can still be secondary when no primary', result.secondary?.label === 'BTTS_YES');
 
 result = api.pickBets(
   [
@@ -147,15 +167,19 @@ result = api.pickBets(
   null,
   { hasBook: true, sampleSize: 5 }
 );
-check('1X2 below 44% does not use the expanded window', result.primary.label === 'OVER_25');
+check('sub-75% candidates yield no primary (no fallback)', result.primary == null && result.tipTier === 'none');
 
 result = api.pickBets(
   [
-    { label: 'BTTS_YES', prob: 0.68 },
-    { label: 'OVER_25', prob: 0.62 },
-    { label: 'HOME_WIN', prob: 0.56 },
+    { label: 'BTTS_YES', prob: 0.78 },
+    { label: 'OVER_25', prob: 0.76 },
+    { label: 'HOME_WIN', prob: 0.76 },
   ],
-  value({ BTTS_YES: 0.14, OVER_25: 0.08, HOME_WIN: 0.06 }),
+  value({
+    BTTS_YES: { edge: 0.14, book: 1.4 },
+    OVER_25: { edge: 0.08, book: 1.5 },
+    HOME_WIN: { edge: 0.06, book: 1.55 },
+  }),
   null,
   {
     hasBook: true,
@@ -163,82 +187,43 @@ result = api.pickBets(
     dailyTipContext: {
       fixtureCount: 10,
       maxPerLabel: 4,
-      counts: { BTTS_YES: 4, OVER_25: 1, HOME_WIN: 0 },
+      counts: { BTTS_YES: 4, OVER_25: 4, HOME_WIN: 0 },
     },
   }
 );
-check('daily label quota chooses an under-cap recommendation', result.primary.label !== 'BTTS_YES');
-
-result = api.pickBets(
-  [
-    { label: 'BTTS_YES', prob: 0.66 },
-    { label: 'HOME_WIN', prob: 0.58 },
-  ],
-  value({ BTTS_YES: 0.1, HOME_WIN: 0.09 }),
-  null,
-  {
-    hasBook: true,
-    sampleSize: 5,
-    dailyTipContext: {
-      fixtureCount: 10,
-      maxPerLabel: 4,
-      counts: { BTTS_YES: 1, OVER_25: 1 },
-    },
-  }
-);
-check('near-tied tips rotate toward the underrepresented family', result.primary.label === 'HOME_WIN');
-
-result = api.pickBets(
-  [
-    { label: 'BTTS_YES', prob: 0.67 },
-    { label: 'OVER_25', prob: 0.61 },
-    { label: 'HOME_WIN', prob: 0.54 },
-  ],
-  value({ BTTS_YES: 0.12, OVER_25: 0.08, HOME_WIN: 0.06 }),
-  null,
-  {
-    hasBook: true,
-    sampleSize: 5,
-    dailyTipContext: {
-      fixtureCount: 10,
-      maxPerLabel: 4,
-      counts: { BTTS_YES: 4, OVER_25: 4, HOME_WIN: 4 },
-    },
-  }
-);
-check('quota fallback still returns a primary when all labels are full', Boolean(result.primary));
+check('daily label quota prefers under-cap playable (not BTTS)', result.primary.label === 'HOME_WIN');
 
 const rotatingCounts = {};
 const fixtureCandidates = [
-  { label: 'BTTS_YES', prob: 0.72 },
-  { label: 'OVER_25', prob: 0.71 },
-  { label: 'HOME_WIN', prob: 0.7 },
+  { label: 'OVER_25', prob: 0.76 },
+  { label: 'HOME_WIN', prob: 0.76 },
+  { label: 'UNDER_25', prob: 0.76 },
 ];
 const fixtureEdges = value({
-  BTTS_YES: { edge: 0.1, book: 1.5 },
-  OVER_25: { edge: 0.09, book: 1.5 },
-  HOME_WIN: { edge: 0.08, book: 1.5 },
+  OVER_25: { edge: 0.1, book: 1.5 },
+  HOME_WIN: { edge: 0.09, book: 1.5 },
+  UNDER_25: { edge: 0.08, book: 1.5 },
 });
 for (let i = 0; i < 6; i += 1) {
   const picked = api.pickBets(fixtureCandidates, fixtureEdges, null, {
     hasBook: true,
     sampleSize: 5,
     dailyTipContext: { fixtureCount: 10, maxPerLabel: 2, counts: rotatingCounts },
-  }).primary.label;
-  rotatingCounts[picked] = (rotatingCounts[picked] || 0) + 1;
+  }).primary?.label;
+  if (picked) rotatingCounts[picked] = (rotatingCounts[picked] || 0) + 1;
 }
 check(
-  'six sequential picks respect max 2 per label when alternatives exist',
+  'six sequential playable picks respect max 2 per label',
   Math.max(...Object.values(rotatingCounts)) <= 2 &&
-    (rotatingCounts.BTTS_YES || 0) === 2 &&
     (rotatingCounts.OVER_25 || 0) === 2 &&
-    (rotatingCounts.HOME_WIN || 0) === 2
+    (rotatingCounts.HOME_WIN || 0) === 2 &&
+    (rotatingCounts.UNDER_25 || 0) === 2
 );
 
 result = api.pickBets(
   [
-    { label: 'OVER_25', prob: 0.72 },
-    { label: 'BTTS_YES', prob: 0.7 },
+    { label: 'OVER_25', prob: 0.76 },
+    { label: 'BTTS_YES', prob: 0.78 },
     { label: 'HOME_WIN', prob: 0.55 },
   ],
   value({
@@ -255,13 +240,14 @@ check(
     result.secondary != null &&
     familyOfForTest(result.primary.label) !== familyOfForTest(result.secondary.label)
 );
+check('primary is not BTTS', result.primary?.label !== 'BTTS_YES');
 
 result = api.pickBets(
   [
     { label: 'HOME_WIN', prob: 0.82 },
     { label: 'DNB_HOME', prob: 0.9 },
     { label: 'DC_1X', prob: 0.92 },
-    { label: 'OVER_25', prob: 0.72 },
+    { label: 'OVER_25', prob: 0.76 },
   ],
   value({
     HOME_WIN: { edge: 0.08, book: 1.5 },
@@ -275,21 +261,15 @@ result = api.pickBets(
 const oneX2 = new Set(['HOME_WIN', 'AWAY_WIN', 'DRAW', 'DC_1X', 'DC_X2', 'DNB_HOME', 'DNB_AWAY']);
 check(
   'secondary never repeats 1X2/DC/DNB side of primary',
-  result.primary?.label === 'HOME_WIN' &&
+  oneX2.has(result.primary?.label) &&
     result.secondary?.label === 'OVER_25' &&
     !oneX2.has(result.secondary.label)
-);
-check(
-  'primary !== secondary label whenever both exist',
-  Boolean(result.primary) &&
-    Boolean(result.secondary) &&
-    result.primary.label !== result.secondary.label
 );
 
 result = api.pickBets(
   [
-    { label: 'OVER_25', prob: 0.72 },
-    { label: 'UNDER_25', prob: 0.7 },
+    { label: 'OVER_25', prob: 0.76 },
+    { label: 'UNDER_25', prob: 0.76 },
   ],
   value({ OVER_25: 0.1, UNDER_25: 0.09 }),
   null,
@@ -302,25 +282,28 @@ check(
 
 result = api.pickBets(
   [
-    { label: 'OVER_25', prob: 0.60 },
+    { label: 'OVER_25', prob: 0.6 },
     { label: 'HOME_WIN', prob: 0.58 },
   ],
   { byLabel: {} },
   null,
   { hasBook: false, sampleSize: 1 }
 );
-check('thin-sample safe-core preference is preserved', result.primary.label === 'HOME_WIN');
+check('thin-sample sub-75% yields no primary', result.primary == null && result.tipTier === 'none');
 
 result = api.pickBets(
   [
-    { label: 'BTTS_YES', prob: 0.72 },
-    { label: 'HOME_WIN', prob: 0.62 },
+    { label: 'BTTS_YES', prob: 0.8 },
+    { label: 'HOME_WIN', prob: 0.76 },
   ],
-  { byLabel: {} },
+  value({
+    BTTS_YES: { edge: 0.1, book: 1.4 },
+    HOME_WIN: { edge: 0.08, book: 1.5 },
+  }),
   { blockedFamilies: ['btts'] },
-  { hasBook: false, sampleSize: 5 }
+  { hasBook: true, sampleSize: 5 }
 );
-check('calibration family blocks still apply', result.primary.label === 'HOME_WIN');
+check('calibration family blocks still apply; HOME wins', result.primary.label === 'HOME_WIN');
 
 result = api.pickBets(
   [
@@ -332,11 +315,11 @@ result = api.pickBets(
   {
     hasBook: true,
     sampleSize: 5,
-    extraCandidates: [{ label: 'CORNERS_OVER_95', prob: 0.72 }],
+    extraCandidates: [{ label: 'CORNERS_OVER_95', prob: 0.76 }],
   }
 );
 check(
-  'playable corners (≥69%) beat trivial OVER_05 and low 1X2',
+  'playable corners (≥75%) beat trivial OVER_05 and low 1X2',
   result.primary.label === 'CORNERS_OVER_95' && result.tipTier === 'playable'
 );
 
@@ -355,8 +338,8 @@ result = api.pickBets(
   }
 );
 check(
-  'banned SHOTS_OVER_225 excluded; falls back to book-value path',
-  result.primary.label === 'HOME_WIN' && result.tipTier === 'fallback'
+  'banned SHOTS_ and sub-75% yield no primary (no fallback)',
+  result.primary == null && result.tipTier === 'none'
 );
 
 result = api.pickBets(
@@ -370,8 +353,8 @@ result = api.pickBets(
   }
 );
 check(
-  'SHOTS_OVER_255 never wins primary even at high P',
-  result.primary.label === 'HOME_WIN' &&
+  'SHOTS_OVER_255 never wins primary',
+  result.primary == null &&
     (result.secondary == null || !String(result.secondary.label).startsWith('SHOTS_'))
 );
 
@@ -387,8 +370,8 @@ result = api.pickBets(
     hasBook: true,
     sampleSize: 5,
     extraCandidates: [
-      { label: 'CARDS_UNDER_45', prob: 0.74 },
-      { label: 'SOT_OVER_75', prob: 0.7 },
+      { label: 'CARDS_UNDER_45', prob: 0.76 },
+      { label: 'SOT_OVER_75', prob: 0.76 },
     ],
   }
 );
@@ -399,8 +382,8 @@ check(
 
 result = api.pickBets(
   [
-    { label: 'OVER_25', prob: 0.74 },
-    { label: 'BTTS_YES', prob: 0.71 },
+    { label: 'OVER_25', prob: 0.76 },
+    { label: 'BTTS_YES', prob: 0.78 },
   ],
   value({
     OVER_25: { edge: 0.12, book: 1.55 },
@@ -411,7 +394,7 @@ result = api.pickBets(
   {
     hasBook: true,
     sampleSize: 5,
-    extraCandidates: [{ label: 'CORNERS_OVER_95', prob: 0.69 }],
+    extraCandidates: [{ label: 'CORNERS_OVER_95', prob: 0.76 }],
   }
 );
 check(
@@ -422,21 +405,23 @@ check(
 const secCounts = {};
 const secLabels = [];
 const secFixture = [
-  { label: 'OVER_25', prob: 0.72 },
-  { label: 'BTTS_YES', prob: 0.71 },
-  { label: 'HOME_WIN', prob: 0.7 },
+  { label: 'OVER_25', prob: 0.76 },
+  { label: 'HOME_WIN', prob: 0.76 },
 ];
 const secEdges = value({
   OVER_25: { edge: 0.1, book: 1.5 },
-  BTTS_YES: { edge: 0.1, book: 1.5 },
   HOME_WIN: { edge: 0.09, book: 1.5 },
+  BTTS_YES: { edge: 0.1, book: 1.5 },
   CARDS_UNDER_45: { edge: 0.08, book: 1.55 },
 });
 for (let i = 0; i < 8; i += 1) {
   const picked = api.pickBets(secFixture, secEdges, null, {
     hasBook: true,
     sampleSize: 5,
-    extraCandidates: [{ label: 'CARDS_UNDER_45', prob: 0.72 }],
+    extraCandidates: [
+      { label: 'CARDS_UNDER_45', prob: 0.76 },
+      { label: 'BTTS_YES', prob: 0.76 },
+    ],
     dailyTipContext: {
       fixtureCount: 10,
       maxPerLabel: 2,
@@ -455,12 +440,21 @@ const bttsSecShare =
     ? secLabels.filter((l) => l === 'BTTS_YES' || l === 'BTTS_NO').length / secLabels.length
     : 0;
 check(
-  'secondary rotation keeps BTTS under ~35% when cards alternative exists',
+  'secondary rotation keeps BTTS under ~40% when cards alternative exists',
   secLabels.length >= 4 && bttsSecShare <= 0.4
 );
 check(
   'secondary never uses SHOTS_*',
   secLabels.every((l) => !String(l).startsWith('SHOTS_'))
+);
+
+check(
+  'source PLAYABLE_MIN_PROB is 0.75',
+  /const PLAYABLE_MIN_PROB = 0\.75/.test(SRC)
+);
+check(
+  'source blocks btts from primary',
+  /PRIMARY_BLOCKED_FAMILIES = new Set\(\['btts'\]\)/.test(SRC)
 );
 
 console.log(failed ? `\n${failed} checks failed` : `\n${passed}/${passed} checks passed`);
