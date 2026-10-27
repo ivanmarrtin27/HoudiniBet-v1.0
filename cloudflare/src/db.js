@@ -1605,6 +1605,8 @@ export async function backfillPendingTips(db, limit = 60) {
            AND m.away_goals IS NOT NULL
          )`;
   const params = [Math.max(1, Number(limit) || 60)];
+  // confidence_score > 0 ≈ tipTier playable (display-only fallbacks store 0).
+  // Never ledger tipTier-none display labels into tip_results / Stats.
   const rows = await db.all(
     `SELECT p.*, o.home_odds, o.draw_odds, o.away_odds, o.over25_odds, o.under25_odds,
             o.sot_over75_odds, o.sot_under75_odds, o.sot_over85_odds, o.sot_under85_odds,
@@ -1617,6 +1619,8 @@ export async function backfillPendingTips(db, limit = 60) {
      JOIN matches m ON m.id = p.match_id
      LEFT JOIN odds o ON o.match_id = m.id
      WHERE p.suggested_bet IS NOT NULL
+       AND p.confidence_score IS NOT NULL
+       AND CAST(p.confidence_score AS REAL) > 0
        AND NOT EXISTS (SELECT 1 FROM tip_results tr WHERE tr.match_id = p.match_id)
        AND (
          m.status IN ('scheduled', 'live')

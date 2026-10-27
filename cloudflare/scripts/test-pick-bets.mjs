@@ -1,4 +1,8 @@
-/** Regression tests for diverse primary/secondary tip selection (playable-only primary). */
+/**
+ * Regression tests for diverse primary/secondary tip selection.
+ * Playable-only primary enters Stats (tip_results). tipTier 'none' + displayPrimary
+ * is for predictions.suggested_bet display only — never ledger into tip_results.
+ */
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -48,6 +52,7 @@ const functions = [
   'playableTipScore',
   'oddsQualityPenalty',
   'compareTipCandidates',
+  'pickDisplayPrimary',
   'pickBets',
 ].map(extractFunction);
 
@@ -139,6 +144,7 @@ let result = api.pickBets(
 );
 check('1X2 favorite wins playable lane over BTTS primary', result.primary.label === 'HOME_WIN');
 check('playable primary tipTier', result.tipTier === 'playable');
+check('playable displayPrimary mirrors primary', result.displayPrimary?.label === 'HOME_WIN');
 
 result = api.pickBets(
   [
@@ -153,10 +159,21 @@ result = api.pickBets(
   { hasBook: true, sampleSize: 5 }
 );
 check(
-  'BTTS excluded from primary even when highest P; no sub-75% fallback',
+  'BTTS excluded from Stats primary; tipTier none (not for tip_results)',
   result.primary == null && result.tipTier === 'none'
 );
-check('BTTS can still be secondary when no primary', result.secondary?.label === 'BTTS_YES');
+check(
+  'displayPrimary still set when tipTier none (predictions.suggested_bet)',
+  result.displayPrimary?.label != null
+);
+check(
+  'BTTS ok as displayPrimary when highest non-playable',
+  result.displayPrimary?.label === 'BTTS_YES' || result.displayPrimary?.label === 'OVER_25'
+);
+check(
+  'BTTS can still be secondary when no playable primary',
+  result.secondary?.label === 'BTTS_YES' || result.displayPrimary?.label === 'BTTS_YES'
+);
 
 result = api.pickBets(
   [
@@ -167,7 +184,10 @@ result = api.pickBets(
   null,
   { hasBook: true, sampleSize: 5 }
 );
-check('sub-75% candidates yield no primary (no fallback)', result.primary == null && result.tipTier === 'none');
+check(
+  'sub-75% yields no Stats primary (tipTier none) but has displayPrimary',
+  result.primary == null && result.tipTier === 'none' && result.displayPrimary?.label != null
+);
 
 result = api.pickBets(
   [
@@ -289,7 +309,10 @@ result = api.pickBets(
   null,
   { hasBook: false, sampleSize: 1 }
 );
-check('thin-sample sub-75% yields no primary', result.primary == null && result.tipTier === 'none');
+check(
+  'thin-sample sub-75% yields no Stats primary (display ok)',
+  result.primary == null && result.tipTier === 'none' && result.displayPrimary?.label != null
+);
 
 result = api.pickBets(
   [
@@ -338,8 +361,11 @@ result = api.pickBets(
   }
 );
 check(
-  'banned SHOTS_ and sub-75% yield no primary (no fallback)',
-  result.primary == null && result.tipTier === 'none'
+  'banned SHOTS_ and sub-75% yield no Stats primary; display non-SHOTS',
+  result.primary == null &&
+    result.tipTier === 'none' &&
+    result.displayPrimary?.label != null &&
+    !String(result.displayPrimary.label).startsWith('SHOTS_')
 );
 
 result = api.pickBets(
@@ -455,6 +481,15 @@ check(
 check(
   'source blocks btts from primary',
   /PRIMARY_BLOCKED_FAMILIES = new Set\(\['btts'\]\)/.test(SRC)
+);
+check(
+  'source returns displayPrimary from pickBets',
+  /return \{ primary, secondary, tipTier, displayPrimary \}/.test(SRC)
+);
+check(
+  'source never nulls suggested_bet on tipTier none',
+  /suggested_bet: suggestedLabel/.test(SRC) &&
+    !/suggested_bet: hasPlayablePrimary \? primary\.label : null/.test(SRC)
 );
 
 console.log(failed ? `\n${failed} checks failed` : `\n${passed}/${passed} checks passed`);

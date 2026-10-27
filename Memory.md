@@ -2,7 +2,7 @@
 
 ## Decisiones
 - CF Worker + D1; FD + FotMob + AF enrich
-- Tips: anti-trivial (no O0.5 / U4.5); **nunca SHOTS_***; lane **P≥75%** + cuota≥1.25; **solo playable** entra en `tip_results` (sin fallback Stats); BTTS secondary-only; secondary diversa / no misma `tipFamily` que primary
+- Tips: anti-trivial (no O0.5 / U4.5); **nunca SHOTS_***; lane **P≥75%** + cuota≥1.25; **solo playable** entra en `tip_results`; tipTier `none` → `displayPrimary` en `predictions.suggested_bet` (NOT NULL, conf=0, no ledger/backfill); BTTS secondary-only (ok display); secondary diversa / no misma `tipFamily` que primary/display
 - UI: Partidos · **Top 10** (P≥75% cuota 1.30–3.50; máx 3/familia; pool primary+secondary) · Stats · Semanal · **Ligas** explorador; `#top3` / `#ligas/<apiId>`
 - UNDO tip-policy: baseline `a31f4b5`; tip-policy commit `48738e8` → `git revert 48738e8` + `wrangler deploy` (no wipe tip_results)
 - Crests: FotMob PSG/Elche/Deportivo/**Leverkusen 8178**; AF 85/3751/1102/168 broken
