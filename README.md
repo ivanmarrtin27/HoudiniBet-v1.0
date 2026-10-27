@@ -24,16 +24,6 @@
 
 ---
 
-## Vista previa
-
-<p align="center">
-  <a href="https://houdini-bet.pages.dev">
-    <img src="cloudflare/public/brand/og-share.png" alt="Houdini Bet — vista previa para compartir" width="720" />
-  </a>
-</p>
-
-> Imagen generada desde los assets de marca del repo. La experiencia real está en [houdini-bet.pages.dev](https://houdini-bet.pages.dev).
-
 ## Enlaces
 
 | | URL |
