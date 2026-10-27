@@ -26,7 +26,7 @@ HTML/JS en `cloudflare/public` (mínima). Pulir con `frontend-design` / `web-des
 - Live: name-match umbral 85; no pintar scores si kickoff futuro; `POST /api/v1/admin/matches/repair-future-finished`
 
 ## Mercados Houdini
-- Top 10 del día (P≥75% + cuota 1.30–3.50; hash `#top3`); hasta 10; máx 1 label / máx 3 familia; pool primary+secondary
+- Top 10 del día (hash `#top3`): llenar hasta 10 cuando haya candidatos; P≥75% primero + backfill P≥69%; cuota 1.30–3.50; anti-trivial / no SHOTS_*; máx 1 label / máx 3 familia; pool primary+secondary (incl. tipTier none); Stats `tip_results` sigue solo playable
 - 1X2 · DC/DNB · O/U 0.5–4.5 · BTTS (secondary) · corners/cards/SOT · value ≥5% (book); **nunca SHOTS_*** (tiros totales)
 - Tips: anti-trivial (no O0.5 / U4.5); lane jugable **P≥75%** + cuota≥1.25; display tips también **P≥75%** (no ~50% como tip); **solo playable** en Stats (`tip_results`); BTTS no primary; secondary diversa (malus diario BTTS/O-U)
 - Semanal cuota 10 (+ Conservadora cuota 5): top5; UI sin `@`/«piernas»; Prob. combinada; Valor solo con book

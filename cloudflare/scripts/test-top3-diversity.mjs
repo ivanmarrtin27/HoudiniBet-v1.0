@@ -1,4 +1,4 @@
-/** Tests for Top 10 exact-label + family diversity (max 3 per family). */
+/** Tests for Top 10 exact-label + family diversity (max 3 per family) + soft fill. */
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -36,6 +36,7 @@ function extractFunction(name) {
 
 const api = new Function(
   `const TOP10_MAX_PER_FAMILY = 3;
+   const TOP10_LIMIT = 10;
    ${extractFunction('tipFamilyUi')}
    ${extractFunction('selectDiverseTips')}
    return { tipFamilyUi, selectDiverseTips };`
@@ -158,11 +159,51 @@ check(
 
 check('empty list remains empty', selectDiverseTips([], 10, 1, 3).length === 0);
 check('buildTop10Pool exists', src.includes('function buildTop10Pool('));
+check('pickTop10Tips exists', src.includes('function pickTop10Tips('));
+check('soft min prob is 69', src.includes('const TOP10_SOFT_MIN_PROB = 69'));
+check('primary min prob is 75', src.includes('const TOP10_MIN_PROB = 75'));
 check(
-  'Top 10 tab loads server best-bets limit 10',
-  src.includes('/api/v1/matches/best-bets?date=') && src.includes('limit=10')
+  'Top 10 builds from day matches (soft fill), not playable-only best-bets',
+  src.includes("/api/v1/matches/today?date=") &&
+    src.includes('pickTop10Tips(matches') &&
+    !/renderTop3[\s\S]*?best-bets\?date=/.test(src.slice(src.indexOf('async function renderTop3')))
 );
 check('secondary tip meta wired in client pool', src.includes('secondaryTipOdds'));
+
+/** 15 mixed-prob candidates → diversity returns 10 (primary preferred via sort order). */
+const mixedProb15 = [
+  { tipLabel: 'OVER_15', matchId: 1, m: { id: 1 }, meta: { primaryPass: true, prob: 82, score: 0.4, kind: 'est' } },
+  { tipLabel: 'OVER_25', matchId: 2, m: { id: 2 }, meta: { primaryPass: true, prob: 78, score: 0.38, kind: 'est' } },
+  { tipLabel: 'OVER_35', matchId: 3, m: { id: 3 }, meta: { primaryPass: false, prob: 71, score: 0.3, kind: 'est' } },
+  { tipLabel: 'UNDER_25', matchId: 4, m: { id: 4 }, meta: { primaryPass: false, prob: 70, score: 0.29, kind: 'est' } },
+  { tipLabel: 'BTTS_YES', matchId: 5, m: { id: 5 }, meta: { primaryPass: true, prob: 76, score: 0.35, kind: 'book' } },
+  { tipLabel: 'BTTS_NO', matchId: 6, m: { id: 6 }, meta: { primaryPass: false, prob: 69, score: 0.28, kind: 'est' } },
+  { tipLabel: 'HOME_WIN', matchId: 7, m: { id: 7 }, meta: { primaryPass: true, prob: 80, score: 0.39, kind: 'book' } },
+  { tipLabel: 'AWAY_WIN', matchId: 8, m: { id: 8 }, meta: { primaryPass: false, prob: 72, score: 0.31, kind: 'est' } },
+  { tipLabel: 'CORNERS_OVER_95', matchId: 9, m: { id: 9 }, meta: { primaryPass: true, prob: 77, score: 0.36, kind: 'est' } },
+  { tipLabel: 'CORNERS_UNDER_95', matchId: 10, m: { id: 10 }, meta: { primaryPass: false, prob: 69, score: 0.27, kind: 'est' } },
+  { tipLabel: 'CARDS_OVER_45', matchId: 11, m: { id: 11 }, meta: { primaryPass: true, prob: 75, score: 0.34, kind: 'est' } },
+  { tipLabel: 'CARDS_UNDER_45', matchId: 12, m: { id: 12 }, meta: { primaryPass: false, prob: 70, score: 0.28, kind: 'est' } },
+  { tipLabel: 'SOT_OVER_75', matchId: 13, m: { id: 13 }, meta: { primaryPass: false, prob: 71, score: 0.29, kind: 'est' } },
+  { tipLabel: 'DC_1X', matchId: 14, m: { id: 14 }, meta: { primaryPass: true, prob: 79, score: 0.37, kind: 'book' } },
+  { tipLabel: 'DC_X2', matchId: 15, m: { id: 15 }, meta: { primaryPass: false, prob: 69, score: 0.26, kind: 'est' } },
+];
+const ranked15 = [...mixedProb15].sort((a, b) => {
+  const aPri = a.meta.primaryPass ? 1 : 0;
+  const bPri = b.meta.primaryPass ? 1 : 0;
+  if (bPri !== aPri) return bPri - aPri;
+  return b.meta.prob - a.meta.prob;
+});
+const filled10 = selectDiverseTips(ranked15, 10, 1, 3);
+check('15 mixed-prob candidates fill to 10', filled10.length === 10);
+check(
+  'soft fill prefers primary-pass tips first',
+  filled10.slice(0, 5).every((x) => x.meta.primaryPass)
+);
+check(
+  'soft fill includes at least one soft-floor tip when primary underfills families',
+  filled10.some((x) => !x.meta.primaryPass) || filled10.filter((x) => x.meta.primaryPass).length >= 7
+);
 
 void monoOu;
 void mixed;

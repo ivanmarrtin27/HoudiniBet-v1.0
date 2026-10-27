@@ -2991,9 +2991,15 @@ function renderPartidosList() {
   bindAnalyze(el);
 }
 
+/** Primary Top 10 floor (same as playable tip lane). */
 const TOP10_MIN_PROB = 75;
+/** Soft backfill floor — fill to 10 when primary pass underfills; never invent tips. */
+const TOP10_SOFT_MIN_PROB = 69;
 const TOP10_MIN_ODDS = 1.3;
 const TOP10_MAX_ODDS = 3.5;
+const TOP10_TRIVIAL_LABELS = new Set(['OVER_05', 'UNDER_45']);
+const TOP10_MAX_PER_FAMILY = 3;
+const TOP10_LIMIT = 10;
 
 function tipValueScore(m) {
   const edge = m.valueEdge != null ? Number(m.valueEdge) : null;
@@ -3006,10 +3012,20 @@ function tipValueScore(m) {
   return { score: -Infinity, kind: 'none' };
 }
 
-/** Top 10 rank: P≥69% and cuota 1.30–3.50 → score prob * ln(odds) (+ edge boost). */
-function tipPlayableScore(m) {
+function isTrivialTop10Label(label) {
+  const lab = String(label || '').toUpperCase();
+  return TOP10_TRIVIAL_LABELS.has(lab) || lab.startsWith('SHOTS_');
+}
+
+/**
+ * Top 10 eligibility score: cuota 1.30–3.50, non-trivial, P≥minProb.
+ * tipTier none / display tips OK (Top 10 is UI ranking, not tip_results).
+ */
+function tipPlayableScore(m, minProb = TOP10_SOFT_MIN_PROB) {
+  const tip = m?.suggestedBet || m?.tip || m?.suggested_bet || '';
+  if (!tip || isTrivialTop10Label(tip)) return null;
   const prob = tipProbPct(m);
-  if (prob == null || !Number.isFinite(Number(prob)) || Number(prob) < TOP10_MIN_PROB) {
+  if (prob == null || !Number.isFinite(Number(prob)) || Number(prob) < minProb) {
     return null;
   }
   const bookOdds = m.tipOdds != null ? Number(m.tipOdds) : null;
@@ -3030,10 +3046,10 @@ function tipPlayableScore(m) {
   return {
     score,
     kind: hasBook && m.oddsSource === 'book' ? 'book' : 'est',
+    prob: Number(prob),
+    primaryPass: Number(prob) >= TOP10_MIN_PROB,
   };
 }
-
-const TOP10_MAX_PER_FAMILY = 3;
 
 function tipFamilyUi(code) {
   const b = String(code || '').toUpperCase();
@@ -3115,35 +3131,44 @@ function selectDiverseTips(sortedTips, limit = 3, maxPerLabel = 1, maxPerFamily 
   return selected;
 }
 
-/** Primary + secondary candidates (same match may appear twice until select dedupes). */
+/**
+ * Primary + secondary candidates (soft floor). Same match may appear twice until select dedupes.
+ * tipTier none / display tips included when tipProbPct ≥ soft floor (Top 10 ≠ Stats ledger).
+ */
 function buildTop10Pool(matches) {
   const pool = [];
-  const isBannedShots = (lab) => String(lab || '').startsWith('SHOTS_');
   for (const raw of matches || []) {
-    if (!raw?.suggestedBet || isBannedShots(raw.suggestedBet)) continue;
+    if (!raw?.suggestedBet || isTrivialTop10Label(raw.suggestedBet)) continue;
+    const matchId = raw.id ?? raw.matchId;
     const primaryView = {
       ...raw,
+      id: matchId,
       suggestedBet: raw.suggestedBet,
       tipOdds: raw.tipOdds,
       oddsSource: raw.oddsSource,
       confidenceScore: raw.confidenceScore,
     };
-    const primaryMeta = tipPlayableScore(primaryView);
+    const primaryMeta = tipPlayableScore(primaryView, TOP10_SOFT_MIN_PROB);
     if (primaryMeta) {
       pool.push({
         m: primaryView,
         tipLabel: raw.suggestedBet,
-        matchId: raw.id,
+        matchId,
         isSecondary: false,
         meta: primaryMeta,
       });
     }
     const sec = raw.secondaryBet;
-    if (!sec || isBannedShots(sec) || tipFamilyUi(sec) === tipFamilyUi(raw.suggestedBet)) {
+    if (
+      !sec ||
+      isTrivialTop10Label(sec) ||
+      tipFamilyUi(sec) === tipFamilyUi(raw.suggestedBet)
+    ) {
       continue;
     }
     const secView = {
       ...raw,
+      id: matchId,
       suggestedBet: sec,
       tipOdds: raw.secondaryTipOdds != null ? raw.secondaryTipOdds : raw.tipOdds,
       oddsSource: raw.secondaryOddsSource || raw.oddsSource,
@@ -3151,29 +3176,43 @@ function buildTop10Pool(matches) {
         raw.secondaryConfidence != null ? raw.secondaryConfidence : raw.confidenceScore,
       valueEdge: null,
     };
-    const secMeta = tipPlayableScore(secView);
+    const secMeta = tipPlayableScore(secView, TOP10_SOFT_MIN_PROB);
     if (secMeta) {
       // Prefer primary rank slightly when both exist.
       secMeta.score -= 0.01;
       pool.push({
         m: secView,
         tipLabel: sec,
-        matchId: raw.id,
+        matchId,
         isSecondary: true,
         meta: secMeta,
       });
     }
   }
+  // Primary pass (P≥75) first, then soft backfill (P≥69); within band: book > est, then score.
   return pool.sort((a, b) => {
+    const aPri = a.meta.primaryPass ? 1 : 0;
+    const bPri = b.meta.primaryPass ? 1 : 0;
+    if (bPri !== aPri) return bPri - aPri;
     if (a.meta.kind === 'book' && b.meta.kind !== 'book') return -1;
     if (b.meta.kind === 'book' && a.meta.kind !== 'book') return 1;
+    if (b.meta.prob !== a.meta.prob) return b.meta.prob - a.meta.prob;
     return b.meta.score - a.meta.score;
   });
 }
 
+/** Fill up to 10: diversity caps, primary P≥75 first, soft P≥69 backfill. */
+function pickTop10Tips(matches, limit = TOP10_LIMIT) {
+  const pool = buildTop10Pool(matches);
+  return selectDiverseTips(pool, limit, 1, TOP10_MAX_PER_FAMILY);
+}
+
 let top3LoadSeq = 0;
 
-/** Top 10 from server best-bets (same pool as API count), not a stricter client-only filter. */
+/**
+ * Top 10 del día: day's matches (incl. tipTier none) → primary P≥75 + soft backfill ≥69.
+ * Prefer filling to 10; never invent tips / trivial / SHOTS_*. Stats tip_results unchanged.
+ */
 async function renderTop3() {
   const el = document.getElementById('top3-list');
   if (!el) return;
@@ -3182,27 +3221,28 @@ async function renderTop3() {
   el.innerHTML = Array.from({ length: 4 }, () => `<div class="skeleton" aria-hidden="true"></div>`).join('');
   try {
     const date = resolveSelectedDate();
-    const data = await api(
-      `/api/v1/matches/best-bets?date=${encodeURIComponent(date)}&limit=10`
-    );
+    // Full day board (all leagues) — not best-bets playable-only, so soft fill can reach 10.
+    const data = await api(`/api/v1/matches/today?date=${encodeURIComponent(date)}`);
     if (seq !== top3LoadSeq) return;
-    const bets = (data.bets || []).slice(0, 10);
-    if (!bets.length) {
-      el.innerHTML = `<div class="empty-board">Sin tips P≥75% con cuota 1.30–3.50 para ${escapeHtml(
-        dayLabel
-      )}.</div>`;
+    const matches = data.matches || [];
+    const picked = pickTop10Tips(matches, TOP10_LIMIT);
+    if (!picked.length) {
+      el.innerHTML = `<div class="empty-board">Sin tips jugables (P≥${TOP10_SOFT_MIN_PROB}% · cuota ${TOP10_MIN_ODDS.toFixed(
+        2
+      )}–${TOP10_MAX_ODDS.toFixed(2)}) para ${escapeHtml(dayLabel)}.</div>`;
       return;
     }
-    el.innerHTML = bets
-      .map((bet, i) => {
-        const home = bet.homeTeam?.name || '';
-        const away = bet.awayTeam?.name || '';
-        const tip = bet.suggestedBet;
+    el.innerHTML = picked
+      .map((item, i) => {
+        const bet = item.m;
+        const home = bet.homeTeam?.name || bet.home || '';
+        const away = bet.awayTeam?.name || bet.away || '';
+        const tip = item.tipLabel || bet.suggestedBet;
         const tipLabel = tip ? labelBet(tip, home, away) : 'Sin tip';
         const m = {
           ...bet,
-          id: bet.matchId,
-          leagueName: bet.league,
+          id: item.matchId ?? bet.id ?? bet.matchId,
+          leagueName: bet.leagueName || bet.league,
           suggestedBet: tip,
         };
         const prob = tipProbPct(m);
@@ -3215,7 +3255,7 @@ async function renderTop3() {
               ? `Edge ${(edge * 100).toFixed(0)}%`
               : '';
         const rank = i + 1;
-        const matchId = Number(bet.matchId);
+        const matchId = Number(item.matchId ?? bet.id ?? bet.matchId);
         const liveStrip = bet.status === 'live' ? liveStripHtml(m) : '';
         return `
       <article class="card card--tip card--row card--top3" data-analyze="${matchId}">
