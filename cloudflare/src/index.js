@@ -1118,14 +1118,32 @@ async function handleApi(request, env, ctx) {
     if (!header || header !== secret) {
       return json({ error: 'No autorizado. Header x-sync-secret requerido.' }, 401);
     }
-    const wiped = await store.resetStatsLedgers(db);
+    const keepDateParam = url.searchParams.get('keepDate');
+    const keepToday = url.searchParams.get('keepToday') === '1';
+    const keepDate = keepToday
+      ? new Date().toISOString().slice(0, 10)
+      : keepDateParam && /^\d{4}-\d{2}-\d{2}$/.test(keepDateParam)
+        ? keepDateParam
+        : null;
+    const wiped = await store.resetStatsLedgers(db, keepDate ? { keepDate } : {});
+    let calibration = null;
+    try {
+      calibration = await fitTipCalibration(db, 90, { includeMidBands: false });
+    } catch (_) {
+      calibration = null;
+    }
     return json({
       ok: true,
       tipsDeleted: wiped.tipsDeleted,
+      tipsKept: wiped.tipsKept || 0,
+      keptMatchIds: wiped.keptMatchIds || [],
+      keepDate: wiped.keepDate || null,
       combosDeleted: wiped.combosDeleted,
       statsResetAt: wiped.statsResetAt || null,
-      note:
-        'tip_results + combo_results vaciados. Stats cuenta desde statsResetAt. Matches/predictions/odds intactos.',
+      calibrationDecided: calibration?.decided ?? null,
+      note: keepDate
+        ? `tip_results anteriores a ${keepDate} + combo_results vaciados; tips del día conservados. Stats desde statsResetAt.`
+        : 'tip_results + combo_results vaciados. Stats cuenta desde statsResetAt. Matches/predictions/odds intactos.',
     });
   }
 

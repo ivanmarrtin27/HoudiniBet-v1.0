@@ -1747,16 +1747,54 @@ export async function backfillTipOddsBands(db, limit = 80) {
  * Wipe tip + combo ledgers used by Stats / ROI (pending + settled).
  * Does not touch matches, predictions, odds, or team_stats.
  * Sets stats_reset_at so backfill cannot resurrect older finished tips.
+ * @param {{ keepDate?: string }} [opts] — if YYYY-MM-DD, keep tip_results for matches on that date.
  */
-export async function resetStatsLedgers(db) {
+export async function resetStatsLedgers(db, opts = {}) {
+  const keepDate =
+    opts?.keepDate && /^\d{4}-\d{2}-\d{2}$/.test(String(opts.keepDate))
+      ? String(opts.keepDate)
+      : null;
   const tipsBefore = await db.first(`SELECT COUNT(*) AS n FROM tip_results`);
   const combosBefore = await db.first(`SELECT COUNT(*) AS n FROM combo_results`);
-  await db.run(`DELETE FROM tip_results`);
+  let tipsKept = 0;
+  let keptMatchIds = [];
+  if (keepDate) {
+    const kept = await db.all(
+      `SELECT tr.match_id
+       FROM tip_results tr
+       JOIN matches m ON m.id = tr.match_id
+       WHERE DATE(m.match_date) = DATE(?)`,
+      keepDate
+    );
+    keptMatchIds = (kept || []).map((r) => Number(r.match_id)).filter((id) => id > 0);
+    tipsKept = keptMatchIds.length;
+    await db.run(
+      `DELETE FROM tip_results
+       WHERE match_id NOT IN (
+         SELECT m.id FROM matches m WHERE DATE(m.match_date) = DATE(?)
+       )`,
+      keepDate
+    );
+  } else {
+    await db.run(`DELETE FROM tip_results`);
+  }
   await db.run(`DELETE FROM combo_results`);
-  const statsResetAt = new Date().toISOString().slice(0, 10);
+  // Drop stale calibration so next fit uses the new ledger window.
+  try {
+    await db.run(`DELETE FROM meta WHERE key = 'tip_calibration'`);
+  } catch (_) {
+    /* meta may lack rows */
+  }
+  const statsResetAt = keepDate || new Date().toISOString().slice(0, 10);
   await setMeta(db, 'stats_reset_at', statsResetAt);
+  const tipsAfter = await db.first(`SELECT COUNT(*) AS n FROM tip_results`);
+  const tipsDeleted =
+    Math.max(0, (Number(tipsBefore?.n) || 0) - (Number(tipsAfter?.n) || 0));
   return {
-    tipsDeleted: Number(tipsBefore?.n) || 0,
+    tipsDeleted,
+    tipsKept,
+    keptMatchIds,
+    keepDate: keepDate || null,
     combosDeleted: Number(combosBefore?.n) || 0,
     statsResetAt,
   };

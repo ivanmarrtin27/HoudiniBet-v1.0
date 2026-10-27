@@ -6,7 +6,7 @@
 - UI: Partidos · **Top 10** (P≥75% cuota 1.30–3.50; máx 3/familia; pool primary+secondary) · Stats · Semanal · **Ligas** explorador; `#top3` / `#ligas/<apiId>`
 - UNDO tip-policy: baseline `a31f4b5`; tip-policy commit `48738e8` → `git revert 48738e8` + `wrangler deploy` (no wipe tip_results)
 - Crests: FotMob PSG/Elche/Deportivo/**Leverkusen 8178**; AF 85/3751/1102/168 broken
-- Reset Stats: `POST /api/v1/admin/stats/reset` → wipe + `stats_reset_at`; backfill solo scheduled/live (no finished)
+- Reset Stats: `POST /api/v1/admin/stats/reset` → wipe + `stats_reset_at`; `?keepToday=1` / `?keepDate=YYYY-MM-DD` conserva tips del día; backfill solo scheduled/live (no finished)
 - Odds: sin key → sin book; Semanal cuota 10 + Conservadora 5
 - **Dominio**: trabajar en free (`houdini-bet.pages.dev` / workers.dev); **no** pagar `houdini-bet.dev` hasta producto listo
 - Cuando todo funcione como se quiere: (1) registro+login (2) plan Premium con pago
