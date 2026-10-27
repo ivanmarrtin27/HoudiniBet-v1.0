@@ -3000,6 +3000,8 @@ const TOP10_MAX_ODDS = 3.5;
 const TOP10_TRIVIAL_LABELS = new Set(['OVER_05', 'UNDER_45']);
 const TOP10_MAX_PER_FAMILY = 3;
 const TOP10_LIMIT = 10;
+/** Product allowlist window: today + next N days (same as Partidos/sync). */
+const TOP10_WINDOW_DAYS = 14;
 
 function tipValueScore(m) {
   const edge = m.valueEdge != null ? Number(m.valueEdge) : null;
@@ -3018,6 +3020,18 @@ function isTrivialTop10Label(label) {
 }
 
 /**
+ * Odds used for Top 10 band check: book tipOdds → any tipOdds → model-implied 1/p.
+ * Never reject solely because tipOdds is null (common without API_FOOTBALL_KEY).
+ */
+function tipOddsForTop10Band(m, probPct) {
+  const raw = m?.tipOdds != null ? Number(m.tipOdds) : null;
+  if (raw != null && Number.isFinite(raw) && raw > 1) return raw;
+  const p = Number(probPct) / 100;
+  if (Number.isFinite(p) && p > 0.01 && p < 0.99) return 1 / p;
+  return null;
+}
+
+/**
  * Top 10 eligibility score: cuota 1.30–3.50, non-trivial, P≥minProb.
  * tipTier none / display tips OK (Top 10 is UI ranking, not tip_results).
  */
@@ -3028,24 +3042,18 @@ function tipPlayableScore(m, minProb = TOP10_SOFT_MIN_PROB) {
   if (prob == null || !Number.isFinite(Number(prob)) || Number(prob) < minProb) {
     return null;
   }
-  const bookOdds = m.tipOdds != null ? Number(m.tipOdds) : null;
-  const hasBook =
-    Number.isFinite(bookOdds) && bookOdds > 1 && (m.oddsSource === 'book' || bookOdds != null);
-  let odds = hasBook ? bookOdds : null;
-  if (odds == null) {
-    const p = Number(prob) / 100;
-    if (p > 0.01 && p < 0.99) odds = 1 / p;
-  }
+  const odds = tipOddsForTop10Band(m, prob);
   if (odds == null || !Number.isFinite(odds) || odds < TOP10_MIN_ODDS || odds > TOP10_MAX_ODDS) {
     return null;
   }
+  const isBook = m.oddsSource === 'book' && m.tipOdds != null && Number(m.tipOdds) > 1;
   let score = (Number(prob) / 100) * Math.log(Math.max(odds, 1.01));
   const edge = m.valueEdge != null ? Number(m.valueEdge) : null;
   if (edge != null && Number.isFinite(edge)) score += Math.max(0, edge) * 0.15;
-  if (!(hasBook && m.oddsSource === 'book')) score -= 0.05;
+  if (!isBook) score -= 0.05;
   return {
     score,
-    kind: hasBook && m.oddsSource === 'book' ? 'book' : 'est',
+    kind: isBook ? 'book' : 'est',
     prob: Number(prob),
     primaryPass: Number(prob) >= TOP10_MIN_PROB,
   };
@@ -3131,14 +3139,21 @@ function selectDiverseTips(sortedTips, limit = 3, maxPerLabel = 1, maxPerFamily 
   return selected;
 }
 
+function isTop10MatchStatus(status) {
+  const s = String(status || '').toLowerCase();
+  return s === 'scheduled' || s === 'live' || s === '';
+}
+
 /**
  * Primary + secondary candidates (soft floor). Same match may appear twice until select dedupes.
  * tipTier none / display tips included when tipProbPct ≥ soft floor (Top 10 ≠ Stats ledger).
+ * Only scheduled/live (skip finished) so Top 10 stays actionable.
  */
 function buildTop10Pool(matches) {
   const pool = [];
   for (const raw of matches || []) {
     if (!raw?.suggestedBet || isTrivialTop10Label(raw.suggestedBet)) continue;
+    if (!isTop10MatchStatus(raw.status)) continue;
     const matchId = raw.id ?? raw.matchId;
     const primaryView = {
       ...raw,
@@ -3210,26 +3225,24 @@ function pickTop10Tips(matches, limit = TOP10_LIMIT) {
 let top3LoadSeq = 0;
 
 /**
- * Top 10 del día: day's matches (incl. tipTier none) → primary P≥75 + soft backfill ≥69.
- * Prefer filling to 10; never invent tips / trivial / SHOTS_*. Stats tip_results unchanged.
+ * Top 10: multi-day upcoming pool (hoy + TOP10_WINDOW_DAYS) → primary P≥75 + soft ≥69.
+ * Independent of Partidos date chip. Not best-bets/playable-only. Stats tip_results unchanged.
  */
 async function renderTop3() {
   const el = document.getElementById('top3-list');
   if (!el) return;
   const seq = ++top3LoadSeq;
-  const dayLabel = formatDateCenter(resolveSelectedDate());
   el.innerHTML = Array.from({ length: 4 }, () => `<div class="skeleton" aria-hidden="true"></div>`).join('');
   try {
-    const date = resolveSelectedDate();
-    // Full day board (all leagues) — not best-bets playable-only, so soft fill can reach 10.
-    const data = await api(`/api/v1/matches/today?date=${encodeURIComponent(date)}`);
+    // Product window (not date= single day — quiet days underfill Top 10).
+    const data = await api(`/api/v1/matches/today?days=${TOP10_WINDOW_DAYS}`);
     if (seq !== top3LoadSeq) return;
     const matches = data.matches || [];
     const picked = pickTop10Tips(matches, TOP10_LIMIT);
     if (!picked.length) {
       el.innerHTML = `<div class="empty-board">Sin tips jugables (P≥${TOP10_SOFT_MIN_PROB}% · cuota ${TOP10_MIN_ODDS.toFixed(
         2
-      )}–${TOP10_MAX_ODDS.toFixed(2)}) para ${escapeHtml(dayLabel)}.</div>`;
+      )}–${TOP10_MAX_ODDS.toFixed(2)}) en los próximos ${TOP10_WINDOW_DAYS} días.</div>`;
       return;
     }
     el.innerHTML = picked

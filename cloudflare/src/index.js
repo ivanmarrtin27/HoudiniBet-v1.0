@@ -759,7 +759,7 @@ async function handleApi(request, env, ctx) {
       });
     }
     // Defense: Mejores / best-bets stay playable-only (Stats tip_results lane).
-    // Top 10 UI builds client-side from /matches/today with soft backfill — not this list.
+    // Top 10 UI builds client-side from /matches/today?days=14 with soft backfill — not this list.
     bets = bets
       .filter((b) => !b.tipTier || b.tipTier === 'playable')
       .slice(0, limit);

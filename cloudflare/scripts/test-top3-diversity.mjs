@@ -35,14 +35,46 @@ function extractFunction(name) {
 }
 
 const api = new Function(
-  `const TOP10_MAX_PER_FAMILY = 3;
+  `const TOP10_MIN_PROB = 75;
+   const TOP10_SOFT_MIN_PROB = 69;
+   const TOP10_MIN_ODDS = 1.3;
+   const TOP10_MAX_ODDS = 3.5;
+   const TOP10_TRIVIAL_LABELS = new Set(['OVER_05', 'UNDER_45']);
+   const TOP10_MAX_PER_FAMILY = 3;
    const TOP10_LIMIT = 10;
+   const TOP10_WINDOW_DAYS = 14;
+   function tipProbPct(raw) {
+     const conf = raw?.confidenceScore != null ? Number(raw.confidenceScore) : null;
+     return conf != null && conf > 0 ? conf : null;
+   }
+   ${extractFunction('isTrivialTop10Label')}
+   ${extractFunction('tipOddsForTop10Band')}
+   ${extractFunction('tipPlayableScore')}
    ${extractFunction('tipFamilyUi')}
+   ${extractFunction('isTop10MatchStatus')}
    ${extractFunction('selectDiverseTips')}
-   return { tipFamilyUi, selectDiverseTips };`
+   ${extractFunction('buildTop10Pool')}
+   ${extractFunction('pickTop10Tips')}
+   return {
+     tipFamilyUi,
+     selectDiverseTips,
+     tipOddsForTop10Band,
+     tipPlayableScore,
+     buildTop10Pool,
+     pickTop10Tips,
+     isTop10MatchStatus,
+   };`
 )();
 
-const { tipFamilyUi, selectDiverseTips } = api;
+const {
+  tipFamilyUi,
+  selectDiverseTips,
+  tipOddsForTop10Band,
+  tipPlayableScore,
+  buildTop10Pool,
+  pickTop10Tips,
+  isTop10MatchStatus,
+} = api;
 
 let passed = 0;
 let failed = 0;
@@ -162,12 +194,15 @@ check('buildTop10Pool exists', src.includes('function buildTop10Pool('));
 check('pickTop10Tips exists', src.includes('function pickTop10Tips('));
 check('soft min prob is 69', src.includes('const TOP10_SOFT_MIN_PROB = 69'));
 check('primary min prob is 75', src.includes('const TOP10_MIN_PROB = 75'));
+check('Top 10 window is 14 days', src.includes('const TOP10_WINDOW_DAYS = 14'));
 check(
-  'Top 10 builds from day matches (soft fill), not playable-only best-bets',
-  src.includes("/api/v1/matches/today?date=") &&
+  'Top 10 builds from multi-day upcoming pool, not single-date / playable-only best-bets',
+  src.includes('days=${TOP10_WINDOW_DAYS}') &&
     src.includes('pickTop10Tips(matches') &&
+    !/renderTop3[\s\S]*?matches\/today\?date=/.test(src.slice(src.indexOf('async function renderTop3'))) &&
     !/renderTop3[\s\S]*?best-bets\?date=/.test(src.slice(src.indexOf('async function renderTop3')))
 );
+check('model-implied odds helper for null tipOdds', src.includes('function tipOddsForTop10Band('));
 check('secondary tip meta wired in client pool', src.includes('secondaryTipOdds'));
 
 /** 15 mixed-prob candidates → diversity returns 10 (primary preferred via sort order). */
@@ -207,6 +242,100 @@ check(
 
 void monoOu;
 void mixed;
+
+check(
+  'null tipOdds uses model-implied 1/p inside band',
+  Math.abs(tipOddsForTop10Band({ tipOdds: null }, 70) - 1 / 0.7) < 1e-9
+);
+check(
+  'null tipOdds candidate is eligible (not rejected by odds band)',
+  tipPlayableScore(
+    { suggestedBet: 'OVER_25', tipOdds: null, oddsSource: 'model', confidenceScore: 76 },
+    69
+  ) != null
+);
+check(
+  'odds below band still rejected even with high P',
+  tipPlayableScore(
+    { suggestedBet: 'DC_1X', tipOdds: 1.1, oddsSource: 'model', confidenceScore: 90 },
+    69
+  ) == null
+);
+check('finished matches excluded from Top 10 status', isTop10MatchStatus('finished') === false);
+check('scheduled matches allowed', isTop10MatchStatus('scheduled') === true);
+
+// P 69–76 → model 1/p stays inside 1.30–3.50; P≥77 alone would fall under 1.30.
+const nullOddsPool = Array.from({ length: 12 }, (_, i) => ({
+  id: 1000 + i,
+  status: 'scheduled',
+  suggestedBet: [
+    'OVER_15',
+    'OVER_25',
+    'UNDER_25',
+    'BTTS_YES',
+    'HOME_WIN',
+    'AWAY_WIN',
+    'DC_1X',
+    'DNB_HOME',
+    'CORNERS_OVER_95',
+    'CARDS_UNDER_45',
+    'SOT_OVER_75',
+    'DC_X2',
+  ][i],
+  tipOdds: null,
+  oddsSource: 'model',
+  confidenceScore: 76 - (i % 6),
+  secondaryBet: null,
+}));
+const filledFromNullOdds = pickTop10Tips(nullOddsPool, 10);
+check(
+  '12 scheduled null-odds tips fill Top 10 to 10',
+  filledFromNullOdds.length === 10
+);
+check(
+  'high P with null tipOdds fails min band via 1/p (<1.30)',
+  tipPlayableScore(
+    { suggestedBet: 'OVER_25', tipOdds: null, oddsSource: 'model', confidenceScore: 80 },
+    69
+  ) == null
+);
+check(
+  'finished-only day cannot fill Top 10',
+  pickTop10Tips(
+    [
+      {
+        id: 1,
+        status: 'finished',
+        suggestedBet: 'DNB_AWAY',
+        tipOdds: 1.7,
+        oddsSource: 'model',
+        confidenceScore: 76,
+      },
+    ],
+    10
+  ).length === 0
+);
+check(
+  'buildTop10Pool skips finished even if soft-eligible',
+  buildTop10Pool([
+    {
+      id: 9,
+      status: 'finished',
+      suggestedBet: 'HOME_WIN',
+      tipOdds: 1.8,
+      oddsSource: 'model',
+      confidenceScore: 80,
+    },
+    {
+      id: 10,
+      status: 'scheduled',
+      suggestedBet: 'AWAY_WIN',
+      tipOdds: 1.9,
+      oddsSource: 'model',
+      confidenceScore: 80,
+    },
+  ]).map((x) => x.matchId).join(',') === '10'
+);
 
 console.log(failed ? `\n${failed} checks failed` : `\n${passed}/${passed} checks passed`);
 process.exit(failed ? 1 : 0);
