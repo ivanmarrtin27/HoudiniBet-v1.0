@@ -31,7 +31,7 @@ const PLAYABLE_MIN_PROB = 0.75;
 /**
  * Display tip floor (predictions.suggested_bet when tipTier none).
  * Same as playable — never promote ~50% markets as the recommended tip.
- * If none reach the floor, schema fallback still writes a label with confidence 0.
+ * If none reach the floor, schema fallback still writes a label (honest P×100; tip_tier none).
  */
 const DISPLAY_MIN_PROB = PLAYABLE_MIN_PROB;
 /** Optional UI “tip seguro” threshold (subset of playable). */
@@ -445,7 +445,8 @@ function meetsDisplayFloor(c) {
 /**
  * Display-only ranking when no playable primary.
  * Prefer P≥DISPLAY_MIN_PROB (same as playable). Must never feed tip_results / Stats
- * (tipTier stays 'none', confidence 0). BTTS allowed; SHOTS_* / trivial excluded.
+ * (tipTier stays 'none'; confidence stores real display P×100 for UI).
+ * BTTS allowed; SHOTS_* / trivial excluded.
  * If nothing reaches the floor → schema NOT NULL fallback (best non-trivial).
  */
 function pickDisplayPrimary(
@@ -507,7 +508,7 @@ function pickDisplayPrimary(
     }
   }
 
-  // Phase 2 — schema NOT NULL only (caller keeps confidence 0; UI must not promote).
+  // Phase 2 — schema NOT NULL only (caller stores real P×100 + tip_tier none).
   if (!pick) {
     if (hasBook && withBookEv.length) {
       const nonTrivialBook = withBookEv.filter((c) => !isTrivialTipLabel(c.label));
@@ -561,7 +562,7 @@ function pickDisplayPrimary(
  * Tip selection: playable lane only for Stats primary (P≥75%, non-trivial, odds≥1.25).
  * When none: tipTier 'none', primary null (no tip_results), displayPrimary for
  * predictions.suggested_bet (NOT NULL) — also prefers P≥75%; weak schema fallback
- * only when nothing reaches DISPLAY_MIN_PROB (confidence 0). Never invents book odds.
+ * only when nothing reaches DISPLAY_MIN_PROB (stores real P×100, not 0). Never invents book odds.
  * BTTS secondary-only for playable; BTTS OK on displayPrimary.
  */
 function pickBets(candidates, value, calib = null, opts = {}) {
@@ -1090,8 +1091,17 @@ export async function predictMatch(db, matchId) {
     };
   }
 
-  // Confidence 0 when tipTier none so backfillPendingTips skips display-only rows.
-  let confidence = hasPlayablePrimary ? primary.prob * 100 : 0;
+  // Always store honest model % for UI. tip_tier gates Mejores / tip_results / backfill.
+  const displayProb =
+    hasPlayablePrimary
+      ? primary.prob
+      : displayPrimary?.prob != null && Number.isFinite(Number(displayPrimary.prob))
+        ? Number(displayPrimary.prob)
+        : secondary?.prob != null && Number.isFinite(Number(secondary.prob))
+          ? Number(secondary.prob)
+          : null;
+  let confidence =
+    displayProb != null && Number.isFinite(displayProb) ? displayProb * 100 : 0;
   let dataQuality = sampleSize >= MIN_SAMPLE_FOR_TIP ? 'ok' : 'low';
   if (sampleSize < MIN_SAMPLE_FOR_TIP) {
     confidence = Number((confidence * 0.9).toFixed(2));
@@ -1185,6 +1195,7 @@ export async function predictMatch(db, matchId) {
     suggested_bet: suggestedLabel,
     secondary_bet: secondary ? secondary.label : null,
     confidence_score: Number(confidence.toFixed(2)),
+    tip_tier: tipTier,
     value_edge: hasPlayablePrimary ? value.value_edge : null,
     value_market: hasPlayablePrimary ? value.value_market : null,
   };

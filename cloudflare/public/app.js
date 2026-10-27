@@ -3335,7 +3335,7 @@ function tipMetaHtml({
       }</span>`
     );
   }
-  if (tipTier === 'fallback') {
+  if (tipTier === 'none' || tipTier === 'fallback') {
     bits.push('<span class="muted">sin tip ≥75%</span>');
   } else if (tipTier === 'playable' && conf != null && Number(conf) >= 80) {
     bits.push('<span class="muted">tip seguro</span>');
@@ -3365,11 +3365,19 @@ function tipCardHtml({
   analyzeBtn = false,
 }) {
   const tipLabel = tip ? escapeHtml(labelBet(tip, home, away)) : 'Sin tip';
-  const hideWeakConf =
-    tipTier === 'fallback' && (conf == null || Number.isNaN(Number(conf)) || Number(conf) < 75);
+  const confN =
+    conf != null && !Number.isNaN(Number(conf)) && Number(conf) > 0
+      ? Number(conf)
+      : tip
+        ? tipProbPct({
+            suggestedBet: tip,
+            confidenceScore: conf,
+            tipTier,
+          })
+        : null;
   const confLabel =
-    tip && !hideWeakConf && conf != null && !Number.isNaN(Number(conf))
-      ? `${Math.round(Number(conf))}%`
+    tip && confN != null && !Number.isNaN(Number(confN))
+      ? `${Math.round(Number(confN))}%`
       : '';
   const classes = [
     'card',
@@ -3388,7 +3396,7 @@ function tipCardHtml({
       <div class="card-tip__body">
         <div class="card-tip__primary">
           <span class="card-tip__bet tip-accent">${tipLabel}</span>
-          ${confLabel ? `<span class="${confClass(conf)} card-tip__conf">${confLabel}</span>` : ''}
+          ${confLabel ? `<span class="${confClass(confN)} card-tip__conf">${confLabel}</span>` : ''}
         </div>
         ${tipMetaHtml({
           tipOdds,
@@ -3399,7 +3407,7 @@ function tipCardHtml({
           oddsSource,
           dataQuality,
           tipTier,
-          conf,
+          conf: confN,
         })}
         ${crestsRowHtml(home, homeLogo, away, awayLogo)}
         <p class="card-tip__match">${escapeHtml(home)} vs ${escapeHtml(away)}</p>
@@ -3493,10 +3501,33 @@ function resolveMarkets(m) {
   };
 }
 
-function tipProbPct(raw) {
-  const tip = String(raw.suggestedBet || raw.tip || '');
-  const markets = resolveMarkets(raw) || {};
-  const map = {
+/** Normalize a 0–1 or 0–100 model prob to display percentage (0–100). */
+function toDisplayPct(v) {
+  if (v == null || v === '') return null;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0) return null;
+  const pct = n <= 1 ? n * 100 : n;
+  return Number(pct.toFixed(1));
+}
+
+/**
+ * Model market probability (0–100) for a tip label from a prediction / markets payload.
+ * Shared by panel / list / Top10 so tip meta never falls back to bare "— modelo".
+ */
+function probForLabel(prediction, label) {
+  if (!prediction || !label) return null;
+  const tip = String(label);
+  const p = prediction.prediction && typeof prediction.prediction === 'object'
+    ? { ...prediction, ...prediction.prediction }
+    : prediction;
+  const pick = (...keys) => {
+    for (const k of keys) {
+      if (p[k] != null && p[k] !== '') return toDisplayPct(p[k]);
+    }
+    return null;
+  };
+  const markets = resolveMarkets(p) || {};
+  const marketMap = {
     HOME_WIN: markets.home,
     DRAW: markets.draw,
     AWAY_WIN: markets.away,
@@ -3505,9 +3536,111 @@ function tipProbPct(raw) {
     BTTS_YES: markets.bttsYes,
     BTTS_NO: markets.bttsNo,
   };
-  if (map[tip] != null) return map[tip];
-  const conf = raw.confidenceScore ?? raw.conf;
-  return conf != null && !Number.isNaN(Number(conf)) ? Number(conf) : null;
+  if (marketMap[tip] != null) return marketMap[tip];
+
+  const hw = pick('home_win_prob', 'homeWinProb');
+  const dr = pick('draw_prob', 'drawProb');
+  const aw = pick('away_win_prob', 'awayWinProb');
+  if (tip === 'DC_1X' && hw != null && dr != null) {
+    const sum = hw + dr;
+    return sum > 0 && sum < 100 ? Number(sum.toFixed(1)) : null;
+  }
+  if (tip === 'DC_X2' && aw != null && dr != null) {
+    const sum = aw + dr;
+    return sum > 0 && sum < 100 ? Number(sum.toFixed(1)) : null;
+  }
+  if (tip === 'DNB_HOME' && hw != null && aw != null && hw + aw > 0) {
+    return Number(((hw / (hw + aw)) * 100).toFixed(1));
+  }
+  if (tip === 'DNB_AWAY' && hw != null && aw != null && hw + aw > 0) {
+    return Number(((aw / (hw + aw)) * 100).toFixed(1));
+  }
+
+  const fieldMap = {
+    HOME_WIN: ['home_win_prob', 'homeWinProb'],
+    DRAW: ['draw_prob', 'drawProb'],
+    AWAY_WIN: ['away_win_prob', 'awayWinProb'],
+    OVER_05: ['over05_prob', 'over05Prob'],
+    UNDER_05: ['under05_prob', 'under05Prob'],
+    OVER_15: ['over15_prob', 'over15Prob'],
+    UNDER_15: ['under15_prob', 'under15Prob'],
+    OVER_25: ['over25_prob', 'over25Prob'],
+    UNDER_25: ['under25_prob', 'under25Prob'],
+    OVER_35: ['over35_prob', 'over35Prob'],
+    UNDER_35: ['under35_prob', 'under35Prob'],
+    OVER_45: ['over45_prob', 'over45Prob'],
+    UNDER_45: ['under45_prob', 'under45Prob'],
+    BTTS_YES: ['btts_yes_prob', 'bttsYesProb'],
+    BTTS_NO: ['btts_no_prob', 'bttsNoProb'],
+    HOME_OVER_05: ['home_over05_prob', 'homeOver05Prob'],
+    HOME_UNDER_05: ['home_under05_prob', 'homeUnder05Prob'],
+    HOME_OVER_15: ['home_over15_prob', 'homeOver15Prob'],
+    HOME_UNDER_15: ['home_under15_prob', 'homeUnder15Prob'],
+    HOME_OVER_25: ['home_over25_prob', 'homeOver25Prob'],
+    HOME_UNDER_25: ['home_under25_prob', 'homeUnder25Prob'],
+    HOME_OVER_35: ['home_over35_prob', 'homeOver35Prob'],
+    HOME_UNDER_35: ['home_under35_prob', 'homeUnder35Prob'],
+    AWAY_OVER_05: ['away_over05_prob', 'awayOver05Prob'],
+    AWAY_UNDER_05: ['away_under05_prob', 'awayUnder05Prob'],
+    AWAY_OVER_15: ['away_over15_prob', 'awayOver15Prob'],
+    AWAY_UNDER_15: ['away_under15_prob', 'awayUnder15Prob'],
+    AWAY_OVER_25: ['away_over25_prob', 'awayOver25Prob'],
+    AWAY_UNDER_25: ['away_under25_prob', 'awayUnder25Prob'],
+    AWAY_OVER_35: ['away_over35_prob', 'awayOver35Prob'],
+    AWAY_UNDER_35: ['away_under35_prob', 'awayUnder35Prob'],
+    CORNERS_OVER_85: ['corners_over85_prob', 'cornersOver85Prob'],
+    CORNERS_UNDER_85: ['corners_under85_prob', 'cornersUnder85Prob'],
+    CORNERS_OVER_95: ['corners_over95_prob', 'cornersOver95Prob'],
+    CORNERS_UNDER_95: ['corners_under95_prob', 'cornersUnder95Prob'],
+    CORNERS_OVER_105: ['corners_over105_prob', 'cornersOver105Prob'],
+    CORNERS_UNDER_105: ['corners_under105_prob', 'cornersUnder105Prob'],
+    CARDS_OVER_35: ['cards_over35_prob', 'cardsOver35Prob'],
+    CARDS_UNDER_35: ['cards_under35_prob', 'cardsUnder35Prob'],
+    CARDS_OVER_45: ['cards_over45_prob', 'cardsOver45Prob'],
+    CARDS_UNDER_45: ['cards_under45_prob', 'cardsUnder45Prob'],
+    SOT_OVER_75: ['sot_over75_prob', 'sotOver75Prob'],
+    SOT_UNDER_75: ['sot_under75_prob', 'sotUnder75Prob'],
+    SOT_OVER_85: ['sot_over85_prob', 'sotOver85Prob'],
+    SOT_UNDER_85: ['sot_under85_prob', 'sotUnder85Prob'],
+    SOT_OVER_95: ['sot_over95_prob', 'sotOver95Prob'],
+    SOT_UNDER_95: ['sot_under95_prob', 'sotUnder95Prob'],
+  };
+  const keys = fieldMap[tip];
+  if (keys) return pick(...keys);
+  return null;
+}
+
+/**
+ * Tip display % (0–100): confidence_score when > 0, else market P for suggestedBet.
+ * Never returns null when a suggested bet has a resolvable market probability.
+ */
+function tipProbPct(raw) {
+  if (!raw) return null;
+  const tip = String(raw.suggestedBet || raw.tip || raw.suggested_bet || '');
+  const confRaw = raw.confidenceScore ?? raw.conf ?? raw.confidence_score;
+  const conf =
+    confRaw != null && !Number.isNaN(Number(confRaw)) ? Number(confRaw) : null;
+  if (conf != null && conf > 0) return conf;
+  if (tip) {
+    const fromLabel = probForLabel(raw, tip);
+    if (fromLabel != null) return fromLabel;
+  }
+  return conf != null && conf > 0 ? conf : null;
+}
+
+/** Format tip meta % + optional odds-source hint. Never bare "— modelo". */
+function tipConfMetaHtml(tipProb, oddsSource = null) {
+  const src =
+    oddsSource && oddsSource !== 'book'
+      ? ` · ${escapeHtml(oddsSourceLabel(oddsSource))}`
+      : '';
+  if (tipProb != null && Number.isFinite(Number(tipProb))) {
+    const n = Math.round(Number(tipProb));
+    return `<span class="${confClass(n)}"><span data-count-to="${n}" data-count-suffix="%">0%</span>${src}</span>`;
+  }
+  return src
+    ? `<span class="conf-lo muted">${escapeHtml(oddsSourceLabel(oddsSource))}</span>`
+    : '';
 }
 
 function matchBoardHeaderHtml() {
@@ -3556,14 +3689,13 @@ function matchBoardRowHtml(raw) {
       ? `<span class="muted sheet__odd-src">${escapeHtml(oddsSourceLabel(raw.oddsSource))}</span>`
       : '';
   const tierBit =
-    tipTier === 'fallback'
+    tipTier === 'none' || tipTier === 'fallback'
       ? '<span class="muted sheet__odd-src">sin tip ≥75%</span>'
       : tipTier === 'playable' && prob != null && Number(prob) >= 80
         ? '<span class="muted sheet__odd-src">tip seguro</span>'
         : '';
-  // Weak display-only (tipTier fallback + P<75): do not promote ~50% as a tip %.
-  const showProb =
-    tipTier === 'fallback' && (prob == null || Number(prob) < 75) ? null : prob;
+  // Always show numeric % when tip exists; never bare dash for suggested tips.
+  const showProb = tip ? prob : null;
 
   return `
     <button type="button" class="sheet__row" data-analyze="${Number(id)}" role="listitem">
@@ -3580,7 +3712,7 @@ function matchBoardRowHtml(raw) {
         </span>
       </span>
       <span class="sheet__prob ${confClass(showProb)}">${
-        showProb != null ? `${Math.round(Number(showProb))}%` : '—'
+        showProb != null ? `${Math.round(Number(showProb))}%` : tip ? '…' : '—'
       }</span>
       <span class="sheet__tip">
         <span class="sheet__tip-bet">${tipLabel}</span>
@@ -4756,27 +4888,14 @@ async function openPrediction(id) {
         ? Number(bundle.tipOdds).toFixed(2)
         : tipOddsFromBundle(p.suggested_bet, bundle.odds);
     const tipTierBundle = bundle.tipTier || null;
-    const tipProbRaw = tipProbPct({
+    const tipProb = tipProbPct({
+      ...p,
       suggestedBet: p.suggested_bet,
-      homeWinProb: p.home_win_prob,
-      drawProb: p.draw_prob,
-      awayWinProb: p.away_win_prob,
-      over25Prob: p.over25_prob,
-      under25Prob: p.under25_prob,
-      bttsYesProb: p.btts_yes_prob,
-      bttsNoProb: p.btts_no_prob,
+      suggested_bet: p.suggested_bet,
       confidenceScore: p.confidence_score,
+      confidence_score: p.confidence_score,
+      tipTier: tipTierBundle,
     });
-    const storedConf =
-      p.confidence_score != null && !Number.isNaN(Number(p.confidence_score))
-        ? Number(p.confidence_score)
-        : null;
-    // tipTier none / conf 0 = schema display fallback — hide weak ~50% as tip %.
-    const tipProb =
-      (tipTierBundle === 'none' || tipTierBundle === 'fallback' || storedConf === 0) &&
-      (tipProbRaw == null || Number(tipProbRaw) < 75)
-        ? null
-        : tipProbRaw;
     const goalsAvg =
       bundle.xg?.home != null && bundle.xg?.away != null
         ? Number((Number(bundle.xg.home) + Number(bundle.xg.away)).toFixed(2))
@@ -4936,11 +5055,7 @@ async function openPrediction(id) {
             labelBet(p.suggested_bet, homeName, awayName)
           )}</div>
           <div class="panel-suggest__meta">
-            <span class="${confClass(tipProb)}">${
-              tipProb != null
-                ? `<span data-count-to="${Math.round(Number(tipProb))}" data-count-suffix="%">0%</span> modelo`
-                : '— modelo'
-            }</span>
+            ${tipConfMetaHtml(tipProb, bundle.oddsSource || 'model')}
             ${tipOdds ? `<span class="tip-odds">${tipOdds} €</span>` : ''}
             ${
               p.value_edge != null && p.value_edge >= MIN_VALUE_EDGE

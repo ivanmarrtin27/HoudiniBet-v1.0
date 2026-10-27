@@ -232,7 +232,7 @@ result = api.pickBets(
   { hasBook: true, sampleSize: 5 }
 );
 check(
-  'only low-P markets → tipTier none + displayPrimary schema fallback (conf 0 path)',
+  'only low-P markets → tipTier none + displayPrimary schema fallback (UI conf from display P)',
   result.primary == null &&
     result.tipTier === 'none' &&
     result.displayPrimary?.label != null &&

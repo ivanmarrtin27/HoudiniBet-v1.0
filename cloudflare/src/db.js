@@ -781,9 +781,9 @@ export async function upsertPrediction(db, p) {
       shots_over225_prob, shots_under225_prob, shots_over255_prob, shots_under255_prob,
       sot_over75_prob, sot_under75_prob, sot_over85_prob, sot_under85_prob,
       sot_over95_prob, sot_under95_prob,
-      suggested_bet, secondary_bet, confidence_score, value_edge, value_market,
+      suggested_bet, secondary_bet, confidence_score, tip_tier, value_edge, value_market,
       home_xg, away_xg
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(match_id) DO UPDATE SET
       home_win_prob = excluded.home_win_prob,
       draw_prob = excluded.draw_prob,
@@ -839,6 +839,7 @@ export async function upsertPrediction(db, p) {
       suggested_bet = excluded.suggested_bet,
       secondary_bet = excluded.secondary_bet,
       confidence_score = excluded.confidence_score,
+      tip_tier = excluded.tip_tier,
       value_edge = excluded.value_edge,
       value_market = excluded.value_market,
       home_xg = excluded.home_xg,
@@ -899,12 +900,22 @@ export async function upsertPrediction(db, p) {
     p.suggested_bet,
     p.secondary_bet,
     p.confidence_score,
+    p.tip_tier ?? null,
     p.value_edge,
     p.value_market,
     p.home_xg ?? null,
     p.away_xg ?? null
   );
 }
+
+/** Playable Stats / Mejores only. tip_tier='none' is display UI; legacy NULL + conf>0 = playable. */
+const PLAYABLE_TIP_SQL = `(
+       p.tip_tier = 'playable'
+       OR (
+         (p.tip_tier IS NULL OR p.tip_tier = '')
+         AND CAST(p.confidence_score AS REAL) > 0
+       )
+     )`;
 
 export async function getPredictionByMatchId(db, matchId) {
   return db.first('SELECT * FROM predictions WHERE match_id = ?', matchId);
@@ -953,6 +964,7 @@ export async function getBestBets(db, limit = 3, days = 14) {
        ${ALLOWED_LEAGUE_SQL}
        AND p.confidence_score IS NOT NULL
        AND CAST(p.confidence_score AS REAL) > 0
+       AND ${PLAYABLE_TIP_SQL}
      ORDER BY p.confidence_score DESC, p.value_edge DESC
      LIMIT ?`,
     endModifier,
@@ -986,6 +998,7 @@ export async function getBestBetsOnDate(db, dateYmd, limit = 3) {
        ${ALLOWED_LEAGUE_SQL}
        AND p.confidence_score IS NOT NULL
        AND CAST(p.confidence_score AS REAL) > 0
+       AND ${PLAYABLE_TIP_SQL}
      ORDER BY p.confidence_score DESC, p.value_edge DESC
      LIMIT ?`,
     dateYmd,
@@ -1607,8 +1620,7 @@ export async function backfillPendingTips(db, limit = 60) {
            AND m.away_goals IS NOT NULL
          )`;
   const params = [Math.max(1, Number(limit) || 60)];
-  // confidence_score > 0 ≈ tipTier playable (display-only fallbacks store 0).
-  // Never ledger tipTier-none display labels into tip_results / Stats.
+  // Only tip_tier playable (or legacy NULL + conf>0). Never ledger tip_tier none.
   const rows = await db.all(
     `SELECT p.*, o.home_odds, o.draw_odds, o.away_odds, o.over25_odds, o.under25_odds,
             o.sot_over75_odds, o.sot_under75_odds, o.sot_over85_odds, o.sot_under85_odds,
@@ -1623,6 +1635,7 @@ export async function backfillPendingTips(db, limit = 60) {
      WHERE p.suggested_bet IS NOT NULL
        AND p.confidence_score IS NOT NULL
        AND CAST(p.confidence_score AS REAL) > 0
+       AND ${PLAYABLE_TIP_SQL}
        AND NOT EXISTS (SELECT 1 FROM tip_results tr WHERE tr.match_id = p.match_id)
        AND (
          m.status IN ('scheduled', 'live')

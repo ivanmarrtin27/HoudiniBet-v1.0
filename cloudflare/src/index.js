@@ -74,15 +74,19 @@ function missingPredictionIds(allIds, existingMap, cap = 5) {
   return out;
 }
 
-function tipTierFromStored(suggestedBet, confidenceScore, tipOdds) {
+function tipTierFromStored(suggestedBet, confidenceScore, tipOdds, storedTier = null) {
   if (!suggestedBet) return null;
+  const tier = storedTier != null ? String(storedTier).trim() : '';
+  if (tier === 'playable') return 'playable';
+  if (tier === 'none') return 'none';
+  if (tier === 'fallback') return 'fallback';
   if (STALE_TRIVIAL_TIPS.has(String(suggestedBet))) return 'fallback';
   const conf = confidenceScore != null ? Number(confidenceScore) : null;
   const odds = tipOdds != null ? Number(tipOdds) : null;
   if (odds != null && Number.isFinite(odds) && odds < 1.25) return 'fallback';
-  // Playable lane stores conf ≈ P×100 (≥75, or ~67.5 after thin-sample 0.9).
-  // conf 0 = display-only schema fallback — never promote as playable tip.
-  if (conf != null && conf >= 67) return 'playable';
+  // Legacy rows (pre tip_tier): conf 0 = display-only; conf ≥67 ≈ playable.
+  if (conf != null && conf > 0 && conf >= 67) return 'playable';
+  if (conf != null && conf === 0) return 'none';
   return 'fallback';
 }
 
@@ -214,6 +218,12 @@ function mapBetPayload(r) {
     secProb != null && Number.isFinite(secProb)
       ? Number((secProb * 100).toFixed(2))
       : null;
+  const tipTier = tipTierFromStored(
+    r.suggested_bet,
+    r.confidence_score,
+    oddsMeta.tipOdds,
+    r.tip_tier
+  );
   return {
     matchId: r.match_id,
     matchDate: r.match_date,
@@ -226,6 +236,7 @@ function mapBetPayload(r) {
     secondaryBet: secBet,
     confidenceScore: Number(r.confidence_score),
     highConfidence: Number(r.confidence_score) >= 60,
+    tipTier,
     valueEdge: r.value_edge != null ? Number(r.value_edge) : null,
     valueMarket: r.value_market,
     tipOdds: oddsMeta.tipOdds,
@@ -398,7 +409,7 @@ async function handleApi(request, env, ctx) {
         tipOdds: oddsMeta.tipOdds,
         oddsBand: oddsMeta.oddsBand,
         oddsSource: oddsMeta.oddsSource,
-        tipTier: tipTierFromStored(p?.suggested_bet, conf, oddsMeta.tipOdds),
+        tipTier: tipTierFromStored(p?.suggested_bet, conf, oddsMeta.tipOdds, p?.tip_tier),
         secondaryTipOdds: secMeta.tipOdds,
         secondaryOddsSource: secMeta.oddsSource,
         secondaryConfidence: secConf,
@@ -747,7 +758,10 @@ async function handleApi(request, env, ctx) {
         bets: [],
       });
     }
-    bets = bets.slice(0, limit);
+    // Defense: never surface tipTier none / fallback display-only in Mejores / Top10.
+    bets = bets
+      .filter((b) => !b.tipTier || b.tipTier === 'playable')
+      .slice(0, limit);
     return json({
       date: win.date || null,
       windowMode: win.mode,
