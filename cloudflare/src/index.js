@@ -80,7 +80,9 @@ function tipTierFromStored(suggestedBet, confidenceScore, tipOdds) {
   const conf = confidenceScore != null ? Number(confidenceScore) : null;
   const odds = tipOdds != null ? Number(tipOdds) : null;
   if (odds != null && Number.isFinite(odds) && odds < 1.25) return 'fallback';
-  if (conf != null && conf >= 69) return 'playable';
+  // Playable lane stores conf ≈ P×100 (≥75, or ~67.5 after thin-sample 0.9).
+  // conf 0 = display-only schema fallback — never promote as playable tip.
+  if (conf != null && conf >= 67) return 'playable';
   return 'fallback';
 }
 

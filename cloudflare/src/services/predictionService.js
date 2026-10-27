@@ -28,6 +28,12 @@ const MIN_TIP_PROB = 0.48;
 const MAX_TIP_PROB = 0.78;
 /** Playable tip lane: model P ≥ this (not max-P absolute). Raised 0.69→0.75 for hit-rate. */
 const PLAYABLE_MIN_PROB = 0.75;
+/**
+ * Display tip floor (predictions.suggested_bet when tipTier none).
+ * Same as playable — never promote ~50% markets as the recommended tip.
+ * If none reach the floor, schema fallback still writes a label with confidence 0.
+ */
+const DISPLAY_MIN_PROB = PLAYABLE_MIN_PROB;
 /** Optional UI “tip seguro” threshold (subset of playable). */
 const SAFE_TIP_PROB = 0.8;
 /** BTTS stays secondary-only (weak primary hit rate ~43% / 30d). */
@@ -431,10 +437,16 @@ function compareTipCandidates(a, b, value, dailyTipContext) {
   return scoreDiff || Number(b.prob) - Number(a.prob);
 }
 
+function meetsDisplayFloor(c) {
+  const p = Number(c?.prob);
+  return Number.isFinite(p) && p >= DISPLAY_MIN_PROB && !isTrivialTipLabel(c?.label);
+}
+
 /**
  * Display-only ranking when no playable primary.
- * Must never feed tip_results / Stats (tipTier stays 'none').
- * BTTS allowed here; SHOTS_* / trivial still excluded.
+ * Prefer P≥DISPLAY_MIN_PROB (same as playable). Must never feed tip_results / Stats
+ * (tipTier stays 'none', confidence 0). BTTS allowed; SHOTS_* / trivial excluded.
+ * If nothing reaches the floor → schema NOT NULL fallback (best non-trivial).
  */
 function pickDisplayPrimary(
   allAnnotated,
@@ -449,14 +461,16 @@ function pickDisplayPrimary(
   const withBookEv = allAnnotated.filter((c) => c.hasBook && c.edge != null);
   const byRank = (pool) =>
     [...pool].sort((a, b) => compareTipCandidates(a, b, value, dailyTipContext));
+  const byProb = (pool) => [...pool].sort((a, b) => Number(b.prob) - Number(a.prob));
 
+  // Phase 1 — strong display tips only (no ~50% recommendations).
   let pick = null;
-  if (hasBook && withBookEv.length) {
-    const valuePoolBase = withBookEv.filter(
+  const strongBook = withBookEv.filter(meetsDisplayFloor);
+  if (hasBook && strongBook.length) {
+    const valuePoolBase = strongBook.filter(
       (c) =>
-        !isTrivialTipLabel(c.label) &&
+        c.edge != null &&
         c.edge >= MIN_VALUE &&
-        tipProbabilityAllowed(c, { valueCandidate: true }) &&
         (c.book == null || Number(c.book) >= MIN_PLAYABLE_ODDS)
     );
     const valuePool = dailyQuotaCandidates(valuePoolBase, dailyTipContext);
@@ -465,11 +479,41 @@ function pickDisplayPrimary(
     } else if (valuePoolBase.length) {
       pick = byRank(valuePoolBase)[0];
     } else {
+      pick = byRank(strongBook)[0];
+    }
+  }
+
+  if (!pick) {
+    const bookBacked = tipPool.filter((c) => value.byLabel?.[c.label] != null);
+    const poolSource = hasBook && bookBacked.length ? bookBacked : tipPool;
+    const strongPool = poolSource.filter(meetsDisplayFloor);
+    if (strongPool.length) {
+      const quota = dailyQuotaCandidates(strongPool, dailyTipContext);
+      pick = byRank(quota.length ? quota : strongPool)[0];
+    }
+  }
+
+  if (!pick) {
+    const strongExtras = (extras || []).filter(meetsDisplayFloor);
+    if (strongExtras.length) pick = byProb(strongExtras)[0];
+  }
+
+  if (!pick) {
+    const strongNonTrivial = nonTrivial.filter(
+      (c) => TIP_POOL_LABELS.has(c.label) && meetsDisplayFloor(c)
+    );
+    if (strongNonTrivial.length) {
+      pick = byProb(dailyQuotaCandidates(strongNonTrivial, dailyTipContext))[0];
+    }
+  }
+
+  // Phase 2 — schema NOT NULL only (caller keeps confidence 0; UI must not promote).
+  if (!pick) {
+    if (hasBook && withBookEv.length) {
       const nonTrivialBook = withBookEv.filter((c) => !isTrivialTipLabel(c.label));
       pick = byRank(nonTrivialBook.length ? nonTrivialBook : withBookEv)[0];
     }
   }
-
   if (!pick) {
     const bookBacked = tipPool.filter((c) => value.byLabel?.[c.label] != null);
     const poolSource = hasBook && bookBacked.length ? bookBacked : tipPool;
@@ -478,9 +522,8 @@ function pickDisplayPrimary(
     );
     const usable = dailyQuotaCandidates(usableBase, dailyTipContext);
     const pool = usable.length ? usable : usableBase.length ? usableBase : poolSource;
-    pick = byRank(pool)[0];
+    if (pool.length) pick = byRank(pool)[0];
   }
-
   if (!pick && nonTrivial.length) {
     const fallbackBase = nonTrivial.filter(
       (c) => TIP_POOL_LABELS.has(c.label) && !isTrivialTipLabel(c.label)
@@ -493,14 +536,17 @@ function pickDisplayPrimary(
   if (
     sampleSize < MIN_SAMPLE_FOR_TIP &&
     pick &&
+    meetsDisplayFloor(pick) &&
     !isExtraFamily(pick.label) &&
     !(pickEdge != null && pickEdge >= MIN_VALUE)
   ) {
     const safePool = hasBook
       ? tipPool.filter((c) => value.byLabel?.[c.label] != null)
       : tipPool;
-    const safePoolBase = safePool.filter((c) =>
-      ['UNDER_25', 'BTTS_NO', 'HOME_WIN', 'AWAY_WIN'].includes(c.label)
+    const safePoolBase = safePool.filter(
+      (c) =>
+        meetsDisplayFloor(c) &&
+        ['UNDER_25', 'BTTS_NO', 'HOME_WIN', 'AWAY_WIN'].includes(c.label)
     );
     const safePoolByQuota = dailyQuotaCandidates(safePoolBase, dailyTipContext);
     const safe = (safePoolByQuota.length ? safePoolByQuota : safePoolBase).sort(
@@ -514,8 +560,9 @@ function pickDisplayPrimary(
 /**
  * Tip selection: playable lane only for Stats primary (P≥75%, non-trivial, odds≥1.25).
  * When none: tipTier 'none', primary null (no tip_results), displayPrimary for
- * predictions.suggested_bet (NOT NULL). Never invents book odds. BTTS secondary-only
- * for playable; BTTS OK on displayPrimary.
+ * predictions.suggested_bet (NOT NULL) — also prefers P≥75%; weak schema fallback
+ * only when nothing reaches DISPLAY_MIN_PROB (confidence 0). Never invents book odds.
+ * BTTS secondary-only for playable; BTTS OK on displayPrimary.
  */
 function pickBets(candidates, value, calib = null, opts = {}) {
   const {

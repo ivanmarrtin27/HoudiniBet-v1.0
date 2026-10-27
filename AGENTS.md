@@ -28,7 +28,7 @@ HTML/JS en `cloudflare/public` (mínima). Pulir con `frontend-design` / `web-des
 ## Mercados Houdini
 - Top 10 del día (P≥75% + cuota 1.30–3.50; hash `#top3`); hasta 10; máx 1 label / máx 3 familia; pool primary+secondary
 - 1X2 · DC/DNB · O/U 0.5–4.5 · BTTS (secondary) · corners/cards/SOT · value ≥5% (book); **nunca SHOTS_*** (tiros totales)
-- Tips: anti-trivial (no O0.5 / U4.5); lane jugable **P≥75%** + cuota≥1.25; **solo playable** en Stats (`tip_results`); BTTS no primary; secondary diversa (malus diario BTTS/O-U)
+- Tips: anti-trivial (no O0.5 / U4.5); lane jugable **P≥75%** + cuota≥1.25; display tips también **P≥75%** (no ~50% como tip); **solo playable** en Stats (`tip_results`); BTTS no primary; secondary diversa (malus diario BTTS/O-U)
 - Semanal cuota 10 (+ Conservadora cuota 5): top5; UI sin `@`/«piernas»; Prob. combinada; Valor solo con book
 - Crests: FotMob PSG/Elche/Deportivo/Leverkusen; audit `node scripts/audit-crests.mjs`
 - Admin reset Stats: `POST /api/v1/admin/stats/reset` (wipe + `stats_reset_at`)

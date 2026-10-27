@@ -2,6 +2,7 @@
  * Regression tests for diverse primary/secondary tip selection.
  * Playable-only primary enters Stats (tip_results). tipTier 'none' + displayPrimary
  * is for predictions.suggested_bet display only — never ledger into tip_results.
+ * displayPrimary prefers P≥DISPLAY_MIN_PROB (0.75); weak schema fallback keeps conf 0.
  */
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -52,6 +53,7 @@ const functions = [
   'playableTipScore',
   'oddsQualityPenalty',
   'compareTipCandidates',
+  'meetsDisplayFloor',
   'pickDisplayPrimary',
   'pickBets',
 ].map(extractFunction);
@@ -64,6 +66,7 @@ const api = new Function(
   `const MIN_TIP_PROB = 0.48;
    const MAX_TIP_PROB = 0.78;
    const PLAYABLE_MIN_PROB = 0.75;
+   const DISPLAY_MIN_PROB = PLAYABLE_MIN_PROB;
    const SAFE_TIP_PROB = 0.8;
    const MIN_VALUE = 0.04;
    const MIN_DRAW_PROB = 0.32;
@@ -167,8 +170,8 @@ check(
   result.displayPrimary?.label != null
 );
 check(
-  'BTTS ok as displayPrimary when highest non-playable',
-  result.displayPrimary?.label === 'BTTS_YES' || result.displayPrimary?.label === 'OVER_25'
+  'BTTS ok as displayPrimary when highest non-playable (≥75%)',
+  result.displayPrimary?.label === 'BTTS_YES'
 );
 check(
   'BTTS can still be secondary when no playable primary',
@@ -187,6 +190,53 @@ result = api.pickBets(
 check(
   'sub-75% yields no Stats primary (tipTier none) but has displayPrimary',
   result.primary == null && result.tipTier === 'none' && result.displayPrimary?.label != null
+);
+
+result = api.pickBets(
+  [
+    { label: 'HOME_WIN', prob: 0.52 },
+    { label: 'OVER_25', prob: 0.78 },
+    { label: 'AWAY_WIN', prob: 0.48 },
+  ],
+  value({
+    HOME_WIN: { edge: 0.12, book: 2.1 },
+    OVER_25: { edge: 0.06, book: 1.55 },
+    AWAY_WIN: { edge: 0.1, book: 2.4 },
+  }),
+  null,
+  { hasBook: true, sampleSize: 5 }
+);
+check(
+  'displayPrimary prefers ≥75% over ~50% when higher exists',
+  result.tipTier === 'playable'
+    ? result.primary?.label === 'OVER_25'
+    : result.displayPrimary?.label === 'OVER_25' && Number(result.displayPrimary?.prob) >= 0.75
+);
+check(
+  'displayPrimary never sticks to ~50% when ≥75% market exists',
+  result.displayPrimary?.label !== 'HOME_WIN' && result.displayPrimary?.label !== 'AWAY_WIN'
+);
+
+result = api.pickBets(
+  [
+    { label: 'HOME_WIN', prob: 0.51 },
+    { label: 'OVER_25', prob: 0.55 },
+    { label: 'BTTS_YES', prob: 0.49 },
+  ],
+  value({
+    HOME_WIN: { edge: 0.08, book: 2.0 },
+    OVER_25: { edge: 0.05, book: 1.9 },
+    BTTS_YES: { edge: 0.04, book: 1.85 },
+  }),
+  null,
+  { hasBook: true, sampleSize: 5 }
+);
+check(
+  'only low-P markets → tipTier none + displayPrimary schema fallback (conf 0 path)',
+  result.primary == null &&
+    result.tipTier === 'none' &&
+    result.displayPrimary?.label != null &&
+    Number(result.displayPrimary.prob) < 0.75
 );
 
 result = api.pickBets(
@@ -477,6 +527,10 @@ check(
 check(
   'source PLAYABLE_MIN_PROB is 0.75',
   /const PLAYABLE_MIN_PROB = 0\.75/.test(SRC)
+);
+check(
+  'source DISPLAY_MIN_PROB equals PLAYABLE_MIN_PROB',
+  /const DISPLAY_MIN_PROB = PLAYABLE_MIN_PROB/.test(SRC)
 );
 check(
   'source blocks btts from primary',

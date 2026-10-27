@@ -952,6 +952,7 @@ export async function getBestBets(db, limit = 3, days = 14) {
        ${EXCLUDE_DEMO_SCHEDULED_M}
        ${ALLOWED_LEAGUE_SQL}
        AND p.confidence_score IS NOT NULL
+       AND CAST(p.confidence_score AS REAL) > 0
      ORDER BY p.confidence_score DESC, p.value_edge DESC
      LIMIT ?`,
     endModifier,
@@ -984,6 +985,7 @@ export async function getBestBetsOnDate(db, dateYmd, limit = 3) {
        ${EXCLUDE_DEMO_SCHEDULED_M}
        ${ALLOWED_LEAGUE_SQL}
        AND p.confidence_score IS NOT NULL
+       AND CAST(p.confidence_score AS REAL) > 0
      ORDER BY p.confidence_score DESC, p.value_edge DESC
      LIMIT ?`,
     dateYmd,

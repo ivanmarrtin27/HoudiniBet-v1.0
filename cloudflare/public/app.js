@@ -3188,7 +3188,7 @@ async function renderTop3() {
     if (seq !== top3LoadSeq) return;
     const bets = (data.bets || []).slice(0, 10);
     if (!bets.length) {
-      el.innerHTML = `<div class="empty-board">Sin tips P≥69% con cuota 1.30–3.50 para ${escapeHtml(
+      el.innerHTML = `<div class="empty-board">Sin tips P≥75% con cuota 1.30–3.50 para ${escapeHtml(
         dayLabel
       )}.</div>`;
       return;
@@ -3336,7 +3336,7 @@ function tipMetaHtml({
     );
   }
   if (tipTier === 'fallback') {
-    bits.push('<span class="muted">sin tip ≥69%</span>');
+    bits.push('<span class="muted">sin tip ≥75%</span>');
   } else if (tipTier === 'playable' && conf != null && Number(conf) >= 80) {
     bits.push('<span class="muted">tip seguro</span>');
   }
@@ -3365,8 +3365,12 @@ function tipCardHtml({
   analyzeBtn = false,
 }) {
   const tipLabel = tip ? escapeHtml(labelBet(tip, home, away)) : 'Sin tip';
+  const hideWeakConf =
+    tipTier === 'fallback' && (conf == null || Number.isNaN(Number(conf)) || Number(conf) < 75);
   const confLabel =
-    tip && conf != null && !Number.isNaN(Number(conf)) ? `${Math.round(Number(conf))}%` : '';
+    tip && !hideWeakConf && conf != null && !Number.isNaN(Number(conf))
+      ? `${Math.round(Number(conf))}%`
+      : '';
   const classes = [
     'card',
     'card--tip',
@@ -3540,7 +3544,7 @@ function matchBoardRowHtml(raw) {
   const oddsTxt = tipOddsDisplay(tipOdds);
   const tipTier =
     raw.tipTier ||
-    (prob != null && Number(prob) >= 69 ? 'playable' : tip ? 'fallback' : null);
+    (prob != null && Number(prob) >= 75 ? 'playable' : tip ? 'fallback' : null);
   const valueBit =
     raw.valueEdge != null &&
     Number(raw.valueEdge) >= MIN_VALUE_EDGE &&
@@ -3553,10 +3557,13 @@ function matchBoardRowHtml(raw) {
       : '';
   const tierBit =
     tipTier === 'fallback'
-      ? '<span class="muted sheet__odd-src">sin tip ≥69%</span>'
+      ? '<span class="muted sheet__odd-src">sin tip ≥75%</span>'
       : tipTier === 'playable' && prob != null && Number(prob) >= 80
         ? '<span class="muted sheet__odd-src">tip seguro</span>'
         : '';
+  // Weak display-only (tipTier fallback + P<75): do not promote ~50% as a tip %.
+  const showProb =
+    tipTier === 'fallback' && (prob == null || Number(prob) < 75) ? null : prob;
 
   return `
     <button type="button" class="sheet__row" data-analyze="${Number(id)}" role="listitem">
@@ -3572,8 +3579,8 @@ function matchBoardRowHtml(raw) {
           )}${liveBits ? ` · ${liveBits}` : ''}</span>
         </span>
       </span>
-      <span class="sheet__prob ${confClass(prob)}">${
-        prob != null ? `${Math.round(Number(prob))}%` : '—'
+      <span class="sheet__prob ${confClass(showProb)}">${
+        showProb != null ? `${Math.round(Number(showProb))}%` : '—'
       }</span>
       <span class="sheet__tip">
         <span class="sheet__tip-bet">${tipLabel}</span>
@@ -4748,7 +4755,8 @@ async function openPrediction(id) {
       bundle.tipOdds != null
         ? Number(bundle.tipOdds).toFixed(2)
         : tipOddsFromBundle(p.suggested_bet, bundle.odds);
-    const tipProb = tipProbPct({
+    const tipTierBundle = bundle.tipTier || null;
+    const tipProbRaw = tipProbPct({
       suggestedBet: p.suggested_bet,
       homeWinProb: p.home_win_prob,
       drawProb: p.draw_prob,
@@ -4759,6 +4767,16 @@ async function openPrediction(id) {
       bttsNoProb: p.btts_no_prob,
       confidenceScore: p.confidence_score,
     });
+    const storedConf =
+      p.confidence_score != null && !Number.isNaN(Number(p.confidence_score))
+        ? Number(p.confidence_score)
+        : null;
+    // tipTier none / conf 0 = schema display fallback — hide weak ~50% as tip %.
+    const tipProb =
+      (tipTierBundle === 'none' || tipTierBundle === 'fallback' || storedConf === 0) &&
+      (tipProbRaw == null || Number(tipProbRaw) < 75)
+        ? null
+        : tipProbRaw;
     const goalsAvg =
       bundle.xg?.home != null && bundle.xg?.away != null
         ? Number((Number(bundle.xg.home) + Number(bundle.xg.away)).toFixed(2))
