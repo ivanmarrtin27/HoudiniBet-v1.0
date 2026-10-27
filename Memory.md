@@ -16,11 +16,14 @@
 - Ligas explorer: split países+banderas | tabla; nextMatch/análisis; `#ligas/<apiId>`
 - pages.dev: SW `hb24` brand + `og-share.png` negro 1200×630 (WA); Semanal Otra; track sin premium/ajustes
 - Live cron `*/10 11-23` UTC + lookback 2d; alias Man City; Stats historial paginado (Cargar más); Partidos sin marcador (sí en análisis)
+- Consent v2 (`houdini_consent_v1` key, version 2 + ageConfirmed): Personalizar, 18+, `#condiciones`; borrar datos locales en Ajustes
+- Al activar Stripe/auth: reescribir privacidad/cookies/ToS (pago, `hb_prem`, baja); si analytics real → gate antes del script; valorar self-host fonts
 
 ## Pendiente
 - **API_FOOTBALL_KEY** válida (book real)
 - Dominio custom `houdini-bet.dev` — opcional más adelante (no bloquea trabajo diario en pages.dev)
 - Auth (registro/login) + Premium de pago — tras producto OK; Stripe webhook
+- Self-host Google Fonts (quitar fonts.googleapis) cuando toque privacidad dura
 
 ## Deploy
 - Worker: `cd cloudflare && npx wrangler deploy`

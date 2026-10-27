@@ -95,5 +95,41 @@ check(
   ) >= 85
 );
 
+check('Osasuna vs CA Osasuna scores at least 85', teamNameScore('Osasuna', 'CA Osasuna') >= 85);
+check(
+  'Lyon vs Olympique Lyonnais scores at least 85',
+  teamNameScore('Lyon', 'Olympique Lyonnais') >= 85
+);
+check(
+  'PSG vs Paris Saint-Germain scores at least 85',
+  teamNameScore('PSG', 'Paris Saint-Germain') >= 85
+);
+
+const sevillaFm = {
+  teams: { home: { name: 'Sevilla' }, away: { name: 'CA Osasuna' } },
+};
+const otherLaLiga = {
+  teams: { home: { name: 'Real Madrid' }, away: { name: 'Barcelona' } },
+};
+check(
+  'Sevilla FC–Osasuna name-matches FotMob Sevilla–CA Osasuna',
+  findBestFixtureMatch([otherLaLiga, sevillaFm], 'Sevilla FC', 'Osasuna') === sevillaFm
+);
+
+const psgFm = {
+  teams: { home: { name: 'Paris Saint-Germain' }, away: { name: 'Olympique Lyonnais' } },
+};
+const otherL1 = {
+  teams: { home: { name: 'Marseille' }, away: { name: 'Monaco' } },
+};
+check(
+  'Paris Saint-Germain–Lyon name-matches FotMob PSG–Olympique Lyonnais',
+  findBestFixtureMatch([otherL1, psgFm], 'Paris Saint-Germain', 'Lyon') === psgFm
+);
+check(
+  'PSG–Lyon name-matches FotMob Paris Saint-Germain–Olympique Lyonnais',
+  findBestFixtureMatch([otherL1, psgFm], 'PSG', 'Lyon') === psgFm
+);
+
 console.log(failed ? `\n${failed} checks failed` : `\n${passed}/${passed} checks passed`);
 process.exit(failed ? 1 : 0);

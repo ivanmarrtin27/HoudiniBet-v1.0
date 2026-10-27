@@ -2,6 +2,19 @@
 <html lang="es" aria-busy="true">
   <head>
     <meta charset="UTF-8" />
+    <script>
+      (function () {
+        try {
+          var raw = localStorage.getItem('houdini_consent_v1');
+          var c = raw ? JSON.parse(raw) : null;
+          if (!c || c.version !== 2 || !c.ageConfirmed) {
+            document.documentElement.classList.add('consent-needed');
+          }
+        } catch (e) {
+          document.documentElement.classList.add('consent-needed');
+        }
+      })();
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#0A0A0A" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -13,23 +26,23 @@
     <meta property="og:title" content="Houdini Bet" />
     <meta property="og:description" content="Predicciones de fútbol (Poisson) — tips 1X2, O/U, BTTS y value." />
     <meta property="og:url" content="https://houdini-bet.pages.dev/" />
-    <meta property="og:image" content="https://houdini-bet.pages.dev/brand/og-share.png?v=hb37" />
+    <meta property="og:image" content="https://houdini-bet.pages.dev/brand/og-share.png?v=hb39" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
     <meta property="og:locale" content="es_ES" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="Houdini Bet" />
     <meta name="twitter:description" content="Predicciones de fútbol (Poisson) en Cloudflare Workers + D1." />
-    <meta name="twitter:image" content="https://houdini-bet.pages.dev/brand/og-share.png?v=hb37" />
+    <meta name="twitter:image" content="https://houdini-bet.pages.dev/brand/og-share.png?v=hb39" />
     <link rel="canonical" href="https://houdini-bet.pages.dev/" />
     <title>Houdini Bet</title>
     <link rel="manifest" href="/manifest.webmanifest" />
-    <link rel="icon" href="/favicon-32.png?v=hb38" type="image/png" sizes="32x32" />
-    <link rel="icon" href="/favicon-48.png?v=hb38" type="image/png" sizes="48x48" />
-    <link rel="icon" href="/icon-192.png?v=hb38" type="image/png" sizes="192x192" />
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=hb38" />
+    <link rel="icon" href="/favicon-32.png?v=hb39" type="image/png" sizes="32x32" />
+    <link rel="icon" href="/favicon-48.png?v=hb39" type="image/png" sizes="48x48" />
+    <link rel="icon" href="/icon-192.png?v=hb39" type="image/png" sizes="192x192" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=hb39" />
     <link rel="preload" href="/brand/houdini-bet-logo.png?v=bm19" as="image" type="image/png" />
-    <link rel="stylesheet" href="/styles.css?v=hb37" />
+    <link rel="stylesheet" href="/styles.css?v=hb41" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -344,12 +357,19 @@
           <p class="privacy-lead">
             Los tips son informativos. Usamos datos de partidos y cuotas para calcular predicciones.
             No vendemos datos personales con fines publicitarios. Aún no hay cuentas de usuario.
+            Puedes retirar o cambiar el consentimiento opcional con los interruptores de abajo.
           </p>
-          <div class="privacy-toggles" role="group" aria-label="Preferencias locales">
+          <nav class="legal-nav" aria-label="Documentos legales">
+            <a class="legal-nav__link" href="#privacidad">Privacidad</a>
+            <a class="legal-nav__link" href="#cookies">Cookies</a>
+            <a class="legal-nav__link" href="#aviso">Aviso</a>
+            <a class="legal-nav__link" href="#condiciones">Condiciones</a>
+          </nav>
+          <div class="privacy-toggles" id="privacy-toggles" role="group" aria-label="Preferencias locales">
             <label class="privacy-row">
               <span class="privacy-row__text">
                 <span class="privacy-row__title">Analytics / telemetría</span>
-                <span class="privacy-row__hint">Desactivado por defecto. No enviamos telemetría de terceros.</span>
+                <span class="privacy-row__hint">Stub local (consola). No enviamos telemetría de terceros.</span>
               </span>
               <input id="pref-analytics" type="checkbox" class="privacy-switch" role="switch" />
             </label>
@@ -368,11 +388,21 @@
               <input id="pref-remember-filters" type="checkbox" class="privacy-switch" role="switch" />
             </label>
           </div>
+          <p class="privacy-manage">
+            <button type="button" class="btn" id="btn-manage-cookies">Gestionar cookies</button>
+            <button type="button" class="btn btn--danger-soft" id="btn-clear-device-data">
+              Borrar datos de este dispositivo
+            </button>
+          </p>
           <div class="privacy-data">
             <h3 class="privacy-data__title">Qué se guarda</h3>
             <ul class="privacy-data__list">
-              <li><strong>En este dispositivo</strong> — preferencias de privacidad y, si lo activas, búsqueda/filtros.</li>
+              <li><strong>En este dispositivo</strong> — consentimiento, preferencias y, si lo activas, búsqueda/filtros.</li>
               <li><strong>En el servidor (D1)</strong> — partidos, tips y resultados agregados. Sin perfil personal.</li>
+              <li>
+                <strong>Cookie <code>hb_prem</code></strong> — sesión guest Premium (futuro). Este botón no la borra;
+                limpia cookies del sitio en el navegador si quieres eliminarla.
+              </li>
             </ul>
           </div>
           <p class="privacy-responsible">
@@ -394,17 +424,299 @@
             </div>
           </details>
         </section>
+
+        <section id="privacidad" class="view view--legal" aria-label="Política de privacidad">
+          <header class="ajustes-bar">
+            <h2 class="ajustes-bar__title">Privacidad</h2>
+            <a class="ajustes-bar__link" href="#ajustes">← Ajustes</a>
+          </header>
+          <div class="legal-body legal-prose" data-legal="privacidad">
+            <p class="legal-meta">Última actualización: 26 oct 2026</p>
+            <p>
+              Houdini Bet es una app de <strong>tips informativos</strong> de fútbol (modelo Poisson) alojada en
+              Cloudflare (Worker + D1). <strong>Aún no hay cuentas de usuario</strong> ni perfiles personales.
+              No vendemos datos personales con fines publicitarios.
+            </p>
+            <h3>Responsable</h3>
+            <p>
+              Iván Martín Molina. Contacto para ejercer derechos:
+              <a href="https://github.com/ivanmarrtin2703" rel="noopener noreferrer" target="_blank">@ivanmarrtin2703</a>
+              ·
+              <a href="https://ivanmartin.pages.dev/" rel="noopener noreferrer" target="_blank">ivanmartin.pages.dev</a>.
+            </p>
+            <h3>Qué tratamos</h3>
+            <ul>
+              <li>
+                <strong>En este dispositivo (<code>localStorage</code>):</strong> consentimiento, confirmación de
+                mayoría de edad y, si las activas, preferencias (analytics stub, búsqueda, filtros).
+              </li>
+              <li>
+                <strong>En el servidor (D1):</strong> calendario de partidos, tips y estadísticas agregadas del
+                producto. Sin perfil personal.
+              </li>
+              <li>
+                <strong>Infra Cloudflare:</strong> Worker, D1 y CDN. Pueden generarse logs técnicos habituales de
+                borde (p. ej. IP, User-Agent) según el procesamiento de Cloudflare.
+              </li>
+            </ul>
+            <h3>Bases del tratamiento</h3>
+            <ul>
+              <li><strong>Consentimiento</strong> — opciones opcionales (analytics stub, guardar búsqueda, recordar filtros).</li>
+              <li>
+                <strong>Necesidad técnica / interés legítimo</strong> — shell de la app, service worker, y cookie
+                técnica <code>hb_prem</code> cuando el esqueleto Premium esté activo.
+              </li>
+            </ul>
+            <h3>Tus derechos</h3>
+            <p>
+              Puedes solicitar acceso, rectificación, borrado, oposición, limitación y portabilidad contactando por
+              los canales anteriores. Lo que solo vive en tu dispositivo se borra con
+              <strong>Ajustes → Borrar datos de este dispositivo</strong> o limpiando los datos del sitio en el
+              navegador.
+            </p>
+            <h3>Conservación</h3>
+            <p>
+              Preferencias locales mientras las mantengas o hasta que las borres. Datos de producto en D1 según la
+              operación del tipster (partidos y tips agregados, no cuentas).
+            </p>
+            <h3>Encargados y terceros</h3>
+            <ul>
+              <li><strong>Cloudflare</strong> — alojamiento, Worker, D1 y entrega de assets.</li>
+              <li>
+                <strong>Google Fonts</strong> — al cargar la tipografía se solicita
+                <code>fonts.googleapis.com</code> / <code>fonts.gstatic.com</code> (no es una cookie propia de
+                Houdini).
+              </li>
+            </ul>
+            <h3>PWA y service worker</h3>
+            <p>
+              El service worker (<code>sw.js</code>) cachea el shell (HTML, JS, CSS, iconos) con estrategia
+              stale-while-revalidate y las peticiones GET de API con network-first y TTL corto. Las rutas de admin y
+              sync no se cachean. Para vaciar caché: limpia los datos del sitio o desregistra el service worker en
+              las herramientas del navegador.
+            </p>
+          </div>
+        </section>
+
+        <section id="cookies" class="view view--legal" aria-label="Política de cookies">
+          <header class="ajustes-bar">
+            <h2 class="ajustes-bar__title">Cookies</h2>
+            <a class="ajustes-bar__link" href="#ajustes">← Ajustes</a>
+          </header>
+          <div class="legal-body legal-prose" data-legal="cookies">
+            <p class="legal-meta">Última actualización: 26 oct 2026</p>
+            <h3>Necesarias</h3>
+            <ul>
+              <li>
+                <strong>PWA / service worker</strong> — shell, caché técnica y preferencias mínimas de
+                funcionamiento.
+              </li>
+              <li>
+                <strong>Consentimiento (<code>localStorage</code>)</strong> — registro de versión, elección y
+                confirmación de mayoría de edad.
+              </li>
+              <li>
+                <strong><code>hb_prem</code></strong> — cookie técnica de sesión guest para el esqueleto Premium
+                futuro (no es publicidad).
+              </li>
+            </ul>
+            <h3>Opcionales</h3>
+            <ul>
+              <li><strong>Analytics / telemetría</strong> — stub local en consola; sin proveedores terceros por ahora.</li>
+              <li><strong>Guardar búsqueda</strong> y <strong>recordar filtros</strong> — solo en este dispositivo si los activas.</li>
+            </ul>
+            <h3>Cargas de terceros</h3>
+            <p>
+              <strong>Google Fonts</strong> — al abrir la app se cargan tipografías desde dominios de Google. No
+              es una cookie de Houdini; implica una petición de red a terceros.
+            </p>
+            <p>
+              Elige «Aceptar todo», «Solo necesarias» o «Personalizar» en el aviso inicial (tras confirmar que eres
+              mayor de 18 años). Puedes cambiarlo después en Ajustes.
+            </p>
+          </div>
+        </section>
+
+        <section id="aviso" class="view view--legal" aria-label="Aviso y juego responsable">
+          <header class="ajustes-bar">
+            <h2 class="ajustes-bar__title">Aviso</h2>
+            <a class="ajustes-bar__link" href="#ajustes">← Ajustes</a>
+          </header>
+          <div class="legal-body legal-prose" data-legal="aviso">
+            <p class="legal-meta">Última actualización: 26 oct 2026</p>
+            <p>
+              Los contenidos de Houdini Bet son <strong>informativos</strong>. No constituyen consejo de apuesta,
+              recomendación financiera ni garantía de resultados. El modelo puede equivocarse.
+            </p>
+            <p>
+              Pensado para mayores de <strong>18 años</strong>. Al usar la app confirmas esa mayoría de edad en el
+              aviso de cookies. Si apuestas, hazlo solo con dinero que puedas permitirte perder.
+            </p>
+            <p>
+              Ayuda y juego responsable en España:
+              <a href="https://www.jugarbien.es/" rel="noopener noreferrer" target="_blank">Jugarbien.es</a>.
+            </p>
+            <p>
+              Condiciones de uso:
+              <a href="#condiciones">ver Condiciones</a>.
+            </p>
+          </div>
+        </section>
+
+        <section id="condiciones" class="view view--legal" aria-label="Condiciones de uso">
+          <header class="ajustes-bar">
+            <h2 class="ajustes-bar__title">Condiciones</h2>
+            <a class="ajustes-bar__link" href="#ajustes">← Ajustes</a>
+          </header>
+          <div class="legal-body legal-prose" data-legal="condiciones">
+            <p class="legal-meta">Última actualización: 26 oct 2026</p>
+            <p>
+              Houdini Bet ofrece tips informativos de fútbol basados en un modelo Poisson. No es consejo de apuesta,
+              servicio de broker ni garantía de resultados.
+            </p>
+            <h3>Uso aceptable</h3>
+            <ul>
+              <li>No abuses de la API ni de la interfaz (p. ej. saturación deliberada).</li>
+              <li>No hagas scraping agresivo ni redistribuyas el servicio como tipster oficial de terceros.</li>
+            </ul>
+            <h3>Propiedad</h3>
+            <p>
+              La marca, el diseño y el contenido de la app pertenecen a Houdini Bet / Iván Martín Molina, salvo datos
+              de partidos o escudos de fuentes externas.
+            </p>
+            <h3>Responsabilidad</h3>
+            <p>
+              No respondemos por pérdidas derivadas de apuestas u otras decisiones tomadas a partir de los tips.
+              Usas la información bajo tu propia responsabilidad.
+            </p>
+            <h3>Edad</h3>
+            <p>El servicio está pensado para mayores de 18 años.</p>
+            <h3>Cambios</h3>
+            <p>
+              Podemos actualizar estas condiciones. La fecha de actualización figura arriba; el uso continuado tras
+              un aviso en la app implica aceptación de la versión vigente.
+            </p>
+            <h3>Contacto</h3>
+            <p>
+              <a href="https://github.com/ivanmarrtin2703" rel="noopener noreferrer" target="_blank">@ivanmarrtin2703</a>
+              ·
+              <a href="https://ivanmartin.pages.dev/" rel="noopener noreferrer" target="_blank">ivanmartin.pages.dev</a>
+            </p>
+          </div>
+        </section>
     </main>
 
     <footer class="site-footer">
       <div class="site-footer__inner">
         <span class="site-footer__brand">Houdini Bet</span>
         <span class="site-footer__dot" aria-hidden="true"></span>
-        <a class="site-footer__link" href="#ajustes" data-view="ajustes">Privacidad</a>
+        <a class="site-footer__link" href="#privacidad" data-view="privacidad">Privacidad</a>
         <span class="site-footer__dot" aria-hidden="true"></span>
-        <span class="site-footer__note">Juega con responsabilidad</span>
+        <a class="site-footer__link" href="#cookies" data-view="cookies">Cookies</a>
+        <span class="site-footer__dot" aria-hidden="true"></span>
+        <a class="site-footer__link" href="#aviso" data-view="aviso">Aviso</a>
+        <span class="site-footer__dot" aria-hidden="true"></span>
+        <a class="site-footer__link" href="#condiciones" data-view="condiciones">Condiciones</a>
+        <span class="site-footer__dot" aria-hidden="true"></span>
+        <a class="site-footer__link" href="#ajustes" data-view="ajustes">Gestionar</a>
       </div>
     </footer>
+
+    <div
+      id="consent-gate"
+      class="consent-gate"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="consent-title"
+      hidden
+    >
+      <div class="consent-gate__backdrop" aria-hidden="true"></div>
+      <div class="consent-gate__panel">
+        <div class="consent-gate__card" id="consent-main">
+          <img
+            class="consent-gate__logo"
+            src="/brand/houdini-bet-logo.png?v=bm19"
+            width="120"
+            height="109"
+            alt=""
+            decoding="async"
+          />
+          <h2 id="consent-title" class="consent-gate__title">Cookies y privacidad</h2>
+          <p class="consent-gate__lead">
+            Usamos almacenamiento local para que la app funcione. Las opciones opcionales (analytics stub,
+            búsqueda y filtros) solo se activan si las aceptas.
+          </p>
+          <p class="consent-gate__links">
+            <button type="button" class="consent-gate__text-btn" data-consent-doc="privacidad">Privacidad</button>
+            <span aria-hidden="true">·</span>
+            <button type="button" class="consent-gate__text-btn" data-consent-doc="cookies">Cookies</button>
+            <span aria-hidden="true">·</span>
+            <button type="button" class="consent-gate__text-btn" data-consent-doc="aviso">Aviso</button>
+            <span aria-hidden="true">·</span>
+            <button type="button" class="consent-gate__text-btn" data-consent-doc="condiciones">Condiciones</button>
+          </p>
+          <label class="consent-age">
+            <input type="checkbox" id="consent-age" />
+            <span>Confirmo que soy mayor de 18 años</span>
+          </label>
+          <div class="consent-gate__actions">
+            <button type="button" class="btn primary consent-gate__btn" id="consent-accept-all" disabled>
+              Aceptar todo
+            </button>
+            <button type="button" class="btn consent-gate__btn" id="consent-necessary" disabled>
+              Solo necesarias
+            </button>
+            <button type="button" class="btn consent-gate__btn" id="consent-customize" disabled>
+              Personalizar
+            </button>
+          </div>
+        </div>
+        <div class="consent-gate__card consent-gate__custom" id="consent-custom" hidden>
+          <button type="button" class="consent-gate__back" id="consent-custom-back">← Volver</button>
+          <h2 class="consent-gate__title" id="consent-custom-title">Personalizar</h2>
+          <p class="consent-gate__lead consent-gate__lead--left">
+            Elige qué guardar en este dispositivo. Necesitas confirmar la mayoría de edad para guardar.
+          </p>
+          <div class="privacy-toggles privacy-toggles--gate" role="group" aria-label="Preferencias opcionales">
+            <label class="privacy-row">
+              <span class="privacy-row__text">
+                <span class="privacy-row__title">Analytics / telemetría</span>
+                <span class="privacy-row__hint">Stub local (consola).</span>
+              </span>
+              <input id="consent-pref-analytics" type="checkbox" class="privacy-switch" role="switch" />
+            </label>
+            <label class="privacy-row">
+              <span class="privacy-row__text">
+                <span class="privacy-row__title">Guardar búsqueda</span>
+                <span class="privacy-row__hint">Último equipo buscado.</span>
+              </span>
+              <input id="consent-pref-save-search" type="checkbox" class="privacy-switch" role="switch" />
+            </label>
+            <label class="privacy-row">
+              <span class="privacy-row__text">
+                <span class="privacy-row__title">Recordar filtros</span>
+                <span class="privacy-row__hint">Fecha y ámbito.</span>
+              </span>
+              <input id="consent-pref-remember-filters" type="checkbox" class="privacy-switch" role="switch" />
+            </label>
+          </div>
+          <label class="consent-age">
+            <input type="checkbox" id="consent-age-custom" />
+            <span>Confirmo que soy mayor de 18 años</span>
+          </label>
+          <div class="consent-gate__actions">
+            <button type="button" class="btn primary consent-gate__btn" id="consent-save-custom" disabled>
+              Guardar preferencias
+            </button>
+          </div>
+        </div>
+        <div class="consent-gate__card consent-gate__doc" id="consent-doc" hidden>
+          <button type="button" class="consent-gate__back" id="consent-doc-back">← Volver</button>
+          <h2 class="consent-gate__title" id="consent-doc-title">Documento</h2>
+          <div class="consent-gate__doc-body legal-prose" id="consent-doc-body"></div>
+        </div>
+      </div>
+    </div>
 
     <div id="panel-backdrop" class="panel-backdrop" aria-hidden="true"></div>
     <aside id="panel" class="panel" aria-label="Análisis del partido" aria-hidden="true">
@@ -419,6 +731,6 @@
       <div id="panel-body"></div>
     </aside>
 
-    <script src="/app.js?v=hb37"></script>
+    <script src="/app.js?v=hb40"></script>
   </body>
 </html>

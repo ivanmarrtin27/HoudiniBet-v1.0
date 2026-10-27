@@ -1,6 +1,8 @@
 const API = '';
 
 const PRIVACY_KEY = 'houdini_privacy_v1';
+const CONSENT_KEY = 'houdini_consent_v1';
+const CONSENT_VERSION = 2;
 const FILTERS_KEY = 'houdini_filters_v1';
 const SEARCH_KEY = 'houdini_last_search_v1';
 
@@ -10,6 +12,13 @@ let privacyPrefs = {
   saveSearch: false,
   rememberFilters: false,
 };
+
+/** @type {{ version: number, choice: 'all'|'necessary'|'custom', ageConfirmed: boolean, acceptedAt: string } | null} */
+let consentState = null;
+let consentFocusBefore = null;
+let consentTrapHandler = null;
+
+const CONSENT_CHOICES = new Set(['all', 'necessary', 'custom']);
 
 function readJsonStore(key) {
   try {
@@ -43,6 +52,350 @@ function loadPrivacyPrefs() {
 
 function savePrivacyPrefs() {
   writeJsonStore(PRIVACY_KEY, privacyPrefs);
+}
+
+function deriveConsentChoiceFromPrefs() {
+  const { analytics, saveSearch, rememberFilters } = privacyPrefs;
+  if (analytics && saveSearch && rememberFilters) return 'all';
+  if (!analytics && !saveSearch && !rememberFilters) return 'necessary';
+  return 'custom';
+}
+
+function loadConsent() {
+  const saved = readJsonStore(CONSENT_KEY);
+  if (
+    saved &&
+    typeof saved === 'object' &&
+    Number(saved.version) === CONSENT_VERSION &&
+    CONSENT_CHOICES.has(saved.choice) &&
+    saved.ageConfirmed === true
+  ) {
+    consentState = {
+      version: CONSENT_VERSION,
+      choice: saved.choice,
+      ageConfirmed: true,
+      acceptedAt: String(saved.acceptedAt || ''),
+    };
+  } else {
+    consentState = null;
+  }
+  return consentState;
+}
+
+function hasValidConsent() {
+  return Boolean(
+    consentState &&
+      consentState.version === CONSENT_VERSION &&
+      consentState.ageConfirmed === true &&
+      CONSENT_CHOICES.has(consentState.choice)
+  );
+}
+
+function saveConsentRecord(choice) {
+  consentState = {
+    version: CONSENT_VERSION,
+    choice,
+    ageConfirmed: true,
+    acceptedAt: new Date().toISOString(),
+  };
+  writeJsonStore(CONSENT_KEY, consentState);
+}
+
+function syncConsentChoiceFromPrefs() {
+  if (!hasValidConsent()) return;
+  const next = deriveConsentChoiceFromPrefs();
+  if (consentState.choice !== next) {
+    consentState = { ...consentState, choice: next };
+    writeJsonStore(CONSENT_KEY, consentState);
+  }
+}
+
+function clearOptionalStores() {
+  try {
+    localStorage.removeItem(FILTERS_KEY);
+    localStorage.removeItem(SEARCH_KEY);
+  } catch (_) {
+    /* ignore */
+  }
+}
+
+function applyConsentChoice(choice) {
+  if (choice === 'custom') {
+    savePrivacyPrefs();
+    saveConsentRecord(deriveConsentChoiceFromPrefs());
+    if (!privacyPrefs.saveSearch) {
+      try {
+        localStorage.removeItem(SEARCH_KEY);
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    if (!privacyPrefs.rememberFilters) {
+      try {
+        localStorage.removeItem(FILTERS_KEY);
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    syncPrivacyToggles();
+    syncConsentGateToggles();
+    return;
+  }
+  const all = choice === 'all';
+  privacyPrefs = {
+    analytics: all,
+    saveSearch: all,
+    rememberFilters: all,
+  };
+  savePrivacyPrefs();
+  saveConsentRecord(all ? 'all' : 'necessary');
+  if (!all) clearOptionalStores();
+  syncPrivacyToggles();
+  syncConsentGateToggles();
+}
+
+function clearDevicePrivacyData() {
+  try {
+    localStorage.removeItem(CONSENT_KEY);
+    localStorage.removeItem(PRIVACY_KEY);
+    localStorage.removeItem(FILTERS_KEY);
+    localStorage.removeItem(SEARCH_KEY);
+  } catch (_) {
+    /* ignore */
+  }
+  privacyPrefs = {
+    analytics: false,
+    saveSearch: false,
+    rememberFilters: false,
+  };
+  consentState = null;
+  syncPrivacyToggles();
+  syncConsentGateToggles();
+  resetConsentAgeUi();
+  openConsentGate();
+}
+
+function consentFocusable(root) {
+  return [
+    ...root.querySelectorAll(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    ),
+  ].filter((el) => {
+    if (el.hasAttribute('disabled') || el.getAttribute('aria-hidden') === 'true') return false;
+    if (el.closest('[hidden]')) return false;
+    return el.getClientRects().length > 0;
+  });
+}
+
+function releaseConsentTrap() {
+  if (consentTrapHandler) {
+    document.removeEventListener('keydown', consentTrapHandler, true);
+    consentTrapHandler = null;
+  }
+}
+
+function armConsentTrap() {
+  releaseConsentTrap();
+  const gate = document.getElementById('consent-gate');
+  if (!gate) return;
+  consentTrapHandler = (e) => {
+    if (!document.documentElement.classList.contains('consent-needed')) return;
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    if (e.key !== 'Tab') return;
+    const visible = gate.querySelector('.consent-gate__card:not([hidden])') || gate;
+    const nodes = consentFocusable(visible);
+    if (!nodes.length) return;
+    const first = nodes[0];
+    const last = nodes[nodes.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  };
+  document.addEventListener('keydown', consentTrapHandler, true);
+}
+
+function setShellInert(on) {
+  const ids = ['views', 'panel', 'panel-backdrop', 'global-banner'];
+  document.querySelectorAll('.v2-header, .site-footer, .skip-link').forEach((el) => {
+    if (on) el.setAttribute('inert', '');
+    else el.removeAttribute('inert');
+  });
+  ids.forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (on) el.setAttribute('inert', '');
+    else el.removeAttribute('inert');
+  });
+}
+
+function showConsentCard(cardId) {
+  const main = document.getElementById('consent-main');
+  const custom = document.getElementById('consent-custom');
+  const doc = document.getElementById('consent-doc');
+  if (main) main.hidden = cardId !== 'main';
+  if (custom) custom.hidden = cardId !== 'custom';
+  if (doc) doc.hidden = cardId !== 'doc';
+}
+
+function isConsentAgeChecked() {
+  const main = document.getElementById('consent-age');
+  const custom = document.getElementById('consent-age-custom');
+  const visibleCustom = document.getElementById('consent-custom');
+  if (visibleCustom && !visibleCustom.hidden) return Boolean(custom?.checked);
+  return Boolean(main?.checked);
+}
+
+function syncConsentAgeCheckboxes(sourceId) {
+  const main = document.getElementById('consent-age');
+  const custom = document.getElementById('consent-age-custom');
+  const source = sourceId === 'custom' ? custom : main;
+  const checked = Boolean(source?.checked);
+  if (main && source !== main) main.checked = checked;
+  if (custom && source !== custom) custom.checked = checked;
+  syncConsentActionEnabled();
+}
+
+function syncConsentActionEnabled() {
+  const ok = isConsentAgeChecked();
+  ['consent-accept-all', 'consent-necessary', 'consent-customize', 'consent-save-custom'].forEach(
+    (id) => {
+      const btn = document.getElementById(id);
+      if (btn) btn.disabled = !ok;
+    }
+  );
+}
+
+function resetConsentAgeUi() {
+  const main = document.getElementById('consent-age');
+  const custom = document.getElementById('consent-age-custom');
+  if (main) main.checked = false;
+  if (custom) custom.checked = false;
+  syncConsentActionEnabled();
+}
+
+function syncConsentGateToggles() {
+  const map = [
+    ['consent-pref-analytics', 'analytics'],
+    ['consent-pref-save-search', 'saveSearch'],
+    ['consent-pref-remember-filters', 'rememberFilters'],
+  ];
+  map.forEach(([id, key]) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.checked = !!privacyPrefs[key];
+    el.setAttribute('aria-checked', privacyPrefs[key] ? 'true' : 'false');
+  });
+}
+
+function readConsentGatePrefsIntoState() {
+  privacyPrefs = {
+    analytics: !!document.getElementById('consent-pref-analytics')?.checked,
+    saveSearch: !!document.getElementById('consent-pref-save-search')?.checked,
+    rememberFilters: !!document.getElementById('consent-pref-remember-filters')?.checked,
+  };
+}
+
+function openConsentDoc(docId) {
+  const titleEl = document.getElementById('consent-doc-title');
+  const bodyEl = document.getElementById('consent-doc-body');
+  const source = document.querySelector(`.legal-body[data-legal="${docId}"]`);
+  if (!titleEl || !bodyEl || !source) return;
+  const titles = {
+    privacidad: 'Privacidad',
+    cookies: 'Cookies',
+    aviso: 'Aviso',
+    condiciones: 'Condiciones',
+  };
+  titleEl.textContent = titles[docId] || 'Documento';
+  bodyEl.innerHTML = source.innerHTML;
+  showConsentCard('doc');
+  document.getElementById('consent-doc-back')?.focus();
+}
+
+function closeConsentDoc() {
+  showConsentCard('main');
+  const accept = document.getElementById('consent-accept-all');
+  if (accept && !accept.disabled) accept.focus();
+  else document.getElementById('consent-age')?.focus();
+}
+
+function openConsentCustom() {
+  if (!isConsentAgeChecked()) return;
+  syncConsentGateToggles();
+  showConsentCard('custom');
+  document.getElementById('consent-custom-back')?.focus();
+}
+
+function closeConsentCustom() {
+  showConsentCard('main');
+  const customize = document.getElementById('consent-customize');
+  if (customize && !customize.disabled) customize.focus();
+  else document.getElementById('consent-age')?.focus();
+}
+
+function openConsentGate({ docId = null } = {}) {
+  const gate = document.getElementById('consent-gate');
+  if (!gate) return;
+  document.documentElement.classList.add('consent-needed');
+  gate.hidden = false;
+  setShellInert(true);
+  showConsentCard('main');
+  syncConsentGateToggles();
+  syncConsentActionEnabled();
+  if (docId) openConsentDoc(docId);
+  armConsentTrap();
+  consentFocusBefore = document.activeElement;
+  requestAnimationFrame(() => {
+    if (docId) document.getElementById('consent-doc-back')?.focus();
+    else document.getElementById('consent-age')?.focus();
+  });
+}
+
+function closeConsentGate() {
+  const gate = document.getElementById('consent-gate');
+  document.documentElement.classList.remove('consent-needed');
+  if (gate) gate.hidden = true;
+  showConsentCard('main');
+  setShellInert(false);
+  releaseConsentTrap();
+  const restore = consentFocusBefore;
+  consentFocusBefore = null;
+  const focusTarget =
+    document.querySelector('.v2-nav__link.is-active') ||
+    document.getElementById('views') ||
+    restore;
+  if (focusTarget && typeof focusTarget.focus === 'function') {
+    try {
+      focusTarget.focus({ preventScroll: true });
+    } catch (_) {
+      /* ignore */
+    }
+  }
+}
+
+function acceptConsent(choice) {
+  if (!isConsentAgeChecked()) return;
+  if (choice === 'custom') {
+    readConsentGatePrefsIntoState();
+    applyConsentChoice('custom');
+  } else {
+    applyConsentChoice(choice);
+  }
+  closeConsentGate();
+  trackEvent('consent_accept', { choice: consentState?.choice || choice });
+  const hash = location.hash || '';
+  const view = normalizeViewHash(hash);
+  if (isLegalViewId(view) || view === 'ajustes' || view === 'premium') {
+    setActiveNav(hash || `#${view}`, { pushHash: false });
+  }
 }
 
 /** No third-party telemetry yet — gated for future use. */
@@ -3585,6 +3938,10 @@ function closePanel() {
   panelLiveCtx = null;
 }
 
+function isLegalViewId(id) {
+  return id === 'privacidad' || id === 'cookies' || id === 'aviso' || id === 'condiciones';
+}
+
 function normalizeViewHash(hash) {
   const raw = (hash || '').replace('#', '');
   const id = raw.split('/')[0];
@@ -3598,7 +3955,8 @@ function normalizeViewHash(hash) {
     id === 'ligas' ||
     id === 'bandas' ||
     id === 'premium' ||
-    id === 'ajustes'
+    id === 'ajustes' ||
+    isLegalViewId(id)
   ) {
     return id;
   }
@@ -3606,10 +3964,6 @@ function normalizeViewHash(hash) {
 }
 
 let navIndicatorReady = false;
-
-function prefersReducedMotion() {
-  return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-}
 
 function syncNavIndicator({ instant = false } = {}) {
   const nav = document.querySelector('.v2-nav');
@@ -3682,6 +4036,16 @@ function setActiveNav(hash, { pushHash = true } = {}) {
   if (view === 'bandas') loadCuotasTarget().catch(() => {});
   if (view === 'ajustes') syncPrivacyToggles();
   requestAnimationFrame(() => syncNavIndicator({ instant: !navIndicatorReady }));
+}
+
+function navigateAppHash(href) {
+  const view = normalizeViewHash(href);
+  if (!hasValidConsent()) {
+    if (isLegalViewId(view)) openConsentGate({ docId: view });
+    else openConsentGate();
+    return;
+  }
+  setActiveNav(href);
 }
 
 function pricingLabel(pricing) {
@@ -4906,16 +5270,63 @@ document.addEventListener('keydown', (e) => {
 
 document
   .querySelectorAll(
-    'a.v2-nav__link, a.dock__link, a.brand, a.premium-chip, a.aciertos-sub__link, a.aciertos-bar__link, a.ajustes-bar__link, a.site-footer__link'
+    'a.v2-nav__link, a.dock__link, a.brand, a.premium-chip, a.aciertos-sub__link, a.aciertos-bar__link, a.ajustes-bar__link, a.site-footer__link, a.legal-nav__link'
   )
   .forEach((link) => {
     link.addEventListener('click', (e) => {
       const href = link.getAttribute('href') || '';
       if (!href.startsWith('#')) return;
       e.preventDefault();
-      setActiveNav(href);
+      navigateAppHash(href);
     });
   });
+
+document.getElementById('consent-accept-all')?.addEventListener('click', () => {
+  acceptConsent('all');
+});
+document.getElementById('consent-necessary')?.addEventListener('click', () => {
+  acceptConsent('necessary');
+});
+document.getElementById('consent-customize')?.addEventListener('click', () => {
+  openConsentCustom();
+});
+document.getElementById('consent-custom-back')?.addEventListener('click', () => {
+  closeConsentCustom();
+});
+document.getElementById('consent-save-custom')?.addEventListener('click', () => {
+  acceptConsent('custom');
+});
+document.getElementById('consent-age')?.addEventListener('change', () => {
+  syncConsentAgeCheckboxes('main');
+});
+document.getElementById('consent-age-custom')?.addEventListener('change', () => {
+  syncConsentAgeCheckboxes('custom');
+});
+document.getElementById('consent-doc-back')?.addEventListener('click', () => {
+  closeConsentDoc();
+});
+document.querySelectorAll('[data-consent-doc]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    openConsentDoc(btn.getAttribute('data-consent-doc') || 'privacidad');
+  });
+});
+document.getElementById('btn-manage-cookies')?.addEventListener('click', () => {
+  navigateAppHash('#ajustes');
+  requestAnimationFrame(() => {
+    document.getElementById('privacy-toggles')?.scrollIntoView({
+      block: 'nearest',
+      behavior: prefersReducedMotion() ? 'auto' : 'smooth',
+    });
+    document.getElementById('pref-analytics')?.focus();
+  });
+});
+document.getElementById('btn-clear-device-data')?.addEventListener('click', () => {
+  const ok = window.confirm(
+    '¿Borrar consentimiento, preferencias, búsqueda y filtros de este dispositivo? Tendrás que aceptar de nuevo.'
+  );
+  if (!ok) return;
+  clearDevicePrivacyData();
+});
 
 document.getElementById('prevDayBtn')?.addEventListener('click', () => shiftDay(-1));
 document.getElementById('nextDayBtn')?.addEventListener('click', () => shiftDay(1));
@@ -5037,7 +5448,17 @@ function currentViewIndex() {
   if (v === 'top3') return 1;
   if (v === 'stats') return 2;
   if (v === 'ligas') return 3;
-  if (v === 'bandas' || v === 'ajustes' || v === 'premium') return -1;
+  if (
+    v === 'bandas' ||
+    v === 'ajustes' ||
+    v === 'premium' ||
+    v === 'privacidad' ||
+    v === 'cookies' ||
+    v === 'aviso' ||
+    v === 'condiciones'
+  ) {
+    return -1;
+  }
   return 0;
 }
 
@@ -5123,16 +5544,34 @@ viewsEl?.addEventListener('touchcancel', onSwipeEnd);
 
 window.addEventListener('hashchange', () => {
   const h = location.hash || '#hoy';
+  if (!hasValidConsent()) {
+    const view = normalizeViewHash(h);
+    if (isLegalViewId(view)) openConsentGate({ docId: view });
+    else openConsentGate();
+    return;
+  }
   setActiveNav(h, { pushHash: false });
 });
 
 window.addEventListener('pageshow', (event) => {
   if (event.persisted) {
+    loadConsent();
+    if (!hasValidConsent()) {
+      const view = normalizeViewHash(location.hash || '');
+      openConsentGate({ docId: isLegalViewId(view) ? view : null });
+      return;
+    }
     setActiveNav(location.hash || '#partidos', { pushHash: false });
   }
 });
 
+loadConsent();
 loadPrivacyPrefs();
+if (hasValidConsent()) {
+  document.documentElement.classList.remove('consent-needed');
+} else {
+  document.documentElement.classList.add('consent-needed');
+}
 restoreFiltersIfAllowed();
 syncWindowChips();
 syncLiveChip();
@@ -5140,7 +5579,16 @@ syncScopeChips();
 syncPrivacyToggles();
 
 bindCuotasTargetControls();
-setActiveNav(location.hash || '#partidos', { pushHash: false });
+{
+  const bootHash = location.hash || '#partidos';
+  const bootView = normalizeViewHash(bootHash);
+  if (!hasValidConsent()) {
+    setActiveNav('#partidos', { pushHash: false });
+    openConsentGate({ docId: isLegalViewId(bootView) ? bootView : null });
+  } else {
+    setActiveNav(bootHash, { pushHash: false });
+  }
+}
 
 (function bindNavIndicatorLayout() {
   const nav = document.querySelector('.v2-nav');
@@ -5154,7 +5602,7 @@ setActiveNav(location.hash || '#partidos', { pushHash: false });
   document.fonts?.ready?.then?.(snap);
 })();
 
-document.getElementById('hit-badge')?.addEventListener('click', () => setActiveNav('#stats'));
+document.getElementById('hit-badge')?.addEventListener('click', () => navigateAppHash('#stats'));
 
 document.querySelectorAll('.market-tabs__btn').forEach((btn) => {
   btn.addEventListener('click', () => {
@@ -5245,6 +5693,7 @@ document.getElementById('pref-analytics')?.addEventListener('change', (e) => {
   privacyPrefs.analytics = !!e.target.checked;
   savePrivacyPrefs();
   syncPrivacyToggles();
+  syncConsentChoiceFromPrefs();
   trackEvent('privacy_analytics', { enabled: privacyPrefs.analytics });
 });
 
@@ -5252,6 +5701,7 @@ document.getElementById('pref-save-search')?.addEventListener('change', (e) => {
   privacyPrefs.saveSearch = !!e.target.checked;
   savePrivacyPrefs();
   syncPrivacyToggles();
+  syncConsentChoiceFromPrefs();
   if (!privacyPrefs.saveSearch) {
     persistSearchIfAllowed('');
   } else {
@@ -5263,6 +5713,7 @@ document.getElementById('pref-remember-filters')?.addEventListener('change', (e)
   privacyPrefs.rememberFilters = !!e.target.checked;
   savePrivacyPrefs();
   syncPrivacyToggles();
+  syncConsentChoiceFromPrefs();
   if (privacyPrefs.rememberFilters) persistFiltersIfAllowed();
   else persistFiltersIfAllowed();
 });
@@ -5443,6 +5894,10 @@ function dismissBootSplash() {
   const splash = document.getElementById('boot-splash');
   document.body.classList.remove('boot-pending');
   document.documentElement.setAttribute('aria-busy', 'false');
+  if (!hasValidConsent()) {
+    const view = normalizeViewHash(location.hash || '');
+    openConsentGate({ docId: isLegalViewId(view) ? view : null });
+  }
   if (!splash) return;
   splash.classList.add('is-done');
   const finish = () => {

@@ -568,6 +568,15 @@ const TEAM_NAME_ALIASES = new Map([
   ['bayer 04 leverkusen', 'bayer leverkusen'],
   ['leeds', 'leeds united'],
   ['leeds united', 'leeds united'],
+  ['osasuna', 'osasuna'],
+  ['ca osasuna', 'osasuna'],
+  ['lyon', 'lyon'],
+  ['olympique lyonnais', 'lyon'],
+  ['olympique lyon', 'lyon'],
+  ['psg', 'paris saint germain'],
+  ['paris sg', 'paris saint germain'],
+  ['paris s g', 'paris saint germain'],
+  ['paris saint germain', 'paris saint germain'],
 ]);
 
 function canonicalTeamName(name) {
@@ -583,7 +592,8 @@ function teamNameScore(a, b) {
   const nb = canonicalTeamName(b);
   if (!na || !nb) return 0;
   if (na === nb) return 100;
-  if (na.includes(nb) || nb.includes(na)) return 80;
+  // Substring hits must clear LIVE_NAME_MATCH_MIN (was 80 → Osasuna/CA Osasuna, Lyon/OL failed).
+  if (na.includes(nb) || nb.includes(na)) return 85;
   const wa = new Set(na.split(' ').filter((w) => w.length > 2));
   const wb = new Set(nb.split(' ').filter((w) => w.length > 2));
   if (!wa.size || !wb.size) return 0;
@@ -941,6 +951,7 @@ async function persistMappedFixtures(db, fixtures, logoMode = 'flag') {
     }
   }
 
+  // FD/FotMob calendar rows never emit "live"; do not wipe live/finished scores with empty scheduled.
   const MATCH_UPSERT = `INSERT INTO matches
     (league_id, home_team_id, away_team_id, match_date, status, home_goals, away_goals, elapsed_minute, api_id)
    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -949,10 +960,34 @@ async function persistMappedFixtures(db, fixtures, logoMode = 'flag') {
      home_team_id=excluded.home_team_id,
      away_team_id=excluded.away_team_id,
      match_date=excluded.match_date,
-     status=excluded.status,
-     home_goals=excluded.home_goals,
-     away_goals=excluded.away_goals,
-     elapsed_minute=excluded.elapsed_minute`;
+     status=CASE
+       WHEN matches.status IN ('live','finished')
+            AND excluded.status='scheduled'
+            AND excluded.home_goals IS NULL
+       THEN matches.status
+       ELSE excluded.status
+     END,
+     home_goals=CASE
+       WHEN matches.status IN ('live','finished')
+            AND excluded.status='scheduled'
+            AND excluded.home_goals IS NULL
+       THEN matches.home_goals
+       ELSE excluded.home_goals
+     END,
+     away_goals=CASE
+       WHEN matches.status IN ('live','finished')
+            AND excluded.status='scheduled'
+            AND excluded.home_goals IS NULL
+       THEN matches.away_goals
+       ELSE excluded.away_goals
+     END,
+     elapsed_minute=CASE
+       WHEN matches.status IN ('live','finished')
+            AND excluded.status='scheduled'
+            AND excluded.home_goals IS NULL
+       THEN matches.elapsed_minute
+       ELSE excluded.elapsed_minute
+     END`;
 
   const statements = [];
   for (const fx of fixtures) {
@@ -1332,6 +1367,7 @@ async function runFixtureDownloadSync(db) {
     }
   }
 
+  // FD never emits "live"; keep live/finished + scores when calendar upsert is empty scheduled.
   const MATCH_UPSERT = `INSERT INTO matches
     (league_id, home_team_id, away_team_id, match_date, status, home_goals, away_goals, api_id)
    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -1340,9 +1376,27 @@ async function runFixtureDownloadSync(db) {
      home_team_id=excluded.home_team_id,
      away_team_id=excluded.away_team_id,
      match_date=excluded.match_date,
-     status=excluded.status,
-     home_goals=excluded.home_goals,
-     away_goals=excluded.away_goals`;
+     status=CASE
+       WHEN matches.status IN ('live','finished')
+            AND excluded.status='scheduled'
+            AND excluded.home_goals IS NULL
+       THEN matches.status
+       ELSE excluded.status
+     END,
+     home_goals=CASE
+       WHEN matches.status IN ('live','finished')
+            AND excluded.status='scheduled'
+            AND excluded.home_goals IS NULL
+       THEN matches.home_goals
+       ELSE excluded.home_goals
+     END,
+     away_goals=CASE
+       WHEN matches.status IN ('live','finished')
+            AND excluded.status='scheduled'
+            AND excluded.home_goals IS NULL
+       THEN matches.away_goals
+       ELSE excluded.away_goals
+     END`;
 
   const statements = [];
   let savedUpcoming = 0;
