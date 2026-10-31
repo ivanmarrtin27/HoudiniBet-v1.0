@@ -23,8 +23,8 @@ function check(label, condition) {
 }
 
 const cron = INDEX.match(/const LIVE_CRON = '([^']+)'/)?.[1];
-check('live cron expression is defined', cron === '*/10 15-23 * * *', String(cron));
-check('live cron is registered in wrangler', WRANGLER.includes('"*/10 15-23 * * *"'));
+check('live cron expression is defined', cron === '*/10 11-23 * * *', String(cron));
+check('live cron is registered in wrangler', WRANGLER.includes('"*/10 11-23 * * *"'));
 check('live cron keeps the worker within the cron trigger limit',
   (WRANGLER.match(/"[0-9*\/ ]+ \* \* \*"/g) || []).length <= 5);
 check('scheduled handler routes the live cron to the live refresh',
@@ -71,17 +71,19 @@ check('status endpoint exposes the live cron timestamps',
     INDEX.includes('lastLiveRefreshAt: lastLiveRefreshAt || null'));
 check('status endpoint exposes the live work counters', INDEX.includes('liveWork,'));
 
-// Stale "live" rows: closed and their unverifiable tips voided.
+// Stale "live" rows: closed after feeds; tips stay pending until scores settle.
 check('stale live rows are closed by the refresh',
   SYNC.includes('closeStaleLiveMatches(db, 4)'));
-check('stale live rows void their pending tips instead of settling them',
-  DB.includes("SET outcome = 'void' WHERE match_id = ? AND outcome = 'pending'") &&
+check('stale live close does not void pending tips',
+  !DB.includes("SET outcome = 'void' WHERE match_id = ? AND outcome = 'pending'") &&
     DB.includes("SET status = 'finished', elapsed_minute = NULL"));
 check('stale sweep only targets matches kicking off long ago',
   DB.includes("status = 'live' AND datetime(match_date) < datetime('now', ?)"));
+check('premature voids can be recovered once scores exist',
+  DB.includes('recoverPrematureVoidTips') &&
+    SYNC.includes('recoverPrematureVoidTips'));
 
 let sweepSql = '';
-let voided = 0;
 const closed = await closeStaleLiveMatches({
   all: async (sql) => {
     sweepSql = sql;
@@ -91,9 +93,8 @@ const closed = await closeStaleLiveMatches({
   batch: async () => [],
 });
 check('stale sweep closes the reported rows', closed.closed === 1, JSON.stringify(closed));
-check('stale sweep voids the pending tips', closed.voided === 1, JSON.stringify(closed));
+check('stale sweep leaves tips pending (voided=0)', closed.voided === 0, JSON.stringify(closed));
 check('stale sweep only looks at live matches', sweepSql.includes("status = 'live'"));
-void voided;
 
 console.log(failed ? `\n${failed} checks failed` : `\n${passed}/${passed} checks passed`);
 process.exit(failed ? 1 : 0);

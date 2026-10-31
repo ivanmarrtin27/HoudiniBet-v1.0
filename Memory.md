@@ -2,30 +2,41 @@
 
 ## Decisiones
 - CF Worker + D1; FD + FotMob + AF enrich
-- Tips: anti-trivial (no O0.5 / U4.5); **nunca SHOTS_***; lane **P≥75%** + cuota≥1.25; **solo playable** entra en `tip_results`; display también **P≥75%** (`DISPLAY_MIN_PROB`); tipTier `none` → schema `suggested_bet` + honest `confidence_score` (P×100) + `tip_tier` (Mejores solo `playable`); UI siempre % vía `probForLabel`/`tipProbPct` (nunca `— modelo`); BTTS secondary-only (ok display ≥75%); secondary diversa / no misma `tipFamily` que primary/display
-- UI: Partidos · **Top 10** (pool `?days=14` hoy+14d, no solo date=; P≥75 luego ≥69; cuota 1.30–3.50 con book **o** modelo `1/p` si tipOdds null; máx 3/familia; primary+secondary + tipTier none; solo scheduled/live; no trivial/SHOTS_*) · Stats · Semanal · **Ligas**; `#top3` / `#ligas/<apiId>`
-- UNDO tip-policy: baseline `a31f4b5`; tip-policy commit `48738e8` → `git revert 48738e8` + `wrangler deploy` (no wipe tip_results)
-- Crests: FotMob PSG/Elche/Deportivo/**Leverkusen 8178**; AF 85/3751/1102/168 broken
-- Reset Stats: `POST /api/v1/admin/stats/reset` → wipe + `stats_reset_at`; `?keepToday=1` / `?keepDate=YYYY-MM-DD` conserva tips del día; backfill solo scheduled/live (no finished)
-- Odds: sin key → sin book; Semanal cuota 10 + Conservadora 5
-- **Dominio**: trabajar en free (`houdini-bet.pages.dev` / workers.dev); **no** pagar `houdini-bet.dev` hasta producto listo
-- Cuando todo funcione como se quiere: (1) registro+login (2) plan Premium con pago
+- Tips: anti-trivial (no O0.5 / U4.5); **nunca SHOTS_***; lane **P≥75%** + cuota≥1.25; **solo playable** en `tip_results`; display **P≥75%**; tipTier `none` → schema + `tip_tier`; BTTS secondary-only; secondary diversa
+- UI: Partidos · Top 10 · Stats · Semanal · Ligas; `#top3` / `#ligas/<apiId>` / `#premium` / `#perfil`
+- Auth bloqueante tras consent (sin sesión no hay app); cookie `hb_auth`; register/login/Google; Telegram UI **Pronto**
+- Free vs Premium: tip/winProb/live probs/tabs = Premium; **General key cards free**; H2H + tabla liga + chrome OK; censor → `closePanel` + `#premium`
+- Nav: desktop header icons; mobile `.app-tabbar` bottom (safe-area); SW `hb86`
+- General key cards: o25/o15 portería; goals balón; btts 2 balones; corners/cards intactos; Tiros ≠ SOT; i18n ES↔EN P0+P1
+- Top 10 = solo primary (`suggestedBet`); panel-suggest misma tip (sin ALL CAPS); trend summary total centrado
+- URL producto: solo `houdini-bet.pages.dev` (workers.dev = origen técnico)
+- SOT Overs 0.5–11.5; córners 1.5–11.5; totalShots display degraded si n<4; FotMob stats prioriza equipos ventana
+- Premium tabs Oddster-style (rojo): summary + trend Metric|H|A|Partido; free = `lockedTrendTableHtml`; goles + scoregrid debajo
+- Promo (0036+0037): types `free_days`|`free_month`|`discount_20`|`discount_40`; soft-delete `active=0`; discount → `users.pending_promo_*` + Stripe `%_off` en checkout; admin create/list/delete
+- Badge unificado `.plan-badge` «Premium»/«Gratuito»; settings sin tema (dark forzado); `#ajustes` ✕ → `#partidos`
+- Planes UI: Weekly 9,99 € / Monthly 19,90 € → Stripe o toast «Pago no configurado»
+- Display ES: `countryLabel` + `leagueLabelEs`; Panel General Media liga n≥20
+- Crests: FotMob PSG/Elche/Deportivo/Leverkusen/Schalke/Racing/Paris FC + BL; AF broken list
+- Dominio: **pages.dev** día a día; **no** pagar `houdini-bet.dev` hasta producto listo
+- Consent v2 hard gate; Cooperación → GitHub ivanmarrtin27
+- Market tabs: misma L H/A/Match; Over+Under; goles 0.5–3.5; BTTS bloque Sí(+No sutil); SOT 0.5–11.5; córners 1.5–11.5; tarjetas 0.5–5.5; Tiros 14.5–24.5; General 6 cards; Poisson cliente si ladder falta
+- Panel % count-up: `data-target` pills + scoregrid + `animatePercents` (ease-out ~560ms; skip blur/reduced-motion)
 
 ## Hecho
-- Ban SHOTS_* + secondary diversity (tipFamily vs primary); Leverkusen crest; Top 10 caps; Stats epoch wipe
-- Unlock público si `PREMIUM_UNLOCKED`
-- Ligas explorer: split países+banderas | tabla; nextMatch/análisis; `#ligas/<apiId>`
-- pages.dev: SW `hb24` brand + `og-share.png` negro 1200×630 (WA); Semanal Otra; track sin premium/ajustes
-- Live cron `*/10 11-23` UTC + lookback 2d; alias Man City; Stats historial paginado (Cargar más); Partidos sin marcador (sí en análisis)
-- Consent v2 (`houdini_consent_v1` key, version 2 + ageConfirmed): Personalizar, 18+, `#condiciones`; borrar datos locales en Ajustes
-- Al activar Stripe/auth: reescribir privacidad/cookies/ToS (pago, `hb_prem`, baja); si analytics real → gate antes del script; valorar self-host fonts
+- Onboarding: consent → auth gate → app; logout/delete → re-gate
+- Premium tables + promo + badge + dark-only + `#premium` compact
+- `#premium` / `#perfil` / settings / menú cuenta; admin hits/stats/users/promo + Activar/Quitar Premium
+- Auth v1 + Google; Ligas explorer; live cron; tip lock; ban SHOTS_*
+- Free General key cards + icons; tabs Tiros; i18n P0+P1; SOT/córners ranges; promo types+delete; admin Stats cards homogéneas; tip sync Top10=panel; Under tables + BTTS block; Tiros 14.5–24.5; `hb86`
 
 ## Pendiente
 - **API_FOOTBALL_KEY** válida (book real)
-- Dominio custom `houdini-bet.dev` — opcional más adelante (no bloquea trabajo diario en pages.dev)
-- Auth (registro/login) + Premium de pago — tras producto OK; Stripe webhook
-- Self-host Google Fonts (quitar fonts.googleapis) cuando toque privacidad dura
+- Stripe webhook + suscripciones reales; email verify / reset password
+- Google OAuth secrets/redirect si faltan; self-host fonts
+- Stats público `#stats` se retirará cuando admin Stats esté consolidado
+- Dominio custom `houdini-bet.dev` más adelante
 
 ## Deploy
-- Worker: `cd cloudflare && npx wrangler deploy`
-- Admin: `?admin=1`; crests audit / stats reset con `x-sync-secret`
+- Worker: `cd cloudflare; npx wrangler deploy`
+- Migrate: `npx wrangler d1 migrations apply houdini-bet-db --remote`
+- Admin: `npx wrangler pages deploy admin-pages --project-name houdini-bet-admin --branch main`

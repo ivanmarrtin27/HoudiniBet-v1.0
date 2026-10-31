@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="robots" content="noindex,nofollow,noarchive" />
+  <meta name="theme-color" content="#0a0a0a" />
+  <meta name="description" content="Houdini Bet — panel de control privado" />
+  <title>Houdini Bet · Control</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Inter:wght@400;500;600&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./styles.css?v=adm3" />
+  <link rel="icon" href="https://houdini-bet.pages.dev/icons/favicon-32.png" type="image/png" />
+</head>
+<body>
+  <a class="skip-link" href="#main">Saltar al contenido</a>
+
+  <section id="gate" class="gate" aria-label="Acceso admin">
+    <div class="gate__card">
+      <p class="gate__brand">Houdini Bet</p>
+      <h1 class="gate__title">Acceso privado</h1>
+      <p class="gate__lead">Gestiona cuentas y métricas del Worker desde un solo panel.</p>
+      <form id="gate-form" class="gate__form" autocomplete="off">
+        <label class="field-label" for="pin">PIN de acceso</label>
+        <input
+          id="pin"
+          class="field-input"
+          name="pin"
+          type="password"
+          inputmode="numeric"
+          pattern="[0-9]*"
+          autocomplete="current-password"
+          maxlength="8"
+          placeholder="••••"
+          required
+        />
+        <button type="submit" class="btn btn--primary btn--lg gate__enter" id="gate-submit">Entrar</button>
+        <p id="gate-error" class="field-helper field-helper--error" role="alert" hidden></p>
+      </form>
+    </div>
+  </section>
+
+  <div id="entry" class="entry" hidden aria-hidden="true">
+    <div class="entry__veil"></div>
+    <p class="entry__mark">Houdini Bet</p>
+  </div>
+
+  <div id="app" class="app" hidden>
+    <header class="topbar">
+      <div class="topbar__inner shell">
+        <div class="topbar__brand">
+          <span class="topbar__mark">Houdini Bet</span>
+          <span class="topbar__badge">Control</span>
+        </div>
+        <div class="topbar__actions">
+          <button type="button" class="btn btn--secondary" id="btn-refresh">Actualizar</button>
+          <button type="button" class="btn btn--ghost" id="btn-lock">Cerrar sesión</button>
+        </div>
+      </div>
+    </header>
+
+    <main id="main" class="main shell" data-screen="home">
+      <div id="screen-home" class="screen screen--home">
+        <section class="panel panel--usage" aria-labelledby="usage-heading">
+          <h2 id="usage-heading" class="panel__title">Uso de hoy</h2>
+          <div id="usage-panel" class="panel__body" aria-live="polite">
+            <p class="muted">Cargando…</p>
+          </div>
+        </section>
+
+        <section class="panel panel--stats-preview" aria-labelledby="stats-heading">
+          <div class="panel__head panel__head--wrap">
+            <h2 id="stats-heading" class="panel__title">Stats (tips)</h2>
+            <p id="stats-meta" class="panel__meta muted"></p>
+          </div>
+          <div id="stats-panel" class="panel__body" aria-live="polite">
+            <p class="muted">Cargando…</p>
+          </div>
+          <div class="panel__footer">
+            <button type="button" class="btn btn--secondary btn--block" id="btn-stats-all">
+              Ver todas
+            </button>
+          </div>
+        </section>
+
+        <section class="panel panel--hits-preview" aria-labelledby="hits-heading">
+          <div class="panel__head panel__head--wrap">
+            <h2 id="hits-heading" class="panel__title">Visitantes recientes</h2>
+            <p id="hits-meta" class="panel__meta muted"></p>
+          </div>
+          <div id="hits-panel" class="panel__body" aria-live="polite">
+            <p class="muted">Cargando…</p>
+          </div>
+          <div class="panel__footer">
+            <button type="button" class="btn btn--secondary btn--block" id="btn-hits-history">
+              Ver historial
+            </button>
+          </div>
+        </section>
+
+        <section class="panel panel--promo" aria-labelledby="promo-heading">
+          <div class="panel__head panel__head--wrap">
+            <h2 id="promo-heading" class="panel__title">Códigos promo</h2>
+            <p id="promo-meta" class="panel__meta muted"></p>
+          </div>
+          <form id="promo-form" class="promo-form" autocomplete="off">
+            <div class="promo-form__grid">
+              <div class="promo-form__field promo-form__field--code">
+                <label class="field-label" for="promo-code">Código</label>
+                <input id="promo-code" class="field-input field-input--mono" name="code" type="text" maxlength="32" required spellcheck="false" autocapitalize="characters" />
+              </div>
+              <div class="promo-form__field promo-form__field--type">
+                <label class="field-label" for="promo-type">Tipo</label>
+                <select id="promo-type" class="field-input" name="type" required>
+                  <option value="discount_20">Descuento 20%</option>
+                  <option value="discount_40">Descuento 40%</option>
+                  <option value="free_month">Regalo 1 mes Premium</option>
+                  <option value="free_days">Días Premium gratis</option>
+                </select>
+              </div>
+              <div class="promo-form__field promo-form__field--days" id="promo-days-wrap" hidden>
+                <label class="field-label" for="promo-days">Días</label>
+                <input id="promo-days" class="field-input" name="days" type="number" min="1" max="365" value="7" />
+              </div>
+              <div class="promo-form__field promo-form__field--max">
+                <label class="field-label" for="promo-max">Máx. canjes</label>
+                <input id="promo-max" class="field-input" name="max" type="number" min="1" max="100000" />
+              </div>
+              <div class="promo-form__field promo-form__field--submit">
+                <button type="submit" class="btn btn--primary" id="promo-submit">Crear</button>
+              </div>
+            </div>
+          </form>
+          <div id="promo-list" class="promo-list" aria-live="polite">
+            <p class="muted">Cargando…</p>
+          </div>
+        </section>
+
+        <section class="panel" aria-labelledby="users-heading">
+          <div class="panel__head panel__head--users">
+            <h2 id="users-heading" class="panel__title">Cuentas</h2>
+            <label class="users-search" for="users-search">
+              <span class="visually-hidden">Buscar cuentas</span>
+              <input
+                id="users-search"
+                class="field-input users-search__input"
+                type="search"
+                placeholder="Buscar…"
+                autocomplete="off"
+                spellcheck="false"
+              />
+            </label>
+            <p id="users-count" class="panel__meta muted"></p>
+          </div>
+          <div class="table-wrap users-desktop" aria-hidden="false">
+            <table class="users-table" id="users-table">
+              <thead>
+                <tr>
+                  <th>Usuario</th>
+                  <th>Nombre</th>
+                  <th>Email</th>
+                  <th>Tel.</th>
+                  <th>Alta</th>
+                  <th>Plan</th>
+                  <th>Premium</th>
+                  <th>Estado</th>
+                  <th>Acciones</th>
+                </tr>
+              </thead>
+              <tbody id="users-body">
+                <tr><td colspan="9" class="muted">Cargando…</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div id="users-cards" class="users-cards" aria-live="polite"></div>
+        </section>
+      </div>
+
+      <div id="screen-hits" class="screen screen--hits" hidden>
+        <section class="panel panel--hits-full" aria-labelledby="hits-full-heading">
+          <div class="panel__head panel__head--detail">
+            <h2 id="hits-full-heading" class="panel__title">Historial de visitas</h2>
+            <button type="button" class="btn btn--ghost btn--icon-close" id="btn-hits-close" aria-label="Cerrar">×</button>
+          </div>
+          <div class="panel__head panel__head--users">
+            <label class="users-search hits-search" for="hits-search">
+              <span class="visually-hidden">Buscar visitas</span>
+              <input
+                id="hits-search"
+                class="field-input users-search__input"
+                type="search"
+                placeholder="Buscar IP, path, país…"
+                autocomplete="off"
+                spellcheck="false"
+              />
+            </label>
+            <p id="hits-full-count" class="panel__meta muted"></p>
+          </div>
+          <div id="hits-full-panel" class="panel__body" aria-live="polite">
+            <p class="muted">Cargando…</p>
+          </div>
+        </section>
+      </div>
+
+      <div id="screen-stats" class="screen screen--stats" hidden>
+        <section class="panel panel--stats-full" aria-labelledby="stats-full-heading">
+          <div class="panel__head panel__head--detail">
+            <h2 id="stats-full-heading" class="panel__title">Stats (tips)</h2>
+            <button type="button" class="btn btn--ghost btn--icon-close" id="btn-stats-close" aria-label="Cerrar">×</button>
+          </div>
+          <div class="panel__head panel__head--users">
+            <label class="users-search stats-search" for="stats-search">
+              <span class="visually-hidden">Buscar tips</span>
+              <input
+                id="stats-search"
+                class="field-input users-search__input"
+                type="search"
+                placeholder="Buscar partido, tip, liga…"
+                autocomplete="off"
+                spellcheck="false"
+              />
+            </label>
+            <p id="stats-full-count" class="panel__meta muted"></p>
+          </div>
+          <div id="stats-full-panel" class="panel__body" aria-live="polite">
+            <p class="muted">Cargando…</p>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+    <div id="delete-modal" class="modal" hidden>
+      <div class="modal__backdrop" data-delete-dismiss></div>
+      <div
+        class="modal__dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="delete-modal-title"
+      >
+        <h2 id="delete-modal-title" class="modal__title">Eliminar cuenta</h2>
+        <p id="delete-modal-body" class="modal__body">
+          ¿Eliminar esta cuenta de forma permanente? No se puede deshacer.
+        </p>
+        <div class="modal__actions">
+          <button type="button" class="btn btn--ghost" id="delete-cancel" data-delete-dismiss>Cancelar</button>
+          <button type="button" class="btn btn--destructive" id="delete-confirm">Confirmar</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="revoke-premium-modal" class="modal" hidden>
+      <div class="modal__backdrop" data-revoke-prem-dismiss></div>
+      <div
+        class="modal__dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="revoke-premium-title"
+      >
+        <h2 id="revoke-premium-title" class="modal__title">Quitar Premium</h2>
+        <p id="revoke-premium-body" class="modal__body">
+          Se revoca el acceso Premium de esta cuenta. El login sigue activo.
+        </p>
+        <label class="modal__check">
+          <input type="checkbox" id="revoke-premium-sanction" />
+          <span>Marcar sanción (normas/privacidad)</span>
+        </label>
+        <div class="modal__actions">
+          <button type="button" class="btn btn--ghost" id="revoke-premium-cancel" data-revoke-prem-dismiss>Cancelar</button>
+          <button type="button" class="btn btn--destructive" id="revoke-premium-confirm">Quitar Premium</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="./app.js?v=adm3" defer></script>
+</body>
+</html>

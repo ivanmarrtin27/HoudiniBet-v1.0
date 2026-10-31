@@ -89,14 +89,45 @@ check(
   'resolve replaces stored AF Elche with FotMob',
   resolveTeamLogoUrl('Elche CF', AF_ELCHE) === FOTMOB_ELCHE
 );
-check(
-  'Paris FC still uses AF id 1113 (not PSG FotMob)',
-  clubLogoUrl('Paris FC') === 'https://media.api-sports.io/football/teams/1113.png'
-);
+const FOTMOB_PARIS_FC =
+  'https://images.fotmob.com/image_resources/logo/teamlogo/6379.png';
+check('Paris FC maps to FotMob crest (not AF 1113 / not PSG)', clubLogoUrl('Paris FC') === FOTMOB_PARIS_FC);
 check(
   'Paris FC resolve does not inherit PSG FotMob',
   resolveTeamLogoUrl('Paris FC', 'https://media.api-sports.io/football/teams/1113.png') ===
-    'https://media.api-sports.io/football/teams/1113.png'
+    FOTMOB_PARIS_FC
+);
+check(
+  'Paris FC is not PSG FotMob',
+  clubLogoUrl('Paris FC') !== FOTMOB_PSG
+);
+
+const FOTMOB_SCHALKE =
+  'https://images.fotmob.com/image_resources/logo/teamlogo/10189.png';
+const FOTMOB_RACING =
+  'https://images.fotmob.com/image_resources/logo/teamlogo/8696.png';
+const FOTMOB_SPORTING_GIJON =
+  'https://images.fotmob.com/image_resources/logo/teamlogo/9869.png';
+const AF_SPORTING = 'https://media.api-sports.io/football/teams/731.png';
+check('Schalke maps to FotMob (not AF Hertha 159)', clubLogoUrl('FC Schalke 04') === FOTMOB_SCHALKE);
+check(
+  'resolve rewrites stored AF Schalke 159 to FotMob',
+  resolveTeamLogoUrl('Schalke 04', 'https://media.api-sports.io/football/teams/159.png') ===
+    FOTMOB_SCHALKE
+);
+check('Racing Santander maps to FotMob (not Sporting AF 731)', clubLogoUrl('Racing Santander') === FOTMOB_RACING);
+check('R. Racing Club alias maps to Racing FotMob', clubLogoUrl('R. Racing Club') === FOTMOB_RACING);
+check(
+  'resolve rewrites stored Sporting AF 731 on Racing name',
+  resolveTeamLogoUrl('R. Racing Club', AF_SPORTING) === FOTMOB_RACING
+);
+check(
+  'Sporting Gijon keeps AF 731 (not Racing FotMob)',
+  clubLogoUrl('Sporting Gijon') === AF_SPORTING
+);
+check(
+  'Racing crest URL is not Sporting Gijon FotMob',
+  clubLogoUrl('Racing Santander') !== FOTMOB_SPORTING_GIJON
 );
 
 const FOTMOB_LEV =

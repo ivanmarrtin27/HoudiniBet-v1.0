@@ -298,7 +298,7 @@ check('panel escapes the team names', !xss.includes('<script>'), xss.slice(0, 24
 // ---------------------------------------------------------------- always-visible tabs
 
 check('all three extra tab buttons are unconditional', [
-  "['tiros', 'Tiros a puerta']",
+  "['tiros', 'Tiros']",
   "['corners', 'Córners']",
   "['tarjetas', 'Tarjetas']",
 ].every((tab) => src.includes(tab)) && !src.includes('hasShots ?') && !src.includes('hasCorners ?') && !src.includes('hasCards ?'));

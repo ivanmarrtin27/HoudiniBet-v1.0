@@ -8,6 +8,11 @@ import {
 } from './services/oddsBands.js';
 import { buildCombos, comboOptsForBand } from './services/combos.js';
 import { ALLOWED_LEAGUE_SQL } from './services/leagueAllowlist.js';
+import {
+  rankTeamSearchRows,
+  searchNameVariants,
+  sqlLikePatternsForVariant,
+} from './services/teamSearch.js';
 import { computeStakeResults, computeStakeResultsBy } from './services/roi.js';
 
 /** @param {D1Database} db */
@@ -297,14 +302,26 @@ export async function findLeagueByApiId(db, apiId) {
 }
 
 export async function searchTeams(db, q, limit = 15) {
-  return db.all(
-    `SELECT t.*, l.name AS league_name
+  const raw = String(q || '').trim();
+  if (!raw) return [];
+  const variants = searchNameVariants(raw);
+  const patterns = [...new Set(variants.flatMap(sqlLikePatternsForVariant))];
+  if (!patterns.length) return [];
+
+  // Bound LIKE fan-out; rank/dedupe in JS so alias + domestic beat cup duplicates / junk.
+  const fetchLimit = Math.min(80, Math.max(Number(limit) || 15, 15) * 4);
+  const likeSql = patterns.map(() => 'LOWER(t.name) LIKE ?').join(' OR ');
+
+  const rows = await db.all(
+    `SELECT t.*, l.name AS league_name, l.api_id AS league_api_id
      FROM teams t JOIN leagues l ON l.id = t.league_id
-     WHERE t.name LIKE ?
-     ORDER BY t.name LIMIT ?`,
-    `%${q}%`,
-    limit
+     WHERE (${likeSql})
+     ${ALLOWED_LEAGUE_SQL}
+     LIMIT ?`,
+    ...patterns,
+    fetchLimit
   );
+  return rankTeamSearchRows(rows, raw).slice(0, Math.max(1, Math.min(30, Number(limit) || 15)));
 }
 
 export async function findTeamById(db, id) {
@@ -404,6 +421,42 @@ export async function leagueGoalAverages(db, leagueId) {
     leagueId
   );
   return mapLeagueAvgs(r);
+}
+
+const LEAGUE_MARKET_RATES_MIN_N = 20;
+
+/**
+ * Historical hit-rates for O1.5 / O2.5 / BTTS in a league (finished matches only).
+ * Returns null rates when sample size < LEAGUE_MARKET_RATES_MIN_N.
+ */
+export async function leagueMarketRates(db, leagueId) {
+  const r = await db.first(
+    `SELECT
+       COUNT(*) AS n,
+       AVG(CASE WHEN home_goals + away_goals > 1 THEN 1.0 ELSE 0.0 END) AS over15_rate,
+       AVG(CASE WHEN home_goals + away_goals > 2 THEN 1.0 ELSE 0.0 END) AS over25_rate,
+       AVG(CASE WHEN home_goals > 0 AND away_goals > 0 THEN 1.0 ELSE 0.0 END) AS btts_rate
+     FROM matches
+     WHERE league_id = ?
+       AND status = 'finished'
+       AND home_goals IS NOT NULL
+       AND away_goals IS NOT NULL`,
+    leagueId
+  );
+  const n = Number(r?.n) || 0;
+  if (n < LEAGUE_MARKET_RATES_MIN_N) {
+    return { n, over15Rate: null, over25Rate: null, bttsRate: null };
+  }
+  const toRate = (v) => {
+    const x = Number(v);
+    return Number.isFinite(x) ? Number(x.toFixed(4)) : null;
+  };
+  return {
+    n,
+    over15Rate: toRate(r.over15_rate),
+    over25Rate: toRate(r.over25_rate),
+    bttsRate: toRate(r.btts_rate),
+  };
 }
 
 /** League averages using only stats from matches before kickoff. */
@@ -1153,9 +1206,9 @@ export async function getLiveWorkStatus(db) {
 }
 
 /**
- * Close live rows whose kickoff is long past and void their unverifiable tips.
- * Those matches are no longer covered by any feed, so their score cannot be
- * confirmed: settling them would write a made-up result into the ledger.
+ * Close live rows whose kickoff is long past.
+ * Tips stay pending: settlePendingTips only settles when real scores exist, so
+ * voiding here was wrong (feeds often fill scores on the next refresh).
  */
 export async function closeStaleLiveMatches(db, olderThanHours = 4) {
   const hours = Math.max(1, Number(olderThanHours) || 4);
@@ -1166,14 +1219,6 @@ export async function closeStaleLiveMatches(db, olderThanHours = 4) {
   );
   if (!rows.length) return { closed: 0, voided: 0 };
   const ids = rows.map((r) => Number(r.id)).filter((id) => id > 0);
-  let voided = 0;
-  for (const id of ids) {
-    const res = await db.run(
-      `UPDATE tip_results SET outcome = 'void' WHERE match_id = ? AND outcome = 'pending'`,
-      id
-    );
-    voided += Number(res?.meta?.changes || 0);
-  }
   await db.batch(
     ids.map((id) => ({
       sql: `UPDATE matches
@@ -1182,7 +1227,57 @@ export async function closeStaleLiveMatches(db, olderThanHours = 4) {
       params: [id],
     }))
   );
-  return { closed: ids.length, voided };
+  return { closed: ids.length, voided: 0 };
+}
+
+/**
+ * Re-open tips voided by the old stale-live sweep (outcome=void, no settled_at)
+ * once the match has a real score, so settlePendingTips can decide hit/miss.
+ */
+export async function recoverPrematureVoidTips(db, limit = 80) {
+  const rows = await db.all(
+    `SELECT tr.id
+     FROM tip_results tr
+     JOIN matches m ON m.id = tr.match_id
+     WHERE tr.outcome = 'void'
+       AND tr.settled_at IS NULL
+       AND m.status = 'finished'
+       AND m.home_goals IS NOT NULL
+       AND m.away_goals IS NOT NULL
+     LIMIT ?`,
+    Math.max(1, Number(limit) || 80)
+  );
+  let recovered = 0;
+  for (const row of rows) {
+    const res = await db.run(
+      `UPDATE tip_results
+       SET outcome = 'pending'
+       WHERE id = ? AND outcome = 'void' AND settled_at IS NULL`,
+      row.id
+    );
+    recovered += Number(res?.meta?.changes || 0);
+  }
+  return recovered;
+}
+
+/** Corners/cards/SOT/shots need team_stats; without them stay pending (not void). */
+function tipBetNeedsExtras(bet) {
+  const b = String(bet || '');
+  return (
+    b.startsWith('CORNERS_') ||
+    b.startsWith('CARDS_') ||
+    b.startsWith('SHOTS_') ||
+    b.startsWith('SOT_')
+  );
+}
+
+function tipExtrasReady(bet, extras) {
+  const b = String(bet || '');
+  if (b.startsWith('CORNERS_')) return extras.cornersTotal != null;
+  if (b.startsWith('CARDS_')) return extras.yellowsTotal != null;
+  if (b.startsWith('SHOTS_')) return extras.shotsTotal != null;
+  if (b.startsWith('SOT_')) return extras.shotsOnTargetTotal != null;
+  return true;
 }
 
 /**
@@ -1448,6 +1543,64 @@ export async function setMeta(db, key, value) {
   );
 }
 
+export async function getTipResultByMatchId(db, matchId) {
+  return db.first(`SELECT * FROM tip_results WHERE match_id = ?`, matchId);
+}
+
+/**
+ * Once Stats has a tip and the match has started (or tip already settled),
+ * the ledger market is frozen — panel must show the same label.
+ */
+export function isTipMarketLocked(tipRow, matchStatus) {
+  if (!tipRow?.suggested_bet) return false;
+  const outcome = tipRow.outcome != null ? String(tipRow.outcome) : 'pending';
+  if (outcome !== 'pending') return true;
+  const st = matchStatus != null ? String(matchStatus) : '';
+  return st === 'live' || st === 'finished';
+}
+
+/**
+ * Align predictions.suggested_bet → tip_results for live/finished locked tips.
+ * Keeps panel (predictions) in sync with Stats (tip_results); never rewrites settled markets.
+ */
+export async function repairPredictionsToLockedTips(db, limit = 200) {
+  const rows = await db.all(
+    `SELECT p.match_id, tr.suggested_bet AS locked_bet, tr.confidence_score AS locked_conf,
+            tr.value_edge AS locked_edge, tr.value_market AS locked_market
+     FROM predictions p
+     JOIN tip_results tr ON tr.match_id = p.match_id
+     JOIN matches m ON m.id = p.match_id
+     WHERE m.status IN ('finished', 'live')
+       AND tr.suggested_bet IS NOT NULL
+       AND (
+         p.suggested_bet IS NULL
+         OR p.suggested_bet != tr.suggested_bet
+         OR IFNULL(p.tip_tier, '') != 'playable'
+       )
+     LIMIT ?`,
+    Math.max(1, Number(limit) || 200)
+  );
+  let n = 0;
+  for (const r of rows) {
+    await db.run(
+      `UPDATE predictions
+       SET suggested_bet = ?,
+           tip_tier = 'playable',
+           confidence_score = COALESCE(?, confidence_score),
+           value_edge = COALESCE(?, value_edge),
+           value_market = COALESCE(?, value_market)
+       WHERE match_id = ?`,
+      r.locked_bet,
+      r.locked_conf,
+      r.locked_edge,
+      r.locked_market,
+      r.match_id
+    );
+    n += 1;
+  }
+  return n;
+}
+
 /** Snapshot tip for hit tracking. Only updates pending rows (keeps settled history). */
 export async function upsertTipResult(db, tip) {
   const modelProb =
@@ -1458,6 +1611,7 @@ export async function upsertTipResult(db, tip) {
           ? Number(tip.confidence_score) / 100
           : Number(tip.confidence_score)
         : null;
+  // Never rewrite market after settle. Pending rows may still refresh pre-kickoff.
   await db.run(
     `INSERT INTO tip_results (
        match_id, suggested_bet, confidence_score, value_edge, value_market,
@@ -1606,20 +1760,27 @@ export function evaluateSuggestedBet(bet, homeGoals, awayGoals, extras = {}) {
   }
 }
 
-/** Snapshot tips from predictions missing tip_results (upcoming; finished only if no stats epoch). */
+/** Snapshot tips from predictions missing tip_results (upcoming + finished on/after stats epoch). */
 export async function backfillPendingTips(db, limit = 60) {
   const epoch = await getMeta(db, 'stats_reset_at');
   const epochOk = epoch && /^\d{4}-\d{2}-\d{2}$/.test(String(epoch));
-  // After a Stats wipe, never re-materialize finished tips (same-day included).
-  // Only scheduled/live enter the ledger until they finish after the reset.
+  // After a Stats wipe, only re-ledger finished tips whose match_date is on/after
+  // the epoch (never resurrect wiped history from before the reset).
   const finishedSql = epochOk
-    ? ''
+    ? `OR (
+           m.status = 'finished'
+           AND m.home_goals IS NOT NULL
+           AND m.away_goals IS NOT NULL
+           AND DATE(m.match_date) >= DATE(?)
+         )`
     : `OR (
            m.status = 'finished'
            AND m.home_goals IS NOT NULL
            AND m.away_goals IS NOT NULL
          )`;
-  const params = [Math.max(1, Number(limit) || 60)];
+  const params = [];
+  if (epochOk) params.push(String(epoch));
+  params.push(Math.max(1, Number(limit) || 60));
   // Only tip_tier playable (or legacy NULL + conf>0). Never ledger tip_tier none.
   const rows = await db.all(
     `SELECT p.*, o.home_odds, o.draw_odds, o.away_odds, o.over25_odds, o.under25_odds,
@@ -1877,12 +2038,12 @@ export async function settlePendingTips(db, limit = 80) {
       shotsOnTargetTotal =
         Number(homeStat.shots_on_target_for) + Number(awayStat.shots_on_target_for);
     }
-    const hit = evaluateSuggestedBet(row.suggested_bet, row.home_goals, row.away_goals, {
-      cornersTotal,
-      yellowsTotal,
-      shotsTotal,
-      shotsOnTargetTotal,
-    });
+    const extras = { cornersTotal, yellowsTotal, shotsTotal, shotsOnTargetTotal };
+    // Wait for team_stats on prop markets instead of voiding as unverifiable.
+    if (tipBetNeedsExtras(row.suggested_bet) && !tipExtrasReady(row.suggested_bet, extras)) {
+      continue;
+    }
+    const hit = evaluateSuggestedBet(row.suggested_bet, row.home_goals, row.away_goals, extras);
     const outcome = hit == null ? 'void' : hit ? 'hit' : 'miss';
     await db.run(
       `UPDATE tip_results
@@ -2446,9 +2607,11 @@ export async function getTipSummary(db, win = null) {
 export async function getTipPerformance(db, win = null, { limit = 50, offset = 0 } = {}) {
   // Settle pending tips/combos on read; do NOT invent historical combos here.
   try {
+    await recoverPrematureVoidTips(db, 80);
     await backfillPendingTips(db, 80);
     await settlePendingTips(db, 200);
     await backfillTipOddsBands(db, 300);
+    await repairPredictionsToLockedTips(db, 200);
     await settlePendingCombos(db, 40);
   } catch (_) {
     /* keep read path available even if maintenance fails */

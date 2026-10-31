@@ -1,4 +1,4 @@
-{
+﻿{
   "name": "Houdini Bet",
   "short_name": "Houdini",
   "description": "Predicciones de fútbol (Poisson): tips, valor y ligas europeas",
@@ -9,13 +9,13 @@
   "lang": "es",
   "icons": [
     {
-      "src": "/icon-192.png?v=hb38",
+      "src": "/icons/icon-192.png?v=hb61",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/icon-512.png?v=hb38",
+      "src": "/icons/icon-512.png?v=hb61",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"

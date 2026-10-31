@@ -223,11 +223,13 @@ function armConsentTrap() {
 }
 
 function setShellInert(on) {
-  const ids = ['views', 'panel', 'panel-backdrop', 'global-banner'];
-  document.querySelectorAll('.v2-header, .site-footer, .skip-link').forEach((el) => {
-    if (on) el.setAttribute('inert', '');
-    else el.removeAttribute('inert');
-  });
+  const ids = ['views', 'panel', 'panel-backdrop', 'global-banner', 'boot-splash'];
+  document
+    .querySelectorAll('.v2-header, .v2-main, .site-footer, .skip-link, .app-tabbar')
+    .forEach((el) => {
+      if (on) el.setAttribute('inert', '');
+      else el.removeAttribute('inert');
+    });
   ids.forEach((id) => {
     const el = document.getElementById(id);
     if (!el) return;
@@ -381,6 +383,8 @@ function closeConsentGate() {
   }
 }
 
+let appBootStarted = false;
+
 function acceptConsent(choice) {
   if (!isConsentAgeChecked()) return;
   if (choice === 'custom') {
@@ -393,9 +397,14 @@ function acceptConsent(choice) {
   trackEvent('consent_accept', { choice: consentState?.choice || choice });
   const hash = location.hash || '';
   const view = normalizeViewHash(hash);
-  if (isLegalViewId(view) || view === 'ajustes' || view === 'premium') {
+  if (isLegalViewId(view) || view === 'ajustes' || view === 'premium' || view === 'admin') {
     setActiveNav(hash || `#${view}`, { pushHash: false });
+  } else if (hash) {
+    setActiveNav(hash, { pushHash: false });
+  } else {
+    setActiveNav('#partidos', { pushHash: false });
   }
+  startAppAfterConsent();
 }
 
 /** No third-party telemetry yet — gated for future use. */
@@ -410,6 +419,40 @@ function trackEvent(name, payload) {
   }
 }
 
+/** First-party page hit for admin IP log (Worker D1). Not third-party analytics. */
+function reportPageHit() {
+  if (!hasValidConsent()) return;
+  try {
+    const path = truncateStr(
+      `${location.pathname || '/'}${location.hash || ''}`,
+      240
+    );
+    const payload = JSON.stringify({
+      path,
+      referrer: document.referrer || '',
+    });
+    const url = `${API}/api/v1/telemetry/hit`;
+    if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+      const blob = new Blob([payload], { type: 'application/json' });
+      if (navigator.sendBeacon(url, blob)) return;
+    }
+    fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: payload,
+      credentials: 'same-origin',
+      keepalive: true,
+    }).catch(() => {});
+  } catch (_) {
+    /* ignore */
+  }
+}
+
+function truncateStr(s, max) {
+  const t = String(s || '');
+  return t.length > max ? t.slice(0, max) : t;
+}
+
 function persistFiltersIfAllowed() {
   if (!privacyPrefs.rememberFilters) {
     try {
@@ -422,7 +465,6 @@ function persistFiltersIfAllowed() {
   writeJsonStore(FILTERS_KEY, {
     windowMode,
     selectedDate,
-    scopeFilter,
     statusFilter,
   });
 }
@@ -441,9 +483,6 @@ function restoreFiltersIfAllowed() {
     statusFilter = saved.statusFilter;
   } else {
     statusFilter = 'all';
-  }
-  if (['all', 'clubs', 'intl'].includes(saved.scopeFilter)) {
-    scopeFilter = saved.scopeFilter;
   }
 }
 
@@ -495,19 +534,11 @@ function syncPrivacyToggles() {
   }
 }
 
-function syncScopeChips() {
-  document.querySelectorAll('.browse-chip[data-scope], .tb-chip[data-scope]').forEach((chip) => {
-    const on = (chip.dataset.scope || 'all') === scopeFilter;
-    chip.classList.toggle('is-active', on);
-    chip.classList.toggle('active', on);
-    chip.setAttribute('aria-pressed', on ? 'true' : 'false');
-  });
-}
-
 /** 'hoy' | 'manana' | 'ayer' | 'date' */
 let windowMode = 'hoy';
 let selectedDate = new Date().toISOString().slice(0, 10);
-let scopeFilter = 'all'; // all | clubs | intl
+/** Always all competitions (scope chips removed). */
+let scopeFilter = 'all';
 let liveOnly = false;
 let statusFilter = 'all';
 let selectedMatchId = null;
@@ -526,9 +557,9 @@ const LIGAS_FOLDERS = [
     badge: 'UEFA',
     flagCountry: null,
     leagues: [
-      { apiId: 2, name: 'UEFA Champions League', tag: 'UCL' },
-      { apiId: 3, name: 'UEFA Europa League', tag: 'UEL' },
-      { apiId: 5, name: 'UEFA Nations League', tag: 'UNL' },
+      { apiId: 2, name: 'Champions League', tag: 'UCL' },
+      { apiId: 3, name: 'Europa League', tag: 'UEL' },
+      { apiId: 5, name: 'Liga de Naciones', tag: 'UNL' },
     ],
   },
   {
@@ -545,7 +576,7 @@ const LIGAS_FOLDERS = [
     flagCountry: 'Spain',
     leagues: [
       { apiId: 140, name: 'LaLiga', tag: '1ª' },
-      { apiId: 141, name: 'LaLiga 2', tag: '2ª' },
+      { apiId: 141, name: 'LaLiga Hypermotion', tag: '2ª' },
     ],
   },
   {
@@ -583,8 +614,308 @@ let hoyMarketTab = 'top';
 /** Soft-gate caps (ignored while PREMIUM_UNLOCKED). */
 const FREE_TOP_CAP = 10;
 const FREE_VALOR_CAP = 5;
-/** Content unlocked; Premium tab still says “Pronto” / no payment. */
+/**
+ * Legacy soft-caps flag (Top10 caps etc.). Content paywall is now
+ * `contentUnlocked()` = premiumState.premium (even while this is true).
+ */
 const PREMIUM_UNLOCKED = true;
+
+function contentUnlocked() {
+  return Boolean(premiumState.premium);
+}
+
+/** @deprecated use contentUnlocked — kept as alias for older call sites */
+function tipsUnlocked() {
+  return contentUnlocked();
+}
+
+/** Blur mask + Ver planes CTA for free (logged-in) users. */
+function hbCensorWrap(html, { block = false } = {}) {
+  if (!html) return '';
+  if (contentUnlocked()) return html;
+  const cls = block ? 'hb-censor hb-censor--block' : 'hb-censor hb-censor--inline';
+  return `<div class="${cls}" data-hb-censor role="button" tabindex="0" aria-label="${escapeHtml(t('censor.aria'))}">
+    <div class="hb-censor__veil" aria-hidden="true">${html}</div>
+    <div class="hb-censor__lock" aria-hidden="true">
+      <span class="hb-censor__lock-icon"></span>
+      <span class="hb-censor__lock-title">${escapeHtml(t('censor.title'))}</span>
+      <span class="hb-censor__lock-sub">${escapeHtml(t('censor.sub'))}</span>
+      <span class="hb-censor__lock-btn">${escapeHtml(t('censor.cta'))}</span>
+    </div>
+  </div>`;
+}
+
+function hbPillTone(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 'muted';
+  if (n >= 0.6) return 'hi';
+  if (n >= 0.4) return 'mid';
+  return 'lo';
+}
+
+function hbPillHtml(v) {
+  if (v == null || !Number.isFinite(Number(v))) {
+    return `<span class="hb-pill hb-pill--muted">—</span>`;
+  }
+  const n = Number(v);
+  return `<span class="hb-pill hb-pill--${hbPillTone(n)}" data-target="${n}">0%</span>`;
+}
+
+/** Trend table with colored pills (blurred) for free users — Oddster-style. */
+function lockedTrendTableHtml({ title, homeName, awayName, metrics }) {
+  if (!(metrics || []).length) return '';
+  const rows = (metrics || [])
+    .map(
+      (m) => `<tr>
+        <td class="hb-trend__metric">${escapeHtml(m.label)}</td>
+        <td>${hbPillHtml(m.home)}</td>
+        <td>${hbPillHtml(m.away)}</td>
+        <td>${hbPillHtml(m.match)}</td>
+      </tr>`
+    )
+    .join('');
+  const table = `<section class="hb-trend">
+    <h3 class="hb-trend__title">${escapeHtml(title)}</h3>
+    <div class="hb-trend__wrap">
+      <table class="hb-trend__table">
+        <thead><tr>
+          <th>Métrica</th>
+          <th>${escapeHtml(homeName || 'Local')}</th>
+          <th>${escapeHtml(awayName || 'Visit.')}</th>
+          <th>Partido</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  </section>`;
+  return hbCensorWrap(table, { block: true });
+}
+
+/** Build one trend table body (optional avg row + metric pills). */
+function mpTrendTableSection({
+  titleText,
+  homeName,
+  awayName,
+  ladderRows,
+  avgRowHtml = '',
+}) {
+  const metricRows = (ladderRows || [])
+    .map(
+      (m) => `<tr>
+        <td class="mp-trend-table__metric">${escapeHtml(m.label)}</td>
+        <td>${hbPillHtml(m.home)}</td>
+        <td>${hbPillHtml(m.away)}</td>
+        <td>${hbPillHtml(m.match)}</td>
+      </tr>`
+    )
+    .join('');
+  if (!avgRowHtml && !metricRows) return '';
+  return `<section class="mp-trend-table">
+    <h3 class="mp-trend-table__title">${escapeHtml(titleText)}</h3>
+    <div class="mp-trend-table__wrap">
+      <table>
+        <thead><tr>
+          <th>${escapeHtml(t('panel.metric'))}</th>
+          <th>${escapeHtml(homeName || t('panel.home'))}</th>
+          <th>${escapeHtml(awayName || t('panel.awayShort'))}</th>
+          <th>${escapeHtml(t('panel.match'))}</th>
+        </tr></thead>
+        <tbody>${avgRowHtml}${metricRows}</tbody>
+      </table>
+    </div>
+  </section>`;
+}
+
+/**
+ * Premium market tab: Oddster-style summary + Over table + optional Under table.
+ * Data from expected + ladderRows / underRows — no new API fields.
+ */
+function marketTrendUnlockedHtml({
+  title,
+  totalLabel,
+  homeName,
+  awayName,
+  homeCrest,
+  awayCrest,
+  expected,
+  ladderRows,
+  underRows = null,
+  beforeTablesHtml = '',
+  footerNote = '',
+}) {
+  const homeExp = expected?.home != null ? Number(expected.home) : null;
+  const awayExp = expected?.away != null ? Number(expected.away) : null;
+  const matchExp =
+    expected?.match != null
+      ? Number(expected.match)
+      : homeExp != null && awayExp != null
+        ? Number((homeExp + awayExp).toFixed(2))
+        : null;
+  const h = Number.isFinite(homeExp) ? homeExp : 0;
+  const a = Number.isFinite(awayExp) ? awayExp : 0;
+  const sum = h + a;
+  const homeShare = sum > 0 ? (h / sum) * 100 : 50;
+  const awayShare = 100 - homeShare;
+  let diffHtml = '';
+  if (sum > 0 && Math.abs(h - a) > 0.001) {
+    const lead = h > a ? homeName || 'Local' : awayName || 'Visitante';
+    const pct = Math.round((Math.abs(h - a) / sum) * 100);
+    diffHtml = `<p class="mp-trend-summary__diff">Diferencia estimada: <strong>${escapeHtml(
+      lead
+    )} ${pct}%</strong></p>`;
+  }
+  const fmtExpAttr = (v) => {
+    if (v == null || !Number.isFinite(Number(v))) {
+      return `<span class="mp-trend-table__num">—</span>`;
+    }
+    const n = Number(v);
+    return `<span class="mp-trend-table__num" data-count-to="${n}" data-count-decimals="1">0.0</span>`;
+  };
+  const fmtExpVal = (v, cls, tag = 'span') => {
+    if (v == null || !Number.isFinite(Number(v))) {
+      return `<${tag} class="${cls}">—</${tag}>`;
+    }
+    const n = Number(v);
+    return `<${tag} class="${cls}" data-count-to="${n}" data-count-decimals="1">0.0</${tag}>`;
+  };
+  const summary = `<section class="mp-trend-summary">
+    <p class="mp-trend-summary__eyebrow">${escapeHtml(totalLabel || 'Promedio estimado')}</p>
+    ${fmtExpVal(matchExp, 'mp-trend-summary__total', 'p')}
+    <div class="mp-trend-summary__teams">
+      <div class="mp-trend-summary__side">
+        ${crestHtml(homeName, homeCrest, 'sm')}
+        <span class="mp-trend-summary__name">${escapeHtml(homeName || 'Local')}</span>
+        ${fmtExpVal(homeExp, 'mp-trend-summary__val')}
+      </div>
+      <div class="mp-trend-summary__side mp-trend-summary__side--away">
+        ${crestHtml(awayName, awayCrest, 'sm')}
+        <span class="mp-trend-summary__name">${escapeHtml(awayName || 'Visitante')}</span>
+        ${fmtExpVal(awayExp, 'mp-trend-summary__val')}
+      </div>
+    </div>
+    <div class="mp-trend-summary__bar" aria-hidden="true">
+      <span class="mp-trend-summary__bar-home" data-bar-to="${homeShare.toFixed(1)}" style="width:0%"></span>
+      <span class="mp-trend-summary__bar-away" data-bar-to="${awayShare.toFixed(1)}" style="width:0%"></span>
+    </div>
+    ${diffHtml}
+    ${footerNote ? `<p class="mp-trend-summary__note muted">${footerNote}</p>` : ''}
+  </section>`;
+
+  const avgRow = `<tr>
+    <td class="mp-trend-table__metric">${escapeHtml(t('panel.average'))}</td>
+    <td>${fmtExpAttr(homeExp)}</td>
+    <td>${fmtExpAttr(awayExp)}</td>
+    <td>${fmtExpAttr(matchExp)}</td>
+  </tr>`;
+  const overTable = mpTrendTableSection({
+    titleText: t('panel.trendsOf', { title }),
+    homeName,
+    awayName,
+    ladderRows,
+    avgRowHtml: avgRow,
+  });
+  const underTable =
+    Array.isArray(underRows) && underRows.length
+      ? mpTrendTableSection({
+          titleText: t('panel.underTrendsOf', { title }),
+          homeName,
+          awayName,
+          ladderRows: underRows,
+        })
+      : '';
+  return `${summary}${beforeTablesHtml || ''}${overTable}${underTable}`;
+}
+
+/** Goals-tab BTTS block: one clear Yes % + subtle No — not a 3-col H/A/Match grid. */
+function bttsPanelHtml(pred, { leagueRate = null } = {}) {
+  const yes = pred?.btts_yes_prob != null ? Number(pred.btts_yes_prob) : null;
+  const no =
+    pred?.btts_no_prob != null
+      ? Number(pred.btts_no_prob)
+      : yes != null && Number.isFinite(yes)
+        ? 1 - yes
+        : null;
+  if (yes == null || !Number.isFinite(yes)) return '';
+  const yesBar = Math.max(0, Math.min(100, Math.round(yes * 100)));
+  const league =
+    leagueRate != null && Number.isFinite(Number(leagueRate))
+      ? `<span class="mp-btts__league muted">${escapeHtml(t('panel.leagueAvg'))} · ${(
+          Number(leagueRate) * 100
+        ).toFixed(0)}%</span>`
+      : '';
+  const noHtml =
+    no != null && Number.isFinite(no)
+      ? `<span class="mp-btts__no">${escapeHtml(t('panel.bttsNo'))} · <span data-target="${no}">0%</span></span>`
+      : '';
+  const meta =
+    noHtml || league
+      ? `<div class="mp-btts__meta">${noHtml}${noHtml && league ? `<span class="mp-btts__dot" aria-hidden="true"></span>` : ''}${league}</div>`
+      : '';
+  return `<section class="mp-btts" aria-label="${escapeHtml(t('panel.btts'))}">
+    <div class="mp-btts__head">
+      ${MP_STAT_ICONS.btts}
+      <h3 class="mp-btts__title">${escapeHtml(t('panel.btts'))}</h3>
+    </div>
+    <div class="mp-btts__hero">
+      <div class="mp-btts__yes">
+        <span class="mp-btts__yes-label">${escapeHtml(t('panel.bttsYes'))}</span>
+        <span class="mp-btts__pct" data-target="${yes}">0%</span>
+      </div>
+      <div class="mp-btts__track" aria-hidden="true">
+        <span class="mp-btts__fill" data-bar-to="${yesBar}" style="width:0%"></span>
+      </div>
+    </div>
+    ${meta}
+  </section>`;
+}
+
+function premiumBannerHtml() {
+  if (!authUser || contentUnlocked()) return '';
+  return `<aside class="premium-banner" data-hb-censor role="button" tabindex="0" aria-label="Ver planes Premium">
+    <span class="premium-banner__badge">OFERTA ESPECIAL</span>
+    <div class="premium-banner__body">
+      <div class="premium-banner__copy">
+        <h3 class="premium-banner__title">Houdini Premium</h3>
+        <p class="premium-banner__lead">Tip Houdini y estadísticas avanzadas del partido.</p>
+        <ul class="premium-banner__list">
+          <li>Tip del partido + 1X2</li>
+          <li>Tablas Goles · Tiros · Córners · Tarjetas</li>
+          <li>Top 10 y combinadas Semanal</li>
+          <li>Probabilidades en vivo</li>
+        </ul>
+        <span class="premium-banner__cta">Ver planes</span>
+      </div>
+    </div>
+  </aside>`;
+}
+
+function refreshTipsLockedViews() {
+  try {
+    if (typeof renderPartidosList === 'function' && cachedMatches?.length) {
+      renderPartidosList();
+    }
+  } catch (_) {
+    /* ignore */
+  }
+  if (typeof renderTop3 === 'function') {
+    renderTop3().catch(() => {});
+  }
+  if (cachedWeeklyPayload && typeof renderWeeklyCombos === 'function') {
+    try {
+      renderWeeklyCombos(cachedWeeklyPayload);
+    } catch (_) {
+      /* ignore */
+    }
+  }
+  if (
+    selectedMatchId &&
+    typeof openPrediction === 'function' &&
+    (document.getElementById('panel')?.classList.contains('is-open') ||
+      document.body.classList.contains('has-browse-selection'))
+  ) {
+    openPrediction(selectedMatchId).catch(() => {});
+  }
+}
 /** Cached combos for Cuotas target calculator. */
 let cachedOddsBandBets = [];
 /** Target cuota for Cuotas calculator (default 3.0). */
@@ -631,6 +962,19 @@ const COUNTRY_ES = {
   'United States': 'EE. UU.',
   World: 'Internacional',
   Europe: 'Europa',
+};
+
+/** Display names for allowlist leagues (AF api_id). */
+const LEAGUE_ES_BY_API = {
+  140: 'LaLiga',
+  141: 'LaLiga Hypermotion',
+  39: 'Premier League',
+  135: 'Serie A',
+  78: 'Bundesliga',
+  61: 'Ligue 1',
+  5: 'Liga de Naciones',
+  2: 'Champions League',
+  3: 'Europa League',
 };
 
 const BET_LABELS = {
@@ -706,12 +1050,13 @@ const FAMILY_LABELS = {
 /** Align with predictionService MIN_VALUE (5% edge vs fair book). */
 const MIN_VALUE_EDGE = 0.05;
 
-/** "15" → "1,5" ; "105" → "10,5" */
+/** "15" → "1,5" (ES) / "1.5" (EN) ; "105" → "10,5" / "10.5" */
 function lineFromSuffix(suffix) {
   const s = String(suffix || '');
-  if (!/^\d+$/.test(s)) return s.replace('.', ',');
+  const sep = getUiLang() === 'en' ? '.' : ',';
+  if (!/^\d+$/.test(s)) return s.replace(/[.,]/, sep);
   if (s.length === 1) return s;
-  return `${s.slice(0, -1)},${s.slice(-1)}`;
+  return `${s.slice(0, -1)}${sep}${s.slice(-1)}`;
 }
 
 function labelBetFallback(code, homeName, awayName) {
@@ -719,25 +1064,26 @@ function labelBetFallback(code, homeName, awayName) {
   if (!raw) return '—';
   const home = String(homeName || '').trim();
   const away = String(awayName || '').trim();
-  if (raw === 'HOME_WIN') return home ? `Victoria ${home}` : 'Victoria local';
-  if (raw === 'AWAY_WIN') return away ? `Victoria ${away}` : 'Victoria visitante';
-  if (raw === 'DRAW') return 'Empate';
-  if (raw === 'BTTS_YES') return 'Ambos marcan — Sí';
-  if (raw === 'BTTS_NO') return 'Ambos marcan — No';
+  const en = getUiLang() === 'en';
+  if (raw === 'HOME_WIN') return home ? t('bet.winNamed', { name: home }) : t('bet.winHome');
+  if (raw === 'AWAY_WIN') return away ? t('bet.winNamed', { name: away }) : t('bet.winAway');
+  if (raw === 'DRAW') return t('bet.DRAW');
+  if (raw === 'BTTS_YES') return t('bet.BTTS_YES');
+  if (raw === 'BTTS_NO') return t('bet.BTTS_NO');
 
   const m = raw.match(/^(HOME_|AWAY_|CORNERS_|CARDS_|SHOTS_|SOT_)?(OVER|UNDER)_(\d+)$/);
   if (!m) return code;
   const scope = m[1] || '';
-  const side = m[2] === 'OVER' ? 'Más de' : 'Menos de';
+  const side = m[2] === 'OVER' ? (en ? 'Over' : 'Más de') : en ? 'Under' : 'Menos de';
   const line = lineFromSuffix(m[3]);
-  let unit = 'goles';
+  let unit = en ? 'goals' : 'goles';
   let who = '';
-  if (scope === 'HOME_') who = home ? `${home} · ` : 'Local · ';
-  else if (scope === 'AWAY_') who = away ? `${away} · ` : 'Visitante · ';
-  else if (scope === 'CORNERS_') unit = 'córners';
-  else if (scope === 'CARDS_') unit = 'amarillas';
-  else if (scope === 'SHOTS_') unit = 'tiros';
-  else if (scope === 'SOT_') unit = 'tiros a puerta';
+  if (scope === 'HOME_') who = home ? `${home} · ` : en ? 'Home · ' : 'Local · ';
+  else if (scope === 'AWAY_') who = away ? `${away} · ` : en ? 'Away · ' : 'Visitante · ';
+  else if (scope === 'CORNERS_') unit = en ? 'corners' : 'córners';
+  else if (scope === 'CARDS_') unit = en ? 'cards' : 'amarillas';
+  else if (scope === 'SHOTS_') unit = en ? 'shots' : 'tiros';
+  else if (scope === 'SOT_') unit = en ? 'shots on target' : 'tiros a puerta';
   return `${who}${side} ${line} ${unit}`;
 }
 
@@ -935,18 +1281,24 @@ function labelBet(code, homeName, awayName) {
   const home = String(homeName || '').trim();
   const away = String(awayName || '').trim();
   const raw = String(code).toUpperCase();
-  if (raw === 'HOME_WIN') return home ? `Victoria ${home}` : BET_LABELS.HOME_WIN;
-  if (raw === 'AWAY_WIN') return away ? `Victoria ${away}` : BET_LABELS.AWAY_WIN;
+  if (raw === 'HOME_WIN') return home ? t('bet.winNamed', { name: home }) : t('bet.HOME_WIN');
+  if (raw === 'AWAY_WIN') return away ? t('bet.winNamed', { name: away }) : t('bet.AWAY_WIN');
   if (raw.startsWith('HOME_') && home) {
     return labelBetFallback(raw, home, away);
   }
   if (raw.startsWith('AWAY_') && away) {
     return labelBetFallback(raw, home, away);
   }
+  const key = `bet.${raw}`;
+  const translated = t(key);
+  if (translated !== key) return translated;
   return BET_LABELS[code] || labelBetFallback(code, home, away);
 }
 
 function labelFamily(family) {
+  const key = `family.${family}`;
+  const translated = t(key);
+  if (translated !== key) return translated;
   return FAMILY_LABELS[family] || family || '—';
 }
 
@@ -1098,6 +1450,7 @@ const FOTMOB_CREST_IDS = {
   'paris sg': 9847,
   'paris s g': 9847,
   psg: 9847,
+  'paris fc': 6379,
   elche: 10268,
   'elche cf': 10268,
   'rc deportivo': 9783,
@@ -1107,8 +1460,76 @@ const FOTMOB_CREST_IDS = {
   'bayer 04': 8178,
   leverkusen: 8178,
   'bayer leverkusen fc': 8178,
+  'racing santander': 8696,
+  'racing de santander': 8696,
+  'real racing club': 8696,
+  'real racing club de santander': 8696,
+  'r. racing club': 8696,
+  'r racing club': 8696,
+  'racing club': 8696,
+  racing: 8696,
+  'bayern munich': 9823,
+  'bayern munchen': 9823,
+  'fc bayern munich': 9823,
+  'fc bayern munchen': 9823,
+  bayern: 9823,
+  'borussia dortmund': 9789,
+  dortmund: 9789,
+  bvb: 9789,
+  'rb leipzig': 178475,
+  leipzig: 178475,
+  'eintracht frankfurt': 9810,
+  frankfurt: 9810,
+  wolfsburg: 8721,
+  'vfl wolfsburg': 8721,
+  'borussia monchengladbach': 9788,
+  monchengladbach: 9788,
+  gladbach: 9788,
+  hoffenheim: 8226,
+  'tsg hoffenheim': 8226,
+  freiburg: 8358,
+  'sc freiburg': 8358,
+  'sport-club freiburg': 8358,
+  'sport club freiburg': 8358,
+  mainz: 9905,
+  'mainz 05': 9905,
+  'fsv mainz 05': 9905,
+  augsburg: 8406,
+  'fc augsburg': 8406,
+  stuttgart: 10269,
+  'vfb stuttgart': 10269,
+  'werder bremen': 8697,
+  'sv werder bremen': 8697,
+  bremen: 8697,
+  'union berlin': 8149,
+  '1. fc union berlin': 8149,
+  '1 fc union berlin': 8149,
+  heidenheim: 10030,
+  '1. fc heidenheim': 10030,
+  '1 fc heidenheim': 10030,
+  'st pauli': 8152,
+  'fc st. pauli': 8152,
+  'fc st pauli': 8152,
+  'holstein kiel': 9785,
+  kiel: 9785,
+  koln: 8722,
+  '1. fc koln': 8722,
+  '1 fc koln': 8722,
+  'fc koln': 8722,
+  cologne: 8722,
+  paderborn: 8460,
+  'sc paderborn': 8460,
+  'sc paderborn 07': 8460,
+  elversberg: 8232,
+  'sv elversberg': 8232,
+  schalke: 10189,
+  'fc schalke 04': 10189,
+  'schalke 04': 10189,
+  'hamburger sv': 9790,
+  hamburg: 9790,
+  hsv: 9790,
 };
-const AF_BROKEN_CREST_IDS = new Set([1102, 85, 3751, 168]);
+const AF_BROKEN_CREST_IDS = new Set([1102, 85, 3751, 168, 159, 174, 1357, 1113]);
 
 function normalizeCrestKey(name) {
   return String(name || '')
@@ -1201,8 +1622,9 @@ function crestsRowHtml(homeName, homeLogo, awayName, awayLogo) {
 function formatMatchTimeShort(value) {
   const d = parseMatchDate(value);
   if (!d) return '';
-  return d.toLocaleTimeString('es-ES', {
-    timeZone: 'Europe/Madrid',
+  const locale = getUiLocale();
+  return d.toLocaleTimeString(locale, {
+    timeZone: getUiTimeZone(),
     hour: '2-digit',
     minute: '2-digit',
   });
@@ -1332,7 +1754,9 @@ function liveTipChip(tip) {
   if (!tip || !tip.label) return '';
   const meta = LIVE_TIP_META[tip.status] || LIVE_TIP_META.unknown;
   const prob = tip.prob != null ? ` · ${Math.round(Number(tip.prob) * 100)}%` : '';
-  return `<span class="live-tip ${meta.cls}">${escapeHtml(meta.label)}${escapeHtml(prob)}</span>`;
+  return hbCensorWrap(
+    `<span class="live-tip ${meta.cls}">${escapeHtml(meta.label)}${escapeHtml(prob)}</span>`
+  );
 }
 
 function liveProbsRow(live) {
@@ -1340,11 +1764,11 @@ function liveProbsRow(live) {
   const h = Math.round(Number(live.homeWin || 0) * 100);
   const d = Math.round(Number(live.draw || 0) * 100);
   const a = Math.round(Number(live.awayWin || 0) * 100);
-  return `<span class="live-probs" aria-label="Probabilidades en vivo: local ${h}%, empate ${d}%, visitante ${a}%">
+  return hbCensorWrap(`<span class="live-probs" aria-label="Probabilidades en vivo: local ${h}%, empate ${d}%, visitante ${a}%">
     <span class="live-probs__p live-probs__p--home">${h}%</span>
     <span class="live-probs__p live-probs__p--draw">${d}%</span>
     <span class="live-probs__p live-probs__p--away">${a}%</span>
-  </span>`;
+  </span>`);
 }
 
 /** Compact live strip for the match list row. */
@@ -1393,7 +1817,8 @@ function livePanelHtml(live, homeName, awayName) {
         ${redChip}
         <span class="mp-live__left">Quedan ~${Number(live.remaining || 0)}′</span>
       </div>
-      <div class="mp-live__bar" role="img" aria-label="Probabilidades en vivo: local ${h}%, empate ${d}%, visitante ${a}%">
+      ${hbCensorWrap(
+        `<div class="mp-live__bar" role="img" aria-label="Probabilidades en vivo: local ${h}%, empate ${d}%, visitante ${a}%">
         <span class="mp-live__seg mp-live__seg--home" style="flex:${Math.max(h, 1)}"></span>
         <span class="mp-live__seg mp-live__seg--draw" style="flex:${Math.max(d, 1)}"></span>
         <span class="mp-live__seg mp-live__seg--away" style="flex:${Math.max(a, 1)}"></span>
@@ -1408,15 +1833,26 @@ function livePanelHtml(live, homeName, awayName) {
         </span>`
           )
           .join('')}
-      </div>
+      </div>`,
+        { block: true }
+      )}
       ${
         live.tip
-          ? `<div class="mp-live__tip">
+          ? hbCensorWrap(
+              `<div class="mp-live__tip">
               <span class="mp-live__tip-key">Tip · ${escapeHtml(
                 labelBet(live.tip.label, homeName, awayName)
               )}</span>
-              ${liveTipChip(live.tip)}
-            </div>`
+              <span class="live-tip ${(LIVE_TIP_META[live.tip.status] || LIVE_TIP_META.unknown).cls}">${escapeHtml(
+                (LIVE_TIP_META[live.tip.status] || LIVE_TIP_META.unknown).label
+              )}${
+                live.tip.prob != null
+                  ? ` · ${Math.round(Number(live.tip.prob) * 100)}%`
+                  : ''
+              }</span>
+            </div>`,
+              { block: true }
+            )
           : ''
       }
     </section>`;
@@ -1430,7 +1866,7 @@ function browseMidHtml(m) {
         : '0-0';
     const min = m.elapsedMinute != null ? `${Number(m.elapsedMinute)}'` : 'LIVE';
     return `
-      <span class="league-match__live"><span class="league-match__live-dot"></span>En vivo</span>
+      <span class="league-match__live"><span class="league-match__live-dot"></span>${escapeHtml(t('chip.live'))}</span>
       <span class="league-match__score league-match__score--live">${escapeHtml(score)}</span>
       <span class="league-match__minute">${escapeHtml(min)}</span>`;
   }
@@ -1454,12 +1890,28 @@ function sumRecentAvg(recentAvgs, key) {
   return Number(((Number(h) || 0) + (Number(a) || 0)).toFixed(2));
 }
 
-function keyStatCard({ title, valueHtml, barPct, tone = 'accent', sub = '' }) {
+const MP_STAT_ICONS = {
+  /* O2.5: portería + dos balones (más denso) */
+  o25: `<svg class="mp-stat__icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><path d="M5 19V8h14v11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="9.2" cy="13.2" r="2.35" fill="none" stroke="currentColor" stroke-width="1.35"/><circle cx="14.8" cy="13.2" r="2.35" fill="none" stroke="currentColor" stroke-width="1.35"/></svg>`,
+  /* O1.5: misma portería + un balón (más simple) */
+  o15: `<svg class="mp-stat__icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><path d="M5 19V8h14v11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="13.4" r="2.6" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>`,
+  /* BTTS: dos balones pequeños (ambos equipos) */
+  btts: `<svg class="mp-stat__icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><circle cx="8.2" cy="12" r="2.4" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="15.8" cy="12" r="2.4" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>`,
+  /* Goles: balón simple */
+  goals: `<svg class="mp-stat__icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="6.2" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>`,
+  /* Córners: banderín de córner */
+  corners: `<svg class="mp-stat__icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><path d="M7 21V4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M7 4.2l11 3.4-11 3.4V4.2z" fill="currentColor" opacity=".88"/><path d="M4 21h8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>`,
+  /* Tarjetas: amarilla + roja superpuestas */
+  cards: `<svg class="mp-stat__icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><rect x="5.5" y="4.5" width="8.5" height="13.5" rx="1.2" fill="#eab308" stroke="currentColor" stroke-width="1.15" transform="rotate(-12 9.75 11.25)"/><rect x="10" y="5.5" width="8.5" height="13.5" rx="1.2" fill="#ef4444" stroke="currentColor" stroke-width="1.15" transform="rotate(10 14.25 12.25)"/></svg>`,
+};
+
+function keyStatCard({ title, valueHtml, barPct, tone = 'accent', sub = '', iconHtml = '' }) {
   const width = Math.max(0, Math.min(100, Math.round(Number(barPct) || 0)));
   return `
     <article class="mp-stat">
       <div class="mp-stat__head">
         <span class="mp-stat__title">${escapeHtml(title)}</span>
+        ${iconHtml || ''}
       </div>
       <div class="mp-stat__value">${valueHtml}</div>
       <div class="mp-stat__track" aria-hidden="true">
@@ -1469,20 +1921,51 @@ function keyStatCard({ title, valueHtml, barPct, tone = 'accent', sub = '' }) {
     </article>`;
 }
 
-function pctStatCard(title, prob) {
+/** General «Probabilidades clave» cards — visible for free (no Premium censor). */
+function pctStatCard(title, prob, leagueRate = null, iconHtml = '') {
   const p = pct(prob);
-  if (p == null) return '';
+  const rate =
+    leagueRate != null && Number.isFinite(Number(leagueRate)) ? Number(leagueRate) : null;
+  const sub =
+    rate != null
+      ? `<span class="muted">${escapeHtml(t('panel.leagueAvg'))} ${Math.round(rate * 100)}%</span>`
+      : `<span class="muted">${escapeHtml(t('panel.leagueAvg'))} —</span>`;
+  if (p == null) {
+    return keyStatCard({
+      title,
+      valueHtml: `<span class="mp-stat__num">—</span>`,
+      barPct: 0,
+      tone: 'muted',
+      sub,
+      iconHtml,
+    });
+  }
   const n = Math.round(p * 100);
   return keyStatCard({
     title,
     valueHtml: `<span class="mp-stat__num" data-count-to="${n}" data-count-suffix="%">0%</span>`,
     barPct: n,
     tone: n >= 60 ? 'accent' : n >= 45 ? 'warn' : 'muted',
+    sub,
+    iconHtml,
   });
 }
 
-function avgStatCard(title, value, scale, leagueAvg = null) {
-  if (value == null || Number.isNaN(Number(value))) return '';
+function avgStatCard(title, value, scale, leagueAvg = null, iconHtml = '') {
+  const sub =
+    leagueAvg != null && Number.isFinite(Number(leagueAvg))
+      ? `<span class="muted">${escapeHtml(t('panel.leagueAvg'))} ${Number(leagueAvg).toFixed(1)}</span>`
+      : `<span class="muted">${escapeHtml(t('panel.leagueAvg'))} —</span>`;
+  if (value == null || Number.isNaN(Number(value))) {
+    return keyStatCard({
+      title,
+      valueHtml: `<span class="mp-stat__num">—</span>`,
+      barPct: 0,
+      tone: 'muted',
+      sub,
+      iconHtml,
+    });
+  }
   const n = Number(value);
   const ref = leagueAvg != null && Number(leagueAvg) > 0 ? Number(leagueAvg) : scale;
   const bar = ref > 0 ? (n / ref) * 100 : 0;
@@ -1491,16 +1974,13 @@ function avgStatCard(title, value, scale, leagueAvg = null) {
   if (ratio >= 0.9 && ratio <= 1.1) tone = 'accent';
   else if (ratio < 0.9) tone = 'muted';
   else tone = 'accent';
-  const sub =
-    leagueAvg != null
-      ? `<span class="muted">Media liga ${Number(leagueAvg).toFixed(1)}</span>`
-      : '';
   return keyStatCard({
     title,
     valueHtml: `<span class="mp-stat__num">${n.toFixed(2)}</span>`,
     barPct: bar,
     tone,
     sub,
+    iconHtml,
   });
 }
 
@@ -1510,9 +1990,10 @@ function expectedCardHtml({ title, homeName, awayName, homeLogo, awayLogo, homeE
     if (v == null) return '<span class="ladder-pill ladder-pill--muted">—</span>';
     return `<span class="ladder-pill ladder-pill--hi">${Number(v).toFixed(1)}</span>`;
   };
-  return `
+  return hbCensorWrap(
+    `
     <div class="ladder-expected">
-      <div class="ladder-expected__eyebrow">Expected</div>
+      <div class="ladder-expected__eyebrow">${escapeHtml(t('panel.expected'))}</div>
       <h3 class="ladder-expected__title">${escapeHtml(title)}</h3>
       <div class="ladder-expected__teams">
         <div class="ladder-expected__side">
@@ -1527,7 +2008,165 @@ function expectedCardHtml({ title, homeName, awayName, homeLogo, awayLogo, homeE
           ${pill(awayExp)}
         </div>
       </div>
-    </div>`;
+    </div>`,
+    { block: true }
+  );
+}
+
+/** Over-prob for a ladder line, or null. */
+function ladderLineProb(side, line) {
+  const map = ladderProbsMap(side);
+  const v = map.get(Number(line));
+  return v == null ? null : v;
+}
+
+/** Poisson P(K=k | λ) — mirror Worker matchModel.poissonP. */
+function poissonP(k, lambda) {
+  const lam = Number(lambda);
+  const kk = Number(k);
+  if (!Number.isFinite(lam) || !Number.isFinite(kk) || kk < 0) return 0;
+  if (lam <= 0) return kk === 0 ? 1 : 0;
+  let fact = 1;
+  for (let i = 2; i <= kk; i += 1) fact *= i;
+  return (Math.exp(-lam) * lam ** kk) / fact;
+}
+
+/** P(X > L) = 1 − Σ P(0..⌊L⌋) — mirror Worker poissonOverLadder. */
+function poissonOver(lambda, line) {
+  if (lambda == null || line == null || line === '') return null;
+  const lam = Number(lambda);
+  const L = Number(line);
+  if (!Number.isFinite(lam) || lam < 0 || !Number.isFinite(L)) return null;
+  const maxK = Math.floor(L);
+  let under = 0;
+  for (let k = 0; k <= maxK; k += 1) under += poissonP(k, lam);
+  return Math.max(0, Math.min(1, 1 - under));
+}
+
+/** Prefer ladder over-prob; fallback Poisson CDF from λ. */
+function ladderOrPoisson(sideLadder, lambda, line) {
+  const fromLadder = ladderLineProb(sideLadder, line);
+  if (fromLadder != null) return fromLadder;
+  return poissonOver(lambda, line);
+}
+
+/**
+ * One row per line L: Home/Away/Match = P(Over L) or P(Under L)=1−over.
+ * Drops rows where all three columns are null. Overs decrease with L; Unders increase.
+ */
+function buildOuRows(lines, opts = {}) {
+  const {
+    homeLadder = null,
+    awayLadder = null,
+    matchLadder = null,
+    lambdaHome = null,
+    lambdaAway = null,
+    lambdaMatch = null,
+    side = 'over',
+  } = opts;
+  const labelKey = side === 'under' ? 'panel.underLine' : 'panel.overLine';
+  const invert = side === 'under';
+  const rows = [];
+  (Array.isArray(lines) ? lines : []).forEach((line) => {
+    const L = Number(line);
+    if (!Number.isFinite(L)) return;
+    let home = ladderOrPoisson(homeLadder, lambdaHome, L);
+    let away = ladderOrPoisson(awayLadder, lambdaAway, L);
+    let match = ladderOrPoisson(matchLadder, lambdaMatch, L);
+    if (invert) {
+      home = home == null ? null : Math.max(0, Math.min(1, 1 - home));
+      away = away == null ? null : Math.max(0, Math.min(1, 1 - away));
+      match = match == null ? null : Math.max(0, Math.min(1, 1 - match));
+    }
+    if (home == null && away == null && match == null) return;
+    rows.push({
+      label: t(labelKey, { n: marketLineLabel(L) }),
+      home,
+      away,
+      match,
+    });
+  });
+  return rows;
+}
+
+function buildOverRows(lines, opts = {}) {
+  return buildOuRows(lines, { ...opts, side: 'over' });
+}
+
+function buildUnderRows(lines, opts = {}) {
+  return buildOuRows(lines, { ...opts, side: 'under' });
+}
+
+/** Goals Over 0.5–3.5 from flat prediction fields (same L H/A/Match). BTTS is separate. */
+function goalsTrendRows(p) {
+  const pred = p || {};
+  const over = (n) => t('panel.overLine', { n });
+  const rows = [
+    {
+      label: over('0,5'),
+      home: pred.home_over05_prob,
+      away: pred.away_over05_prob,
+      match: pred.over05_prob,
+    },
+    {
+      label: over('1,5'),
+      home: pred.home_over15_prob,
+      away: pred.away_over15_prob,
+      match: pred.over15_prob,
+    },
+    {
+      label: over('2,5'),
+      home: pred.home_over25_prob,
+      away: pred.away_over25_prob,
+      match: pred.over25_prob,
+    },
+    {
+      label: over('3,5'),
+      home: pred.home_over35_prob,
+      away: pred.away_over35_prob,
+      match: pred.over35_prob,
+    },
+  ];
+  return rows.filter((r) => r.home != null || r.away != null || r.match != null);
+}
+
+/** Goals Under 0.5–3.5 — explicit under_* fields, else 1−over. */
+function goalsTrendUnderRows(p) {
+  const pred = p || {};
+  const under = (n) => t('panel.underLine', { n });
+  const fallback = (u, o) =>
+    u != null && Number.isFinite(Number(u))
+      ? Number(u)
+      : o != null && Number.isFinite(Number(o))
+        ? Math.max(0, Math.min(1, 1 - Number(o)))
+        : null;
+  const rows = [
+    {
+      label: under('0,5'),
+      home: fallback(pred.home_under05_prob, pred.home_over05_prob),
+      away: fallback(pred.away_under05_prob, pred.away_over05_prob),
+      match: fallback(pred.under05_prob, pred.over05_prob),
+    },
+    {
+      label: under('1,5'),
+      home: fallback(pred.home_under15_prob, pred.home_over15_prob),
+      away: fallback(pred.away_under15_prob, pred.away_over15_prob),
+      match: fallback(pred.under15_prob, pred.over15_prob),
+    },
+    {
+      label: under('2,5'),
+      home: fallback(pred.home_under25_prob, pred.home_over25_prob),
+      away: fallback(pred.away_under25_prob, pred.away_over25_prob),
+      match: fallback(pred.under25_prob, pred.over25_prob),
+    },
+    {
+      label: under('3,5'),
+      home: fallback(pred.home_under35_prob, pred.home_over35_prob),
+      away: fallback(pred.away_under35_prob, pred.away_over35_prob),
+      match: fallback(pred.under35_prob, pred.over35_prob),
+    },
+  ];
+  return rows.filter((r) => r.home != null || r.away != null || r.match != null);
 }
 
 /** Map<line, over> from a ladder side ([{ line, over }]). */
@@ -1548,7 +2187,9 @@ function marketLineLabel(line) {
   if (line == null || line === '') return '';
   const n = Number(line);
   if (!Number.isFinite(n)) return '';
-  return Number.isInteger(n) ? String(n) : n.toFixed(1).replace('.', ',');
+  if (Number.isInteger(n)) return String(n);
+  const raw = n.toFixed(1);
+  return getUiLang() === 'en' ? raw : raw.replace('.', ',');
 }
 
 /** "Más de X" / "Menos de X" rows for one ladder side, filtered by the wanted lines. */
@@ -1595,7 +2236,8 @@ function marketAveragesHtml({
   } else if (leagueProxy) {
     caption = `${unit} por partido · liga sin muestra → proxy`;
   }
-  return `
+  return hbCensorWrap(
+    `
     <section class="market-averages" aria-label="Promedios recientes de ${escapeHtml(unit)}">
       <h3 class="market-averages__title">Promedios recientes · ${escapeHtml(unit)}</h3>
       <div class="market-averages__grid">
@@ -1613,7 +2255,9 @@ function marketAveragesHtml({
         </div>
       </div>
       <p class="market-averages__caption">${escapeHtml(caption)}</p>
-    </section>`;
+    </section>`,
+    { block: true }
+  );
 }
 
 /**
@@ -1684,7 +2328,7 @@ function scoreGridHtml(grid, topScores, homeName, awayName) {
             const intensity = Math.round((p / max) * 100);
             return `<div class="mp-score__cell" style="--heat:${intensity}%" title="${h}-${a}: ${(
               p * 100
-            ).toFixed(1)}%"><span>${(p * 100).toFixed(0)}%</span></div>`;
+            ).toFixed(1)}%"><span data-target="${p}">0%</span></div>`;
           })
           .join('')}</div>`
     )
@@ -1693,10 +2337,13 @@ function scoreGridHtml(grid, topScores, homeName, awayName) {
     .slice(0, 4)
     .map(
       (s) =>
-        `<span class="mp-score__chip"><strong>${s.home}-${s.away}</strong> ${(s.prob * 100).toFixed(1)}%</span>`
+        `<span class="mp-score__chip"><strong>${s.home}-${s.away}</strong> <span data-target="${Number(
+          s.prob
+        )}" data-target-decimals="1">0.0%</span></span>`
     )
     .join('');
-  return `
+  return hbCensorWrap(
+    `
     <section class="mp-score">
       <div class="mp-score__title">Marcadores exactos</div>
       <div class="mp-score__grid" role="img" aria-label="Probabilidad de cada marcador exacto, del 0 al ${grid.length - 1} goles por equipo">
@@ -1705,13 +2352,17 @@ function scoreGridHtml(grid, topScores, homeName, awayName) {
       <div class="mp-score__top">${list}</div>
       ${
         top
-          ? `<p class="mp-score__caption">Más probable: <strong>${top.home}-${top.away}</strong> (${(top.prob * 100).toFixed(1)}%)</p>`
+          ? `<p class="mp-score__caption">Más probable: <strong>${top.home}-${top.away}</strong> (<span data-target="${Number(
+              top.prob
+            )}" data-target-decimals="1">0.0%</span>)</p>`
           : ''
       }
       <p class="mp-score__axis muted">Filas: ${escapeHtml(homeName || 'local')} · Columnas: ${escapeHtml(
         awayName || 'visitante'
       )}</p>
-    </section>`;
+    </section>`,
+    { block: true }
+  );
 }
 
 /** Previous meetings between the two teams. */
@@ -1726,7 +2377,7 @@ function h2hHtml(h2h, homeName) {
         <span class="mp-h2h__teams">${escapeHtml(r.homeName || '')} ${Number(r.homeGoals)}-${Number(
         r.awayGoals
       )} ${escapeHtml(r.awayName || '')}</span>
-        <span class="mp-h2h__league muted">${escapeHtml(r.leagueName || '')}</span>
+        <span class="mp-h2h__league muted">${escapeHtml(leagueLabelEs(r.leagueName || ''))}</span>
       </li>`;
     })
     .join('');
@@ -1776,7 +2427,8 @@ function winProbBar(p) {
   const hp = Math.round((h || 0) * 100);
   const dp = Math.round((d || 0) * 100);
   const ap = Math.round((a || 0) * 100);
-  return `
+  return hbCensorWrap(
+    `
     <section class="mp-win">
       <div class="mp-win__labels">
         <span>Local <strong data-count-to="${hp}" data-count-suffix="%">0%</strong></span>
@@ -1788,7 +2440,9 @@ function winProbBar(p) {
         <span class="mp-win__seg mp-win__seg--draw" data-flex-to="${Math.max(dp, 1)}" style="flex:1"></span>
         <span class="mp-win__seg mp-win__seg--away" data-flex-to="${Math.max(ap, 1)}" style="flex:1"></span>
       </div>
-    </section>`;
+    </section>`,
+    { block: true }
+  );
 }
 
 function mpTeamCol(name, logo, side, form) {
@@ -1852,16 +2506,50 @@ function probBar(label, prob) {
   if (p == null) return '';
   const n = Math.round(p * 100);
   const width = Math.max(4, Math.min(100, n));
-  return `
+  return hbCensorWrap(`
     <div class="prob-row">
       <div class="prob-row__label">${escapeHtml(label)}</div>
       <div class="prob-row__track" aria-hidden="true"><span class="prob-row__fill" data-bar-to="${width}" style="width:0%"></span></div>
       <div class="prob-row__pct" data-count-to="${n}" data-count-suffix="%">0%</div>
-    </div>`;
+    </div>`);
 }
 
 function prefersReducedMotion() {
   return window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+}
+
+/**
+ * Count-up % from data-target (0–1 fraction) → "67%" / "12.3%".
+ * Skips free blur (.hb-censor): snap to final. Once per reveal / tab switch.
+ */
+function animatePercents(root) {
+  if (!root) return;
+  const reduce = prefersReducedMotion();
+  const dur = 560;
+  root.querySelectorAll('[data-target]').forEach((el) => {
+    const target = Number(el.dataset.target);
+    if (!Number.isFinite(target)) return;
+    const decimals = Math.max(0, Number(el.dataset.targetDecimals) || 0);
+    const fmt = (v) => `${(v * 100).toFixed(decimals)}%`;
+    // Free censored veil: no count-up (blur would look jittery).
+    if (reduce || el.closest('.hb-censor')) {
+      el.textContent = fmt(target);
+      return;
+    }
+    const gen = String((Number(el.dataset.pctAnimGen) || 0) + 1);
+    el.dataset.pctAnimGen = gen;
+    el.textContent = fmt(0);
+    const start = performance.now();
+    const step = (now) => {
+      if (el.dataset.pctAnimGen !== gen) return;
+      const t = Math.min(1, (now - start) / dur);
+      const eased = 1 - Math.pow(1 - t, 3);
+      el.textContent = fmt(target * eased);
+      if (t < 1) requestAnimationFrame(step);
+      else el.textContent = fmt(target);
+    };
+    requestAnimationFrame(step);
+  });
 }
 
 function animateCountUps(root) {
@@ -1870,20 +2558,24 @@ function animateCountUps(root) {
   root.querySelectorAll('[data-count-to]').forEach((el) => {
     const to = Number(el.dataset.countTo);
     const suffix = el.dataset.countSuffix ?? '';
+    const decimals = Math.max(0, Number(el.dataset.countDecimals) || 0);
     if (!Number.isFinite(to)) return;
-    if (reduce) {
-      el.textContent = `${Math.round(to)}${suffix}`;
+    const fmt = (v) =>
+      decimals > 0 ? `${v.toFixed(decimals)}${suffix}` : `${Math.round(v)}${suffix}`;
+    if (reduce || el.closest('.hb-censor')) {
+      el.textContent = fmt(to);
       return;
     }
-    el.textContent = `0${suffix}`;
-    const dur = 780;
+    el.textContent = fmt(0);
+    const dur = 560;
     const start = performance.now();
     const from = 0;
     const step = (now) => {
       const t = Math.min(1, (now - start) / dur);
       const eased = 1 - Math.pow(1 - t, 3);
-      el.textContent = `${Math.round(from + (to - from) * eased)}${suffix}`;
+      el.textContent = fmt(from + (to - from) * eased);
       if (t < 1) requestAnimationFrame(step);
+      else el.textContent = fmt(to);
     };
     requestAnimationFrame(step);
   });
@@ -1900,7 +2592,7 @@ function animateCountUps(root) {
     el.style.width = '0%';
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        el.style.transition = 'width 0.78s cubic-bezier(0.22, 1, 0.36, 1)';
+        el.style.transition = 'width 0.56s cubic-bezier(0.22, 1, 0.36, 1)';
         el.style.width = `${to}%`;
       });
     });
@@ -1910,6 +2602,7 @@ function animateCountUps(root) {
     if (!Number.isFinite(to)) return;
     el.style.flex = String(Math.max(to, 1));
   });
+  animatePercents(root);
 }
 
 function runPanelEntrance(root) {
@@ -1958,18 +2651,19 @@ function sortByMatchDateAsc(rows, tieBreak) {
 }
 
 function formatMatchDate(value) {
-  if (!value) return 'Fecha no disponible';
+  if (!value) return t('date.unavailable');
   const d = parseMatchDate(value);
   if (!d) return String(value);
-  const opts = { timeZone: 'Europe/Madrid' };
-  const weekday = d.toLocaleDateString('es-ES', { ...opts, weekday: 'short' });
-  const datePart = d.toLocaleDateString('es-ES', {
+  const locale = getUiLocale();
+  const opts = { timeZone: getUiTimeZone() };
+  const weekday = d.toLocaleDateString(locale, { ...opts, weekday: 'short' });
+  const datePart = d.toLocaleDateString(locale, {
     ...opts,
     day: '2-digit',
     month: '2-digit',
     year: 'numeric',
   });
-  const timePart = d.toLocaleTimeString('es-ES', {
+  const timePart = d.toLocaleTimeString(locale, {
     ...opts,
     hour: '2-digit',
     minute: '2-digit',
@@ -1977,18 +2671,22 @@ function formatMatchDate(value) {
   return `${weekday} ${datePart} · ${timePart}`;
 }
 
-const FORM_BADGE = {
-  W: { letter: 'V', cls: 'V', title: 'Victoria' },
-  D: { letter: 'E', cls: 'E', title: 'Empate' },
-  L: { letter: 'D', cls: 'D', title: 'Derrota' },
-  V: { letter: 'V', cls: 'V', title: 'Victoria' },
-  E: { letter: 'E', cls: 'E', title: 'Empate' },
-};
+function formBadge(raw) {
+  const en = getUiLang() === 'en';
+  const map = {
+    W: { letter: en ? 'W' : 'V', cls: 'V', title: t('form.win') },
+    D: { letter: en ? 'D' : 'E', cls: 'E', title: t('form.draw') },
+    L: { letter: en ? 'L' : 'D', cls: 'D', title: t('form.loss') },
+    V: { letter: en ? 'W' : 'V', cls: 'V', title: t('form.win') },
+    E: { letter: en ? 'D' : 'E', cls: 'E', title: t('form.draw') },
+  };
+  return map[raw] || { letter: raw || '—', cls: raw || 'E', title: raw || '—' };
+}
 
 /** Last 7 results; newest toward VS (home: reverse DOM; away: newest-first). */
 function formHtml(form, side = 'home') {
   if (!form || !form.length) {
-    return `<span class="muted">Sin historial suficiente</span>`;
+    return `<span class="muted">${escapeHtml(t('ligas.noTable'))}</span>`;
   }
   // API form is newest-first; cap at 7 for the panel strip.
   const newestFirst = form.slice(0, 7);
@@ -1996,7 +2694,7 @@ function formHtml(form, side = 'home') {
   return ordered
     .map((f) => {
       const raw = String(f || '').toUpperCase();
-      const mapped = FORM_BADGE[raw] || { letter: raw || '—', cls: raw || 'E', title: raw || '—' };
+      const mapped = formBadge(raw);
       return `<span class="badge ${escapeHtml(mapped.cls)}" title="${escapeHtml(mapped.title)}">${escapeHtml(mapped.letter)}</span>`;
     })
     .join('');
@@ -2012,8 +2710,6 @@ function isInternationalMatch(item) {
 
 function filterByScope(items) {
   let list = items || [];
-  if (scopeFilter === 'clubs') list = list.filter((x) => !isInternationalMatch(x));
-  if (scopeFilter === 'intl') list = list.filter((x) => isInternationalMatch(x));
   if (liveOnly) list = list.filter((x) => x.status === 'live');
   if (leagueFilterIds.size > 0) {
     list = list.filter((x) => leagueFilterIds.has(Number(x.leagueId)));
@@ -2050,13 +2746,51 @@ function countryFlag(country) {
 
 function countryLabel(country) {
   const c = String(country || '').trim();
-  return COUNTRY_ES[c] || c || '—';
+  if (!c) return '—';
+  if (getUiLang() === 'en') return c;
+  return COUNTRY_ES[c] || c;
 }
 
-function collectLeagues(matches, scope) {
-  let list = matches || [];
-  if (scope === 'clubs') list = list.filter((x) => !isInternationalMatch(x));
-  if (scope === 'intl') list = list.filter((x) => isInternationalMatch(x));
+function leagueLabelEs(nameOrMatch, apiId = null) {
+  const aid =
+    apiId != null
+      ? Number(apiId)
+      : Number(
+          nameOrMatch?.leagueApiId ??
+            nameOrMatch?.apiId ??
+            nameOrMatch?.league_api_id ??
+            nameOrMatch?.api_id
+        );
+  if (Number.isFinite(aid) && LEAGUE_ES_BY_API[aid]) {
+    if (aid === 5) return t('league.nations');
+    return LEAGUE_ES_BY_API[aid];
+  }
+  const raw =
+    typeof nameOrMatch === 'string'
+      ? nameOrMatch
+      : nameOrMatch?.leagueName || nameOrMatch?.league || nameOrMatch?.league_name || '';
+  const n = String(raw || '').trim();
+  if (!n) return t('league.generic');
+  if (/champions/i.test(n)) return 'Champions League';
+  if (/europa\s*league/i.test(n)) return 'Europa League';
+  if (/nations\s*league|liga de naciones/i.test(n)) return t('league.nations');
+  if (/premier/i.test(n)) return 'Premier League';
+  if (/serie\s*a/i.test(n)) return 'Serie A';
+  if (/bundesliga/i.test(n)) return 'Bundesliga';
+  if (/ligue\s*1/i.test(n)) return 'Ligue 1';
+  if (/hypermotion|laliga\s*2|segunda/i.test(n)) return 'LaLiga Hypermotion';
+  if (/la\s*liga|laliga/i.test(n)) return 'LaLiga';
+  return shortLeagueName(n);
+}
+
+function formatLeagueLine(country, name, apiId = null) {
+  const c = countryLabel(country);
+  const l = leagueLabelEs(name, apiId);
+  return [c !== '—' ? c : '', l].filter(Boolean).join(' · ') || t('league.generic');
+}
+
+function collectLeagues(matches) {
+  const list = matches || [];
   const map = new Map();
   for (const m of list) {
     const id = m.leagueId;
@@ -2068,7 +2802,7 @@ function collectLeagues(matches, scope) {
     }
     map.set(id, {
       id,
-      name: m.leagueName || m.league || 'Liga',
+      name: leagueLabelEs(m),
       country: m.leagueCountry || m.country || '',
       count: 1,
     });
@@ -2136,6 +2870,53 @@ async function ensureLigasCatalog() {
   return ligasLeaguesPromise;
 }
 
+function isLigasDesktopSplit() {
+  return window.matchMedia('(min-width: 900px)').matches;
+}
+
+function mountLigasDetailHost() {
+  const detail = document.getElementById('ligas-detail');
+  if (!detail) return;
+  const desktopHost = document.getElementById('ligasBrowsePanel');
+  const mobileBody = document.getElementById('ligas-panel-body');
+  if (isLigasDesktopSplit()) {
+    if (desktopHost && detail.parentElement !== desktopHost) desktopHost.appendChild(detail);
+  } else if (mobileBody && detail.parentElement !== mobileBody) {
+    mobileBody.appendChild(detail);
+  }
+}
+
+function openLigasMobileOverlay() {
+  const overlay = document.getElementById('ligas-panel');
+  const backdrop = document.getElementById('ligas-panel-backdrop');
+  const title = document.getElementById('ligas-panel-title');
+  const nameEl = document.getElementById('ligas-detail-name');
+  if (title && nameEl) title.textContent = nameEl.textContent || 'Liga';
+  mountLigasDetailHost();
+  overlay?.classList.add('is-open');
+  overlay?.setAttribute('aria-hidden', 'false');
+  backdrop?.classList.add('is-open');
+  backdrop?.setAttribute('aria-hidden', 'false');
+  document.body.classList.add('panel-open');
+}
+
+function closeLigasMobileOverlay() {
+  const overlay = document.getElementById('ligas-panel');
+  const backdrop = document.getElementById('ligas-panel-backdrop');
+  overlay?.classList.remove('is-open');
+  overlay?.setAttribute('aria-hidden', 'true');
+  backdrop?.classList.remove('is-open');
+  backdrop?.setAttribute('aria-hidden', 'true');
+  if (!document.getElementById('panel')?.classList.contains('is-open')) {
+    document.body.classList.remove('panel-open');
+  }
+  const detail = document.getElementById('ligas-detail');
+  const desktopHost = document.getElementById('ligasBrowsePanel');
+  if (detail && desktopHost && detail.parentElement !== desktopHost) {
+    desktopHost.appendChild(detail);
+  }
+}
+
 function setLigasSelectionVisible(hasSelection) {
   const on = !!hasSelection;
   document.body.classList.toggle('has-ligas-selection', on);
@@ -2145,12 +2926,22 @@ function setLigasSelectionVisible(hasSelection) {
   const detail = document.getElementById('ligas-detail');
   if (empty) empty.hidden = on;
   if (detail) detail.hidden = !on;
+  if (on) {
+    if (isLigasDesktopSplit()) {
+      closeLigasMobileOverlay();
+      mountLigasDetailHost();
+    } else {
+      openLigasMobileOverlay();
+    }
+  } else {
+    closeLigasMobileOverlay();
+  }
 }
 
 function ligasStandingsHtml(table) {
   const rows = table || [];
   if (!rows.length) {
-    return `<p class="ligas-standings__empty">Sin clasificatorio aún</p>`;
+    return `<p class="ligas-standings__empty">${escapeHtml(t('ligas.noTable'))}</p>`;
   }
   const body = rows
     .map((r) => {
@@ -2187,11 +2978,11 @@ function bindLigasStandingsRows(root) {
       const teamId = Number(row.getAttribute('data-team-id'));
       if (!Number.isFinite(teamId) || teamId <= 0) return;
       try {
-        showBanner('Buscando próximo partido…', 'info');
+        showBanner(t('toast.nextMatchSearch'), 'info');
         const insight = await api(`/api/v1/teams/${teamId}`);
         const nextId = Number(insight?.nextMatch?.id);
         if (!Number.isFinite(nextId) || nextId <= 0) {
-          showBanner('Sin partido próximo en la ventana', 'info');
+          showBanner(t('toast.noNextMatch'), 'info');
           return;
         }
         showBanner('');
@@ -2226,11 +3017,14 @@ async function showLigasTable(apiId, { pushHash = true } = {}) {
   setLigasSelectionVisible(true);
   if (pushHash) {
     const want = `#ligas/${aid}`;
-    if (location.hash !== want) history.replaceState(null, '', want);
+    if (location.hash !== want) {
+      /* push so browser back slides back to the list */
+      history.pushState(null, '', want);
+    }
   }
 
   const folderLeague = LIGAS_FOLDERS.flatMap((f) => f.leagues).find((l) => l.apiId === aid);
-  if (nameEl) nameEl.textContent = folderLeague?.name || `Liga ${aid}`;
+  if (nameEl) nameEl.textContent = folderLeague?.name || leagueLabelEs('', aid) || `Liga ${aid}`;
   if (metaEl) metaEl.textContent = 'Cargando clasificación…';
   tableEl.innerHTML = Array.from({ length: 6 }, () => `<div class="skeleton" aria-hidden="true"></div>`).join('');
 
@@ -2240,17 +3034,20 @@ async function showLigasTable(apiId, { pushHash = true } = {}) {
     if (!known) {
       ligasActiveD1Id = null;
       if (metaEl) metaEl.textContent = 'No disponible en datos';
-      tableEl.innerHTML = `<p class="ligas-standings__empty">Sin clasificatorio aún</p>`;
+      tableEl.innerHTML = `<p class="ligas-standings__empty">${escapeHtml(t('ligas.noTable'))}</p>`;
       return;
     }
     ligasActiveD1Id = known.id;
     const data = await api(`/api/v1/leagues/${aid}/table`);
     const league = data.league || known;
     ligasActiveD1Id = Number(league.id) || known.id;
-    if (nameEl) nameEl.textContent = league.name || folderLeague?.name || `Liga ${aid}`;
+    if (nameEl) {
+      nameEl.textContent =
+        leagueLabelEs(league.name || folderLeague?.name || '', aid) || `Liga ${aid}`;
+    }
     if (metaEl) {
-      const bits = [league.country, folderLeague?.tag].filter(Boolean);
-      metaEl.textContent = bits.length ? bits.join(' · ') : 'Clasificación (D1)';
+      const bits = [countryLabel(league.country), folderLeague?.tag].filter(Boolean);
+      metaEl.textContent = bits.length ? bits.join(' · ') : 'Clasificación';
     }
     tableEl.innerHTML = ligasStandingsHtml(data.table || []);
     bindLigasStandingsRows(tableEl);
@@ -2260,11 +3057,18 @@ async function showLigasTable(apiId, { pushHash = true } = {}) {
       err.message || 'Error al cargar la tabla'
     )}</p>`;
   } finally {
+    const title = document.getElementById('ligas-panel-title');
+    const nameEl = document.getElementById('ligas-detail-name');
+    if (title && nameEl) title.textContent = nameEl.textContent || 'Liga';
     const panel = document.getElementById('ligasBrowsePanel');
     if (panel) panel.scrollTop = 0;
-    const view = document.getElementById('ligas');
-    if (view && typeof view.scrollIntoView === 'function') {
-      view.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    const overlayBody = document.getElementById('ligas-panel-body');
+    if (overlayBody) overlayBody.scrollTop = 0;
+    if (isLigasDesktopSplit()) {
+      const view = document.getElementById('ligas');
+      if (view && typeof view.scrollIntoView === 'function') {
+        view.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      }
     }
   }
 }
@@ -2294,7 +3098,7 @@ function renderLigasFolders(catalog) {
   }).filter((f) => f.leagues.length > 0);
 
   if (!folders.length) {
-    listEl.innerHTML = `<p class="ligas-standings__empty">No hay ligas disponibles todavía.</p>`;
+    listEl.innerHTML = `<p class="ligas-standings__empty">${escapeHtml(t('ligas.noLeagues'))}</p>`;
     return;
   }
 
@@ -2388,21 +3192,20 @@ function renderLeagueCategories(matches) {
   const toggle = document.getElementById('league-toggle');
   if (!block || !cats) return;
 
-  const showCats = scopeFilter === 'clubs' || scopeFilter === 'intl';
+  // Scope chips removed — league category sidebar only when a single-liga filter is active.
+  const showCats = leagueFilterIds.size > 0;
   block.hidden = !showCats;
   if (!showCats) {
-    leagueFilterIds.clear();
     cats.innerHTML = '';
     return;
   }
 
-  const leagues = collectLeagues(matches, scopeFilter);
+  const leagues = collectLeagues(matches);
   pruneLeagueSelection(leagues);
 
   const nSel = selectedLeagueCount();
   if (label) {
-    const base = scopeFilter === 'intl' ? 'Competiciones' : 'Ligas';
-    label.textContent = nSel ? `${base} · ${nSel} seleccionada${nSel === 1 ? '' : 's'}` : `${base} · todas`;
+    label.textContent = nSel ? `Ligas · ${nSel} seleccionada${nSel === 1 ? '' : 's'}` : 'Ligas · todas';
   }
   block.classList.toggle('is-collapsed', !leaguesPanelOpen);
   if (toggle) toggle.setAttribute('aria-expanded', leaguesPanelOpen ? 'true' : 'false');
@@ -2420,8 +3223,10 @@ function renderLeagueCategories(matches) {
         <span class="league-cat__check" aria-hidden="true"></span>
         <span class="league-cat__flag" aria-hidden="true">🏟️</span>
         <span class="league-cat__body">
-          <span class="league-cat__name">${scopeFilter === 'intl' ? 'Todas las competiciones' : 'Todas las ligas'}</span>
-          <span class="league-cat__meta">${totalMatches} partidos</span>
+          <span class="league-cat__name">Todas las ligas</span>
+          <span class="league-cat__meta">${escapeHtml(
+            t(totalMatches === 1 ? 'ligas.matchCount' : 'ligas.matchCountPlural', { n: totalMatches })
+          )}</span>
         </span>
       </button>
       ${
@@ -2437,8 +3242,10 @@ function renderLeagueCategories(matches) {
         <span class="league-cat__check" aria-hidden="true"></span>
         <span class="league-cat__flag" aria-hidden="true">${countryFlag(l.country)}</span>
         <span class="league-cat__body">
-          <span class="league-cat__name">${escapeHtml(shortLeagueName(l.name))}</span>
-          <span class="league-cat__meta">${escapeHtml(countryLabel(l.country))} · ${l.count} partido${l.count === 1 ? '' : 's'}</span>
+          <span class="league-cat__name">${escapeHtml(l.name)}</span>
+          <span class="league-cat__meta">${escapeHtml(countryLabel(l.country))} · ${escapeHtml(
+            t(l.count === 1 ? 'ligas.matchCount' : 'ligas.matchCountPlural', { n: l.count })
+          )}</span>
         </span>
       </button>`;
     }),
@@ -2461,16 +3268,62 @@ function renderLeagueCategories(matches) {
   });
 }
 
+const toastQueue = [];
+let toastTimer = null;
+
+function clearToasts() {
+  const host = document.getElementById('hb-toast');
+  if (host) host.innerHTML = '';
+  toastQueue.length = 0;
+  if (toastTimer) {
+    clearTimeout(toastTimer);
+    toastTimer = null;
+  }
+  const legacy = document.getElementById('global-banner');
+  if (legacy) {
+    legacy.className = 'banner hidden';
+    legacy.textContent = '';
+    legacy.hidden = true;
+  }
+}
+
+function renderToastQueue() {
+  const host = document.getElementById('hb-toast');
+  if (!host) return;
+  host.innerHTML = toastQueue
+    .map(
+      (item) =>
+        `<div class="hb-toast__item hb-toast__item--${escapeHtml(item.kind)}" role="status">${escapeHtml(
+          item.message
+        )}</div>`
+    )
+    .join('');
+}
+
+function scheduleToastDismiss() {
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    toastQueue.shift();
+    renderToastQueue();
+    toastTimer = null;
+    if (toastQueue.length) scheduleToastDismiss();
+  }, 3000);
+}
+
+/** Ephemeral bottom toast (3s). Empty message clears the queue. */
 function showBanner(message, kind = 'info') {
-  const el = document.getElementById('global-banner');
   if (!message) {
-    el.className = 'banner hidden';
-    el.textContent = '';
+    clearToasts();
     return;
   }
-  el.className = `banner banner-${kind}`;
-  el.textContent = message;
+  const k = kind === 'error' || kind === 'ok' ? kind : 'info';
+  toastQueue.push({ message: String(message), kind: k });
+  while (toastQueue.length > 2) toastQueue.shift();
+  renderToastQueue();
+  scheduleToastDismiss();
 }
+
+const showToast = showBanner;
 
 function setLoading(containerId, rows = 3) {
   const el = document.getElementById(containerId);
@@ -2486,26 +3339,56 @@ const premiumState = {
   loaded: false,
   premium: false,
   premiumUntil: null,
+  premiumStartedAt: null,
+  plan: 'free',
+  premiumDaysLeft: null,
   stripeConfigured: false,
+  pendingPromoPercent: null,
+  pendingPromoCode: null,
 };
+
+const PREMIUM_LIST_PRICES = { weekly: 9.99, monthly: 19.9 };
+
+function formatEuroPrice(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return '—';
+  return `${v.toFixed(2).replace('.', ',')} €`;
+}
+
+function discountedListPrice(base, percent) {
+  const pct = Number(percent);
+  if (!Number.isFinite(pct) || pct <= 0) return null;
+  return Math.round(base * (100 - pct)) / 100;
+}
 
 async function loadPremiumState() {
   try {
     const data = await api(`/api/v1/premium/status`);
     premiumState.premium = Boolean(data.premium);
     premiumState.premiumUntil = data.premiumUntil || null;
+    premiumState.premiumStartedAt = data.premiumStartedAt || null;
+    premiumState.plan = data.plan || (premiumState.premium ? 'premium' : 'free');
+    premiumState.premiumDaysLeft =
+      data.premiumDaysLeft != null ? Number(data.premiumDaysLeft) : null;
     premiumState.stripeConfigured = Boolean(data.stripeConfigured);
+    premiumState.pendingPromoPercent =
+      data.pendingPromoPercent != null ? Number(data.pendingPromoPercent) : null;
+    premiumState.pendingPromoCode = data.pendingPromoCode || null;
   } catch (_) {
     premiumState.stripeConfigured = false;
+    premiumState.pendingPromoPercent = null;
+    premiumState.pendingPromoCode = null;
   }
   premiumState.loaded = true;
+  syncPremiumView();
+  syncPerfilView();
   return premiumState;
 }
 
 async function startPremiumCheckout() {
   if (!premiumState.loaded) await loadPremiumState();
   if (!premiumState.stripeConfigured) {
-    showBanner('El pago premium todavia no esta configurado. Prueba mas tarde.', 'info');
+    showBanner(t('toast.payUnconfigured'), 'info');
     return;
   }
   try {
@@ -2513,24 +3396,23 @@ async function startPremiumCheckout() {
     if (data.checkoutUrl) {
       window.location.href = data.checkoutUrl;
     } else {
-      showBanner('No se pudo abrir el pago. Intenta de nuevo en unos segundos.', 'error');
+      showBanner(t('toast.payOpenFail'), 'error');
     }
   } catch (err) {
-    showBanner(`No se pudo iniciar el pago premium: ${err.message}`, 'error');
+    showBanner(t('toast.payStartFail', { msg: err.message || '' }), 'error');
   }
 }
 
 function premiumUpsellHtml(source) {
-  // No paywall while PREMIUM_UNLOCKED (no login yet).
-  if (PREMIUM_UNLOCKED) return '';
+  if (contentUnlocked()) return '';
   return `
     <div class="premium-upsell" data-premium-source="${escapeHtml(source)}">
       <span class="premium-upsell__lock" aria-hidden="true">🔒</span>
       <div class="premium-upsell__text">
         <strong>Premium</strong>
-        <span>Las combinadas, la rentabilidad y el detalle de tips van con el plan de pago.</span>
+        <span>Tips, ROI y estadísticas avanzadas van con el plan de pago.</span>
       </div>
-      <button type="button" class="btn premium-upsell__btn" data-premium-activate>${premiumState.stripeConfigured ? 'Activar con Stripe' : 'Premium'}</button>
+      <button type="button" class="btn premium-upsell__btn" data-go-premium>Ver planes</button>
     </div>`;
 }
 
@@ -2550,46 +3432,845 @@ async function handlePremiumReturn() {
   const sp = new URLSearchParams(window.location.search);
   const ret = sp.get('premium');
   if (!ret) return;
-  if (ret === 'ok') showBanner('Pago confirmado: premium activado. Sera visible en unos segundos.', 'info');
-  else showBanner('Pago cancelado sin cargos.', 'info');
+  if (ret === 'ok') showBanner(t('toast.payOk'), 'info');
+  else showBanner(t('toast.payCancel'), 'info');
   sp.delete('premium');
   const rest = sp.toString();
   window.history.replaceState({}, '', `${window.location.pathname}${rest ? `?${rest}` : ''}`);
 }
 
-/** Keep the #premium view as Pronto teaser (no gate while unlocked). */
 function syncPremiumView() {
-  const cta = document.getElementById('premium-cta');
-  const note = document.querySelector('#premium .premium-note');
-  if (!cta) return;
-  if (PREMIUM_UNLOCKED) {
-    cta.disabled = true;
-    cta.textContent = 'Pronto';
-    if (note) {
-      note.textContent =
-        'Todas las funciones están abiertas por ahora. Premium (pago) llegará más adelante.';
+  const root = document.getElementById('premium');
+  if (!root) return;
+  const status = root.querySelector('[data-premium-status]');
+  if (status) {
+    if (contentUnlocked()) {
+      status.textContent = premiumState.premiumUntil
+        ? t('premium.statusUntil', { date: String(premiumState.premiumUntil).slice(0, 10) })
+        : t('premium.statusOn');
+    } else {
+      status.textContent = t('premium.statusFree');
     }
-    return;
   }
-  bindPremiumActivate(cta.closest('#premium') || document);
-  if (premiumState.premium) {
-    const until = premiumState.premiumUntil ? String(premiumState.premiumUntil).slice(0, 10) : null;
-    cta.disabled = true;
-    cta.textContent = until ? `Activo hasta ${until}` : 'Premium activo';
-    if (note) note.textContent = 'Acceso premium activo, gracias por apoyar el proyecto.';
-  } else if (premiumState.stripeConfigured) {
-    cta.disabled = false;
-    cta.textContent = 'Activar 30 días con Stripe';
-    if (note) note.textContent = 'Pago único · activa 30 días de funciones premium.';
-  } else {
-    cta.disabled = true;
-    cta.textContent = 'Sin pago configurado';
-    if (note) note.textContent = 'El pago via Stripe se configura en el servidor (STRIPE_* secrets).';
+  const pct = Number(premiumState.pendingPromoPercent) || 0;
+  root.querySelectorAll('[data-premium-price]').forEach((el) => {
+    const plan = el.getAttribute('data-premium-price');
+    const base = PREMIUM_LIST_PRICES[plan];
+    if (base == null) return;
+    const discounted = pct > 0 ? discountedListPrice(base, pct) : null;
+    if (discounted != null) {
+      el.innerHTML = `<strong>${escapeHtml(formatEuroPrice(discounted))}</strong> <span class="premium-card__was">${escapeHtml(formatEuroPrice(base))}</span> <span>${plan === 'weekly' ? '/ semana' : '/ mes'}</span>`;
+    } else {
+      el.innerHTML = `<strong>${escapeHtml(formatEuroPrice(base))}</strong> <span>${plan === 'weekly' ? '/ semana' : '/ mes'}</span>`;
+    }
+  });
+  let badge = root.querySelector('[data-premium-discount-badge]');
+  if (pct > 0 && !contentUnlocked()) {
+    if (!badge) {
+      badge = document.createElement('p');
+      badge.className = 'premium-promo__badge';
+      badge.setAttribute('data-premium-discount-badge', '1');
+      const grid = root.querySelector('.premium-grid');
+      if (grid) grid.before(badge);
+      else root.appendChild(badge);
+    }
+    badge.hidden = false;
+    badge.textContent = t('premium.discountBadge', { pct: String(pct) });
+  } else if (badge) {
+    badge.hidden = true;
+  }
+  root.querySelectorAll('[data-premium-activate]').forEach((btn) => {
+    btn.disabled = contentUnlocked();
+    btn.textContent = contentUnlocked() ? t('premium.already') : t('premium.subscribe');
+  });
+  bindPremiumActivate(root);
+}
+
+const SETTINGS_KEY = 'houdini_settings_v1';
+
+const I18N = {
+  es: {
+    'date.unavailable': 'Fecha no disponible',
+    'account.perfil': 'Perfil',
+    'account.settings': 'Ajustes',
+    'account.help': 'Ayuda',
+    'account.coop': 'Cooperación',
+    'account.privacy': 'Privacidad',
+    'account.logout': 'Cerrar sesión',
+    'account.premiumOn': 'Premium',
+    'account.premiumOff': 'Gratuito',
+    'perfil.title': 'Perfil',
+    'perfil.badgeFree': 'Gratuito',
+    'perfil.badgePremium': 'Premium',
+    'perfil.promoLabel': 'Código promocional',
+    'perfil.promoApply': 'Aplicar',
+    'perfil.promoPlaceholder': 'Código',
+    'perfil.promoOk': 'Código aplicado · Premium activado',
+    'perfil.promoOkDays': 'Código aplicado · Premium {days}d',
+    'perfil.promoOkMonth': 'Código aplicado · 1 mes Premium',
+    'perfil.promoOkDiscount': 'Descuento {pct}% aplicado · se usa al pagar',
+    'perfil.promoBad': 'Código no válido',
+    'perfil.promoUsed': 'Ya has usado este código',
+    'perfil.promoExpired': 'Código agotado o caducado',
+    'perfil.promoNeedAuth': 'Inicia sesión para canjear',
+    'premium.priceWeek': '9,99 €',
+    'premium.priceMonth': '19,90 €',
+    'premium.discountBadge': '−{pct}% promo',
+    'date.yesterday': 'Ayer',
+    'date.today': 'Hoy',
+    'date.tomorrow': 'Mañana',
+    'search.placeholder': 'Buscar equipo',
+    'search.results': 'Resultados',
+    'search.loading': 'Buscando…',
+    'search.empty': 'Sin resultados.',
+    'view.top10': 'Top 10 predicciones',
+    'view.stats': 'Stats',
+    'view.ligas': 'Ligas',
+    'view.semanal': 'Semanal',
+    'view.partidos': 'Partidos',
+    'panel.emptySelect': 'Selecciona un partido para ver el análisis',
+    'ligas.emptySelect': 'Selecciona una liga para ver la clasificación',
+    'ligas.seeMatches': 'Ver partidos de esta liga',
+    'ligas.hint':
+      'Elige un país y una liga. En escritorio la tabla aparece a la derecha; en móvil se abre desde la derecha.',
+    'ligas.noLeagues': 'No hay ligas en la ventana',
+    'ligas.noTable': 'Sin clasificatorio aún',
+    'ligas.matchCount': '{n} partido',
+    'ligas.matchCountPlural': '{n} partidos',
+    'empty.noMatches': 'Sin partidos para {date}',
+    'empty.noTips': 'Sin tips jugables hoy (P≥{p}% · cuota ≤{odds})',
+    'empty.noClosedTips': 'Sin tips cerrados aún',
+    'empty.loadingAnalysis': 'Cargando análisis…',
+    'form.win': 'Victoria',
+    'form.draw': 'Empate',
+    'form.loss': 'Derrota',
+    'auth.title': 'Cuenta',
+    'auth.tabLogin': 'Inicio de sesión',
+    'auth.tabRegister': 'Registrarse',
+    'auth.google': 'Continuar con Google',
+    'auth.telegram': 'Continuar con Telegram',
+    'auth.soon': 'Pronto',
+    'auth.or': 'o',
+    'auth.userOrEmail': 'Usuario o email',
+    'auth.password': 'Contraseña',
+    'auth.loginSubmit': 'Entrar',
+    'auth.noAccount': '¿No tienes cuenta?',
+    'auth.registerLink': 'Regístrate',
+    'auth.hasAccount': '¿Ya tienes cuenta?',
+    'auth.loginLink': 'Inicia sesión',
+    'auth.username': 'ID de usuario',
+    'auth.name': 'Nombre',
+    'auth.email': 'Email',
+    'auth.phone': 'Teléfono',
+    'auth.registerSubmit': 'Crear cuenta',
+    'auth.confirmPassword': 'Confirmar contraseña',
+    'auth.close': 'Cerrar',
+    'premiumModal.title': 'Pasa a Premium',
+    'premiumModal.lead':
+      'Desbloquea tips semanales y el acceso completo a Houdini Bet. Puedes activarlo ahora o más tarde.',
+    'premiumModal.activate': 'Activar Premium',
+    'premiumModal.skip': 'Ahora no',
+    'consent.title': 'Cookies y privacidad',
+    'consent.lead':
+      'Usamos almacenamiento local para que la app funcione. Las opciones opcionales (analytics stub, búsqueda y filtros) solo se activan si las aceptas.',
+    'consent.age': 'Confirmo que soy mayor de 18 años',
+    'consent.acceptAll': 'Aceptar todo',
+    'consent.necessary': 'Solo necesarias',
+    'consent.customize': 'Personalizar',
+    'consent.back': '← Volver',
+    'consent.customLead':
+      'Elige qué guardar en este dispositivo. Necesitas confirmar la mayoría de edad para guardar.',
+    'consent.privacy': 'Privacidad',
+    'consent.cookies': 'Cookies',
+    'consent.notice': 'Aviso',
+    'consent.terms': 'Condiciones',
+    'toast.payOpenFail': 'No se pudo abrir el pago. Intenta de nuevo en unos segundos.',
+    'toast.payStartFail': 'No se pudo iniciar el pago premium: {msg}',
+    'toast.payOk': 'Pago confirmado: premium activado. Será visible en unos segundos.',
+    'toast.payCancel': 'Pago cancelado sin cargos.',
+    'toast.accountDeleted': 'Cuenta eliminada',
+    'toast.accountDeleteFail': 'No se pudo eliminar la cuenta',
+    'toast.telegramSoon': 'Telegram · Pronto',
+    'toast.nextMatchSearch': 'Buscando próximo partido…',
+    'toast.noNextMatch': 'Sin partido próximo en la ventana',
+    'toast.googleFail': 'No se pudo completar el acceso con Google.',
+    'league.generic': 'Liga',
+    'league.nations': 'Liga de Naciones',
+    'family.1X2': '1X2',
+    'family.ou': 'Más/Menos',
+    'family.btts': 'Ambos marcan',
+    'family.goles': 'Goles',
+    'family.corners': 'Córners',
+    'family.cards': 'Amarillas',
+    'family.shots': 'Tiros',
+    'family.shots_on_target': 'Tiros a puerta',
+    'family.otros': 'Otros',
+    'bet.HOME_WIN': 'Victoria local',
+    'bet.DRAW': 'Empate',
+    'bet.AWAY_WIN': 'Victoria visitante',
+    'bet.DC_1X': 'Doble oportunidad 1X',
+    'bet.DC_X2': 'Doble oportunidad X2',
+    'bet.DNB_HOME': 'Empate no válido · local',
+    'bet.DNB_AWAY': 'Empate no válido · visitante',
+    'bet.OVER_05': 'Más de 0,5 goles',
+    'bet.UNDER_05': 'Menos de 0,5 goles',
+    'bet.OVER_15': 'Más de 1,5 goles',
+    'bet.UNDER_15': 'Menos de 1,5 goles',
+    'bet.OVER_25': 'Más de 2,5 goles',
+    'bet.UNDER_25': 'Menos de 2,5 goles',
+    'bet.OVER_35': 'Más de 3,5 goles',
+    'bet.UNDER_35': 'Menos de 3,5 goles',
+    'bet.OVER_45': 'Más de 4,5 goles',
+    'bet.UNDER_45': 'Menos de 4,5 goles',
+    'bet.BTTS_YES': 'Ambos marcan — Sí',
+    'bet.BTTS_NO': 'Ambos marcan — No',
+    'bet.HOME_OVER_05': 'Local · Más de 0,5 goles',
+    'bet.HOME_UNDER_05': 'Local · Menos de 0,5 goles',
+    'bet.HOME_OVER_15': 'Local · Más de 1,5 goles',
+    'bet.HOME_UNDER_15': 'Local · Menos de 1,5 goles',
+    'bet.HOME_OVER_25': 'Local · Más de 2,5 goles',
+    'bet.HOME_UNDER_25': 'Local · Menos de 2,5 goles',
+    'bet.HOME_OVER_35': 'Local · Más de 3,5 goles',
+    'bet.HOME_UNDER_35': 'Local · Menos de 3,5 goles',
+    'bet.AWAY_OVER_05': 'Visitante · Más de 0,5 goles',
+    'bet.AWAY_UNDER_05': 'Visitante · Menos de 0,5 goles',
+    'bet.AWAY_OVER_15': 'Visitante · Más de 1,5 goles',
+    'bet.AWAY_UNDER_15': 'Visitante · Menos de 1,5 goles',
+    'bet.AWAY_OVER_25': 'Visitante · Más de 2,5 goles',
+    'bet.AWAY_UNDER_25': 'Visitante · Menos de 2,5 goles',
+    'bet.AWAY_OVER_35': 'Visitante · Más de 3,5 goles',
+    'bet.AWAY_UNDER_35': 'Visitante · Menos de 3,5 goles',
+    'bet.CORNERS_OVER_85': 'Más de 8,5 córners',
+    'bet.CORNERS_UNDER_85': 'Menos de 8,5 córners',
+    'bet.CORNERS_OVER_95': 'Más de 9,5 córners',
+    'bet.CORNERS_UNDER_95': 'Menos de 9,5 córners',
+    'bet.CORNERS_OVER_105': 'Más de 10,5 córners',
+    'bet.CORNERS_UNDER_105': 'Menos de 10,5 córners',
+    'bet.SHOTS_OVER_225': 'Más de 22,5 tiros',
+    'bet.SHOTS_UNDER_225': 'Menos de 22,5 tiros',
+    'bet.SHOTS_OVER_255': 'Más de 25,5 tiros',
+    'bet.SHOTS_UNDER_255': 'Menos de 25,5 tiros',
+    'bet.SOT_OVER_75': 'Más de 7,5 tiros a puerta',
+    'bet.SOT_UNDER_75': 'Menos de 7,5 tiros a puerta',
+    'bet.SOT_OVER_85': 'Más de 8,5 tiros a puerta',
+    'bet.SOT_UNDER_85': 'Menos de 8,5 tiros a puerta',
+    'bet.SOT_OVER_95': 'Más de 9,5 tiros a puerta',
+    'bet.SOT_UNDER_95': 'Menos de 9,5 tiros a puerta',
+    'bet.CARDS_OVER_35': 'Más de 3,5 amarillas',
+    'bet.CARDS_UNDER_35': 'Menos de 3,5 amarillas',
+    'bet.CARDS_OVER_45': 'Más de 4,5 amarillas',
+    'bet.CARDS_UNDER_45': 'Menos de 4,5 amarillas',
+    'bet.winNamed': 'Victoria {name}',
+    'bet.winHome': 'Victoria local',
+    'bet.winAway': 'Victoria visitante',
+    'weekly.window': 'Jornada',
+    'weekly.weekend': 'Fin de semana',
+    'weekly.thisWeek': 'Esta semana',
+    'weekly.next7': 'Próximos 7 días',
+    'weekly.next14': 'Próximos 14 días',
+    'weekly.league': 'Liga',
+    'weekly.allLeagues': 'Todas',
+    'perfil.metaFree': 'Plan gratuito',
+    'perfil.metaActive': 'Plan Premium activo',
+    'perfil.metaUntil': 'Hasta {date}',
+    'perfil.metaDays': ' · {n} días',
+    'perfil.upgrade': 'Mejorar a Premium',
+    'perfil.settings': 'Ajustes',
+    'perfil.privacy': 'Privacidad',
+    'perfil.help': 'Ayuda',
+    'perfil.logout': 'Cerrar sesión',
+    'perfil.delete': 'Eliminar cuenta',
+    'premium.statusFree': 'Plan gratuito — desbloquea tip y estadísticas avanzadas',
+    'premium.statusOn': 'Plan Premium activo',
+    'premium.statusUntil': 'Plan Premium activo · hasta {date}',
+    'premium.subscribe': 'Suscribirse',
+    'premium.already': 'Ya eres Premium',
+    'settings.title': 'Ajustes',
+    'settings.lang': 'Idioma',
+    'settings.theme': 'Tema',
+    'settings.themeDark': 'Oscuro',
+    'settings.themeLight': 'Claro',
+    'settings.tz': 'Zona horaria',
+    'settings.tzDevice': 'Dispositivo',
+    'settings.save': 'Guardar',
+    'settings.saved': 'Ajustes guardados',
+    'settings.privacyHint':
+      'Privacidad y cookies en <a href="#ajustes" data-settings-close data-go-ajustes>Ajustes de privacidad</a>.',
+    'toast.payUnconfigured': 'Pago no configurado',
+    'sanction.title': 'Premium',
+    'sanction.copy': 'Premium retirado por incumplimiento de las normas.',
+    'sanction.ack': 'Entendido',
+    'nav.partidos': 'Partidos',
+    'nav.top10': 'Top 10',
+    'nav.stats': 'Stats',
+    'nav.semanal': 'Semanal',
+    'nav.ligas': 'Ligas',
+    'panel.tabGeneral': 'General',
+    'panel.tabGoals': 'Goles',
+    'panel.tabShots': 'Tiros',
+    'panel.tabSot': 'Tiros a puerta',
+    'panel.tabCorners': 'Córners',
+    'panel.tabCards': 'Tarjetas',
+    'panel.keyProbs': 'Probabilidades clave',
+    'panel.leagueAvg': 'Media liga',
+    'panel.over25': 'Más de 2,5 goles',
+    'panel.over15': 'Más de 1,5 goles',
+    'panel.btts': 'Ambos marcan',
+    'panel.bttsYes': 'Sí',
+    'panel.bttsNo': 'No',
+    'panel.avgGoals': 'Promedio goles',
+    'panel.avgCorners': 'Promedio córners',
+    'panel.avgCards': 'Promedio tarjetas',
+    'panel.average': 'Promedio',
+    'panel.metric': 'Métrica',
+    'panel.home': 'Local',
+    'panel.awayShort': 'Visit.',
+    'panel.match': 'Partido',
+    'panel.expected': 'Esperado',
+    'panel.trendsOf': 'Tendencias de {title}',
+    'panel.underTrendsOf': 'Menos de — {title}',
+    'panel.overLine': 'Más de {n}',
+    'panel.underLine': 'Menos de {n}',
+    'panel.goalsTitle': 'goles',
+    'panel.goalsExpected': 'Goles esperados',
+    'panel.shotsTitle': 'tiros',
+    'panel.shotsExpected': 'Tiros totales esperados',
+    'panel.sotTitle': 'tiros a puerta',
+    'panel.sotExpected': 'Tiros a puerta esperados',
+    'panel.cornersTitle': 'córners',
+    'panel.cornersExpected': 'Córners esperados',
+    'panel.cardsTitle': 'tarjetas',
+    'panel.cardsExpected': 'Tarjetas esperadas',
+    'panel.offTarget': 'Est. fuera ≈ {h} / {a} / {m}',
+    'censor.aria': 'Solo suscriptores — desbloquea con Houdini Premium',
+    'censor.title': 'Solo suscriptores',
+    'censor.sub': 'Desbloquea las estadísticas con Houdini Premium',
+    'censor.cta': 'Ver planes',
+    'chip.all': 'Todos',
+    'chip.live': 'En vivo',
+    'chip.finished': 'Finalizados',
+    'chip.upcoming': 'Próximos',
+    'panel.analysis': 'Análisis',
+  },
+  en: {
+    'date.unavailable': 'Date unavailable',
+    'account.perfil': 'Profile',
+    'account.settings': 'Settings',
+    'account.help': 'Help',
+    'account.coop': 'Collaboration',
+    'account.privacy': 'Privacy',
+    'account.logout': 'Log out',
+    'account.premiumOn': 'Premium',
+    'account.premiumOff': 'Free',
+    'perfil.title': 'Profile',
+    'perfil.badgeFree': 'Free',
+    'perfil.badgePremium': 'Premium',
+    'perfil.promoLabel': 'Promo code',
+    'perfil.promoApply': 'Apply',
+    'perfil.promoPlaceholder': 'Code',
+    'perfil.promoOk': 'Code applied · Premium unlocked',
+    'perfil.promoOkDays': 'Code applied · Premium {days}d',
+    'perfil.promoOkMonth': 'Code applied · 1 month Premium',
+    'perfil.promoOkDiscount': '{pct}% off applied · used at checkout',
+    'perfil.promoBad': 'Invalid code',
+    'perfil.promoUsed': 'You already used this code',
+    'perfil.promoExpired': 'Code exhausted or expired',
+    'perfil.promoNeedAuth': 'Sign in to redeem',
+    'premium.priceWeek': '€9.99',
+    'premium.priceMonth': '€19.90',
+    'premium.discountBadge': '−{pct}% promo',
+    'date.yesterday': 'Yesterday',
+    'date.today': 'Today',
+    'date.tomorrow': 'Tomorrow',
+    'search.placeholder': 'Search team',
+    'search.results': 'Results',
+    'search.loading': 'Searching…',
+    'search.empty': 'No results.',
+    'view.top10': 'Top 10 predictions',
+    'view.stats': 'Stats',
+    'view.ligas': 'Leagues',
+    'view.semanal': 'Weekly',
+    'view.partidos': 'Matches',
+    'panel.emptySelect': 'Select a match to see the analysis',
+    'ligas.emptySelect': 'Select a league to see the table',
+    'ligas.seeMatches': 'See matches in this league',
+    'ligas.hint':
+      'Pick a country and league. On desktop the table appears on the right; on mobile it slides in from the right.',
+    'ligas.noLeagues': 'No leagues in the window',
+    'ligas.noTable': 'No standings yet',
+    'ligas.matchCount': '{n} match',
+    'ligas.matchCountPlural': '{n} matches',
+    'empty.noMatches': 'No matches for {date}',
+    'empty.noTips': 'No playable tips today (P≥{p}% · odds ≤{odds})',
+    'empty.noClosedTips': 'No settled tips yet',
+    'empty.loadingAnalysis': 'Loading analysis…',
+    'form.win': 'Win',
+    'form.draw': 'Draw',
+    'form.loss': 'Loss',
+    'auth.title': 'Account',
+    'auth.tabLogin': 'Sign in',
+    'auth.tabRegister': 'Sign up',
+    'auth.google': 'Continue with Google',
+    'auth.telegram': 'Continue with Telegram',
+    'auth.soon': 'Soon',
+    'auth.or': 'or',
+    'auth.userOrEmail': 'Username or email',
+    'auth.password': 'Password',
+    'auth.loginSubmit': 'Sign in',
+    'auth.noAccount': "Don't have an account?",
+    'auth.registerLink': 'Sign up',
+    'auth.hasAccount': 'Already have an account?',
+    'auth.loginLink': 'Sign in',
+    'auth.username': 'Username',
+    'auth.name': 'Name',
+    'auth.email': 'Email',
+    'auth.phone': 'Phone',
+    'auth.registerSubmit': 'Create account',
+    'auth.confirmPassword': 'Confirm password',
+    'auth.close': 'Close',
+    'premiumModal.title': 'Go Premium',
+    'premiumModal.lead':
+      'Unlock weekly tips and full access to Houdini Bet. Activate now or later.',
+    'premiumModal.activate': 'Activate Premium',
+    'premiumModal.skip': 'Not now',
+    'consent.title': 'Cookies and privacy',
+    'consent.lead':
+      'We use local storage so the app works. Optional choices (analytics stub, search and filters) only turn on if you accept them.',
+    'consent.age': 'I confirm I am 18 or older',
+    'consent.acceptAll': 'Accept all',
+    'consent.necessary': 'Necessary only',
+    'consent.customize': 'Customize',
+    'consent.back': '← Back',
+    'consent.customLead':
+      'Choose what to store on this device. You need to confirm you are of legal age to save.',
+    'consent.privacy': 'Privacy',
+    'consent.cookies': 'Cookies',
+    'consent.notice': 'Notice',
+    'consent.terms': 'Terms',
+    'toast.payOpenFail': 'Could not open checkout. Try again in a few seconds.',
+    'toast.payStartFail': 'Could not start Premium checkout: {msg}',
+    'toast.payOk': 'Payment confirmed: Premium unlocked. It will show in a few seconds.',
+    'toast.payCancel': 'Payment cancelled — no charge.',
+    'toast.accountDeleted': 'Account deleted',
+    'toast.accountDeleteFail': 'Could not delete account',
+    'toast.telegramSoon': 'Telegram · Soon',
+    'toast.nextMatchSearch': 'Looking up next match…',
+    'toast.noNextMatch': 'No upcoming match in the window',
+    'toast.googleFail': 'Could not complete Google sign-in.',
+    'league.generic': 'League',
+    'league.nations': 'Nations League',
+    'family.1X2': '1X2',
+    'family.ou': 'Over/Under',
+    'family.btts': 'Both teams to score',
+    'family.goles': 'Goals',
+    'family.corners': 'Corners',
+    'family.cards': 'Cards',
+    'family.shots': 'Shots',
+    'family.shots_on_target': 'Shots on target',
+    'family.otros': 'Other',
+    'bet.HOME_WIN': 'Home win',
+    'bet.DRAW': 'Draw',
+    'bet.AWAY_WIN': 'Away win',
+    'bet.DC_1X': 'Double chance 1X',
+    'bet.DC_X2': 'Double chance X2',
+    'bet.DNB_HOME': 'Draw no bet · home',
+    'bet.DNB_AWAY': 'Draw no bet · away',
+    'bet.OVER_05': 'Over 0.5 goals',
+    'bet.UNDER_05': 'Under 0.5 goals',
+    'bet.OVER_15': 'Over 1.5 goals',
+    'bet.UNDER_15': 'Under 1.5 goals',
+    'bet.OVER_25': 'Over 2.5 goals',
+    'bet.UNDER_25': 'Under 2.5 goals',
+    'bet.OVER_35': 'Over 3.5 goals',
+    'bet.UNDER_35': 'Under 3.5 goals',
+    'bet.OVER_45': 'Over 4.5 goals',
+    'bet.UNDER_45': 'Under 4.5 goals',
+    'bet.BTTS_YES': 'BTTS — Yes',
+    'bet.BTTS_NO': 'BTTS — No',
+    'bet.HOME_OVER_05': 'Home · Over 0.5 goals',
+    'bet.HOME_UNDER_05': 'Home · Under 0.5 goals',
+    'bet.HOME_OVER_15': 'Home · Over 1.5 goals',
+    'bet.HOME_UNDER_15': 'Home · Under 1.5 goals',
+    'bet.HOME_OVER_25': 'Home · Over 2.5 goals',
+    'bet.HOME_UNDER_25': 'Home · Under 2.5 goals',
+    'bet.HOME_OVER_35': 'Home · Over 3.5 goals',
+    'bet.HOME_UNDER_35': 'Home · Under 3.5 goals',
+    'bet.AWAY_OVER_05': 'Away · Over 0.5 goals',
+    'bet.AWAY_UNDER_05': 'Away · Under 0.5 goals',
+    'bet.AWAY_OVER_15': 'Away · Over 1.5 goals',
+    'bet.AWAY_UNDER_15': 'Away · Under 1.5 goals',
+    'bet.AWAY_OVER_25': 'Away · Over 2.5 goals',
+    'bet.AWAY_UNDER_25': 'Away · Under 2.5 goals',
+    'bet.AWAY_OVER_35': 'Away · Over 3.5 goals',
+    'bet.AWAY_UNDER_35': 'Away · Under 3.5 goals',
+    'bet.CORNERS_OVER_85': 'Over 8.5 corners',
+    'bet.CORNERS_UNDER_85': 'Under 8.5 corners',
+    'bet.CORNERS_OVER_95': 'Over 9.5 corners',
+    'bet.CORNERS_UNDER_95': 'Under 9.5 corners',
+    'bet.CORNERS_OVER_105': 'Over 10.5 corners',
+    'bet.CORNERS_UNDER_105': 'Under 10.5 corners',
+    'bet.SHOTS_OVER_225': 'Over 22.5 shots',
+    'bet.SHOTS_UNDER_225': 'Under 22.5 shots',
+    'bet.SHOTS_OVER_255': 'Over 25.5 shots',
+    'bet.SHOTS_UNDER_255': 'Under 25.5 shots',
+    'bet.SOT_OVER_75': 'Over 7.5 shots on target',
+    'bet.SOT_UNDER_75': 'Under 7.5 shots on target',
+    'bet.SOT_OVER_85': 'Over 8.5 shots on target',
+    'bet.SOT_UNDER_85': 'Under 8.5 shots on target',
+    'bet.SOT_OVER_95': 'Over 9.5 shots on target',
+    'bet.SOT_UNDER_95': 'Under 9.5 shots on target',
+    'bet.CARDS_OVER_35': 'Over 3.5 cards',
+    'bet.CARDS_UNDER_35': 'Under 3.5 cards',
+    'bet.CARDS_OVER_45': 'Over 4.5 cards',
+    'bet.CARDS_UNDER_45': 'Under 4.5 cards',
+    'bet.winNamed': '{name} win',
+    'bet.winHome': 'Home win',
+    'bet.winAway': 'Away win',
+    'weekly.window': 'Window',
+    'weekly.weekend': 'Weekend',
+    'weekly.thisWeek': 'This week',
+    'weekly.next7': 'Next 7 days',
+    'weekly.next14': 'Next 14 days',
+    'weekly.league': 'League',
+    'weekly.allLeagues': 'All',
+    'perfil.metaFree': 'Free plan',
+    'perfil.metaActive': 'Premium plan active',
+    'perfil.metaUntil': 'Until {date}',
+    'perfil.metaDays': ' · {n} days',
+    'perfil.upgrade': 'Upgrade to Premium',
+    'perfil.settings': 'Settings',
+    'perfil.privacy': 'Privacy',
+    'perfil.help': 'Help',
+    'perfil.logout': 'Log out',
+    'perfil.delete': 'Delete account',
+    'premium.statusFree': 'Free plan — unlock tip and advanced stats',
+    'premium.statusOn': 'Premium plan active',
+    'premium.statusUntil': 'Premium plan active · until {date}',
+    'premium.subscribe': 'Subscribe',
+    'premium.already': 'You are Premium',
+    'settings.title': 'Settings',
+    'settings.lang': 'Language',
+    'settings.theme': 'Theme',
+    'settings.themeDark': 'Dark',
+    'settings.themeLight': 'Light',
+    'settings.tz': 'Time zone',
+    'settings.tzDevice': 'Device',
+    'settings.save': 'Save',
+    'settings.saved': 'Settings saved',
+    'settings.privacyHint':
+      'Privacy and cookies in <a href="#ajustes" data-settings-close data-go-ajustes>Privacy settings</a>.',
+    'toast.payUnconfigured': 'Payment not configured',
+    'sanction.title': 'Premium',
+    'sanction.copy': 'Premium removed for violating the rules.',
+    'sanction.ack': 'Got it',
+    'nav.partidos': 'Matches',
+    'nav.top10': 'Top 10',
+    'nav.stats': 'Stats',
+    'nav.semanal': 'Weekly',
+    'nav.ligas': 'Leagues',
+    'panel.tabGeneral': 'Overview',
+    'panel.tabGoals': 'Goals',
+    'panel.tabShots': 'Shots',
+    'panel.tabSot': 'Shots on target',
+    'panel.tabCorners': 'Corners',
+    'panel.tabCards': 'Cards',
+    'panel.keyProbs': 'Key probabilities',
+    'panel.leagueAvg': 'League avg',
+    'panel.over25': 'Over 2.5 goals',
+    'panel.over15': 'Over 1.5 goals',
+    'panel.btts': 'Both teams to score',
+    'panel.bttsYes': 'Yes',
+    'panel.bttsNo': 'No',
+    'panel.avgGoals': 'Goals average',
+    'panel.avgCorners': 'Corners average',
+    'panel.avgCards': 'Cards average',
+    'panel.average': 'Average',
+    'panel.metric': 'Metric',
+    'panel.home': 'Home',
+    'panel.awayShort': 'Away',
+    'panel.match': 'Match',
+    'panel.expected': 'Expected',
+    'panel.trendsOf': '{title} trends',
+    'panel.underTrendsOf': 'Under — {title}',
+    'panel.overLine': 'Over {n}',
+    'panel.underLine': 'Under {n}',
+    'panel.goalsTitle': 'goals',
+    'panel.goalsExpected': 'Expected goals',
+    'panel.shotsTitle': 'shots',
+    'panel.shotsExpected': 'Expected total shots',
+    'panel.sotTitle': 'shots on target',
+    'panel.sotExpected': 'Expected shots on target',
+    'panel.cornersTitle': 'corners',
+    'panel.cornersExpected': 'Expected corners',
+    'panel.cardsTitle': 'cards',
+    'panel.cardsExpected': 'Expected cards',
+    'panel.offTarget': 'Est. off target ≈ {h} / {a} / {m}',
+    'censor.aria': 'Subscribers only — unlock with Houdini Premium',
+    'censor.title': 'Subscribers only',
+    'censor.sub': 'Unlock stats with Houdini Premium',
+    'censor.cta': 'See plans',
+    'chip.all': 'All',
+    'chip.live': 'Live',
+    'chip.finished': 'Finished',
+    'chip.upcoming': 'Upcoming',
+    'panel.analysis': 'Analysis',
+  },
+};
+
+function loadUiSettings() {
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return {
+      lang: parsed?.lang === 'en' ? 'en' : 'es',
+      theme: 'dark',
+      timezone: parsed?.timezone === 'device' ? 'device' : 'Europe/Madrid',
+    };
+  } catch (_) {
+    return { lang: 'es', theme: 'dark', timezone: 'Europe/Madrid' };
+  }
+}
+
+/** Shared Premium / Gratuito badge for menú + perfil. */
+function syncPlanBadge(el, isPremium) {
+  if (!el) return;
+  const on = Boolean(isPremium);
+  el.textContent = on ? t('perfil.badgePremium') : t('perfil.badgeFree');
+  el.classList.add('plan-badge');
+  el.classList.toggle('plan-badge--premium', on);
+  el.classList.remove(
+    'account-menu__premium',
+    'account-menu__premium--on',
+    'account-menu__premium--off',
+    'perfil-plan__badge',
+    'is-premium'
+  );
+}
+
+function saveUiSettings(next) {
+  const cur = { ...loadUiSettings(), ...next };
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify(cur));
+  return cur;
+}
+
+function getUiLang() {
+  return loadUiSettings().lang === 'en' ? 'en' : 'es';
+}
+
+function getUiLocale() {
+  return getUiLang() === 'en' ? 'en-GB' : 'es-ES';
+}
+
+function getUiTimeZone() {
+  const tz = loadUiSettings().timezone;
+  if (tz === 'device') {
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/Madrid';
+    } catch (_) {
+      return 'Europe/Madrid';
+    }
+  }
+  return 'Europe/Madrid';
+}
+
+function t(key, vars = {}) {
+  const lang = getUiLang();
+  const dict = I18N[lang] || I18N.es;
+  let out = dict[key] ?? I18N.es[key] ?? key;
+  Object.keys(vars).forEach((k) => {
+    out = out.replaceAll(`{${k}}`, String(vars[k]));
+  });
+  return out;
+}
+
+function applyAccountI18n() {
+  const map = [
+    ['#account-perfil', 'account.perfil'],
+    ['#account-settings', 'account.settings'],
+    ['#account-ayuda', 'account.help'],
+    ['#account-coop', 'account.coop'],
+    ['#account-ajustes', 'account.privacy'],
+    ['#account-logout', 'account.logout'],
+    ['.perfil-bar__title', 'perfil.title'],
+    ['#perfil-open-settings', 'perfil.settings'],
+    ['#perfil-logout', 'perfil.logout'],
+    ['#perfil-delete', 'perfil.delete'],
+    ['#perfil-upgrade', 'perfil.upgrade'],
+    ['#settings-modal-title', 'settings.title'],
+    ['#settings-save', 'settings.save'],
+    ['#sanction-modal-title', 'sanction.title'],
+    ['#sanction-modal-copy', 'sanction.copy'],
+    ['#sanction-modal-ack', 'sanction.ack'],
+  ];
+  map.forEach(([sel, key]) => {
+    const el = document.querySelector(sel);
+    if (el) el.textContent = t(key);
+  });
+  const privacyLink = document.querySelector('#perfil .perfil-links a[href="#ajustes"]');
+  if (privacyLink) privacyLink.textContent = t('perfil.privacy');
+  const helpLink = document.querySelector('#perfil .perfil-links a[href^="mailto"]');
+  if (helpLink) helpLink.textContent = t('perfil.help');
+  document.querySelectorAll('[data-i18n]').forEach((el) => {
+    const key = el.getAttribute('data-i18n');
+    if (key) el.textContent = t(key);
+  });
+  document.querySelectorAll('[data-i18n-html]').forEach((el) => {
+    const key = el.getAttribute('data-i18n-html');
+    if (key) el.innerHTML = t(key);
+  });
+  document.querySelectorAll('[data-i18n-placeholder]').forEach((el) => {
+    const key = el.getAttribute('data-i18n-placeholder');
+    if (key) el.setAttribute('placeholder', t(key));
+  });
+  document.querySelectorAll('[data-i18n-aria]').forEach((el) => {
+    const key = el.getAttribute('data-i18n-aria');
+    if (key) el.setAttribute('aria-label', t(key));
+  });
+  const googleSpan = document.querySelector('#auth-google span:last-child');
+  if (googleSpan && !googleSpan.classList.contains('auth-google__mark')) {
+    googleSpan.textContent = t('auth.google');
+  }
+  const tgAuthSoon = document.querySelector('#auth-telegram .auth-telegram__soon');
+  if (tgAuthSoon) tgAuthSoon.textContent = t('auth.soon');
+  const tgAuthLabel = document.querySelector('#auth-telegram > span:not(.auth-telegram__soon):not(.auth-telegram__mark)');
+  if (tgAuthLabel) tgAuthLabel.textContent = t('auth.telegram');
+  document.querySelectorAll('.account-menu__soon, .perfil-links__soon').forEach((el) => {
+    el.textContent = t('auth.soon');
+  });
+}
+
+function applyUiSettings() {
+  const s = loadUiSettings();
+  document.documentElement.lang = s.lang === 'en' ? 'en' : 'es';
+  document.body.setAttribute('data-theme', 'dark');
+  applyAccountI18n();
+  syncPremiumView();
+  syncPerfilView();
+  const panelTitle = document.querySelector('.panel-header__title');
+  if (panelTitle) panelTitle.textContent = t('panel.analysis');
+  document.querySelectorAll('[data-chip]').forEach((el) => {
+    const k = el.getAttribute('data-chip');
+    if (k) el.textContent = t(`chip.${k}`);
+  });
+}
+
+function refreshUiAfterLangChange() {
+  applyUiSettings();
+  try {
+    if (typeof renderPartidosList === 'function') renderPartidosList();
+  } catch (_) {}
+  try {
+    if (typeof renderTop3 === 'function') renderTop3();
+  } catch (_) {}
+  try {
+    if (typeof renderLigasView === 'function') renderLigasView();
+  } catch (_) {}
+  try {
+    if (typeof loadPerformance === 'function') loadPerformance();
+  } catch (_) {}
+  if (selectedMatchId && document.getElementById('panel')?.classList.contains('is-open')) {
+    openPrediction(selectedMatchId).catch(() => {});
+  }
+}
+
+function syncPerfilView() {
+  const root = document.getElementById('perfil');
+  if (!root || !authUser) return;
+  const letter = String(authUser.name || authUser.email || '?')
+    .trim()
+    .charAt(0)
+    .toUpperCase();
+  const avatar = document.getElementById('perfil-avatar');
+  const nameEl = document.getElementById('perfil-name');
+  const userEl = document.getElementById('perfil-user');
+  const emailEl = document.getElementById('perfil-email');
+  const badge = document.getElementById('perfil-plan-badge');
+  const meta = document.getElementById('perfil-plan-meta');
+  const upgrade = document.getElementById('perfil-upgrade');
+  if (avatar) avatar.textContent = letter || '?';
+  if (nameEl) nameEl.textContent = authUser.name || 'Cuenta';
+  if (userEl) {
+    userEl.textContent = authUser.username ? `@${authUser.username}` : '';
+    userEl.hidden = !authUser.username;
+  }
+  if (emailEl) emailEl.textContent = authUser.email || '';
+  const on = contentUnlocked();
+  syncPlanBadge(badge, on);
+  if (meta) {
+    if (on && premiumState.premiumUntil) {
+      meta.textContent =
+        t('perfil.metaUntil', { date: String(premiumState.premiumUntil).slice(0, 10) }) +
+        (premiumState.premiumDaysLeft != null
+          ? t('perfil.metaDays', { n: premiumState.premiumDaysLeft })
+          : '');
+    } else if (on) {
+      meta.textContent = t('perfil.metaActive');
+    } else {
+      meta.textContent = t('perfil.metaFree');
+    }
+  }
+  if (upgrade) {
+    upgrade.hidden = on;
+    upgrade.textContent = t('perfil.upgrade');
+  }
+}
+
+function isSettingsModalOpen() {
+  const modal = document.getElementById('settings-modal');
+  return Boolean(modal && !modal.hidden && modal.classList.contains('is-open'));
+}
+
+function openSettingsModal() {
+  const modal = document.getElementById('settings-modal');
+  if (!modal) return;
+  const s = loadUiSettings();
+  modal.querySelectorAll('[name="settings-lang"]').forEach((el) => {
+    el.checked = el.value === s.lang;
+  });
+  modal.querySelectorAll('[name="settings-tz"]').forEach((el) => {
+    el.checked = el.value === s.timezone;
+  });
+  modal.hidden = false;
+  modal.classList.add('is-open');
+  document.body.classList.add('auth-open');
+  requestAnimationFrame(() => {
+    document.getElementById('settings-save')?.focus({ preventScroll: true });
+  });
+}
+
+function closeSettingsModal() {
+  const modal = document.getElementById('settings-modal');
+  if (!modal || !isSettingsModalOpen()) return;
+  modal.classList.remove('is-open');
+  modal.hidden = true;
+  if (!isAuthModalOpen() && !isPremiumModalOpen()) {
+    document.body.classList.remove('auth-open');
+  }
+}
+
+async function deleteOwnAccount() {
+  const ok = window.confirm(
+    '¿Eliminar tu cuenta de forma permanente? Se borrarán tu sesión y tus datos de acceso.'
+  );
+  if (!ok) return;
+  try {
+    await api('/api/v1/auth/delete', { method: 'POST' });
+    setAuthUser(null);
+    premiumState.premium = false;
+    premiumState.plan = 'free';
+    bootAwaitingAuth = true;
+    openAuthRequiredGate();
+    showBanner(t('toast.accountDeleted'), 'info');
+  } catch (err) {
+    showBanner(err.message || t('toast.accountDeleteFail'), 'error');
   }
 }
 
 async function api(path, opts = {}) {
-  const res = await fetch(`${API}${path}`, opts);
+  const res = await fetch(`${API}${path}`, {
+    credentials: 'same-origin',
+    ...opts,
+  });
   let data = null;
   try {
     data = await res.json();
@@ -2620,41 +4301,6 @@ function setModeBadge(status) {
     el.classList.add('hidden');
     el.hidden = true;
     el.title = status?.message || '';
-  }
-}
-
-function setHitBadge(perf) {
-  const badge = document.getElementById('hit-badge');
-  if (!badge) return;
-  const valueEl = badge.querySelector('.hit-badge__value');
-  const hintEl = badge.querySelector('.hit-badge__hint');
-  const prev = valueEl?.textContent;
-  badge.classList.remove('hidden', 'is-empty');
-  let next = '—';
-  if (perf?.hitRate != null && perf.decided > 0) {
-    const pct = (Number(perf.hitRate) * 100).toFixed(0);
-    next = `${pct}%`;
-    if (hintEl) hintEl.textContent = 'Aciertos';
-    badge.title = `Aciertos históricos ${pct}% (${perf.hits}/${perf.decided}) · no es confianza del modelo`;
-  } else if (perf?.pending > 0) {
-    next = String(perf.pending);
-    if (hintEl) hintEl.textContent = 'Pend.';
-    badge.title = 'Tips pendientes de liquidar';
-    badge.classList.add('is-empty');
-  } else {
-    if (hintEl) hintEl.textContent = 'Aciertos';
-    badge.title = 'Sin tips cerrados todavía';
-    badge.classList.add('is-empty');
-  }
-  if (valueEl) {
-    valueEl.textContent = next;
-    if (next !== prev) {
-      valueEl.classList.remove('is-reveal');
-      void valueEl.offsetWidth;
-      valueEl.classList.add('is-reveal');
-    }
-  } else {
-    badge.textContent = next;
   }
 }
 
@@ -2798,7 +4444,7 @@ function desiredMatchesFetchLeagueId() {
   return Number.isFinite(lid) ? lid : null;
 }
 
-/** Aciertos + hit-badge: always full tip history (ignore Pronósticos window). */
+/** Aciertos / tip summary: always full tip history (ignore Pronósticos window). */
 const TIPS_PERF_GLOBAL_Q = 'all=1';
 
 function syncWindowChips() {
@@ -2885,10 +4531,10 @@ function renderStatusFilters(list) {
   }
   const c = statusCounts(list);
   const items = [
-    ['all', 'Todos', c.all],
-    ['live', 'En vivo', c.live],
-    ['finished', 'Finalizados', c.finished],
-    ['upcoming', 'Próximos', c.upcoming],
+    ['all', t('chip.all'), c.all],
+    ['live', t('chip.live'), c.live],
+    ['finished', t('chip.finished'), c.finished],
+    ['upcoming', t('chip.upcoming'), c.upcoming],
   ];
   el.innerHTML = items
     .map(([id, lab, n]) => {
@@ -2912,11 +4558,6 @@ function renderStatusFilters(list) {
 
 function scopedMatches() {
   let list = cachedMatches.slice();
-  if (scopeFilter === 'clubs') {
-    list = list.filter((m) => !isInternationalMatch(m));
-  } else if (scopeFilter === 'intl') {
-    list = list.filter((m) => isInternationalMatch(m));
-  }
   if (leagueFilterIds.size) {
     list = list.filter((m) => leagueFilterIds.has(Number(m.leagueId)));
   }
@@ -2930,9 +4571,11 @@ function filteredBrowseMatches() {
 }
 
 function leagueKey(m) {
-  const country = m.leagueCountry || m.country || '';
-  const name = m.leagueName || m.league || 'Liga';
-  return [country, name].filter(Boolean).join(' · ') || 'Liga';
+  return formatLeagueLine(
+    m.leagueCountry || m.country || '',
+    m.leagueName || m.league || '',
+    m.leagueApiId ?? m.apiId
+  );
 }
 
 function browseRowHtml(m) {
@@ -2966,11 +4609,16 @@ function renderPartidosList() {
   const countEl = document.getElementById('match-count');
   if (!el) return;
   const rows = filteredBrowseMatches();
-  if (countEl) countEl.textContent = `${rows.length} partidos`;
+  if (countEl) {
+    countEl.textContent = t(
+      rows.length === 1 ? 'ligas.matchCount' : 'ligas.matchCountPlural',
+      { n: rows.length }
+    );
+  }
   if (!rows.length) {
-    el.innerHTML = `<div class="empty-board">Sin partidos para ${escapeHtml(
-      formatDateCenter(resolveSelectedDate())
-    )} con estos filtros.</div>`;
+    el.innerHTML = `${premiumBannerHtml()}<div class="empty-board">${escapeHtml(
+      t('empty.noMatches', { date: formatDateCenter(resolveSelectedDate()) })
+    )}</div>`;
     return;
   }
   const groups = new Map();
@@ -2979,15 +4627,20 @@ function renderPartidosList() {
     if (!groups.has(k)) groups.set(k, []);
     groups.get(k).push(m);
   }
-  el.innerHTML = [...groups.entries()]
-    .map(
-      ([title, matches]) => `
+  const sections = [...groups.entries()].map(
+    ([title, matches]) => `
       <section class="league" role="group" aria-label="${escapeHtml(title)}">
         <h3 class="league__title">${escapeHtml(title)}</h3>
         <div class="league__list">${matches.map(browseRowHtml).join('')}</div>
       </section>`
-    )
-    .join('');
+  );
+  /* Banner after first league group (or at top if only one). */
+  if (sections.length > 1) {
+    sections.splice(1, 0, premiumBannerHtml());
+  } else {
+    sections.push(premiumBannerHtml());
+  }
+  el.innerHTML = sections.join('');
   bindAnalyze(el);
 }
 
@@ -2995,13 +4648,12 @@ function renderPartidosList() {
 const TOP10_MIN_PROB = 75;
 /** Soft backfill floor — fill to 10 when primary pass underfills; never invent tips. */
 const TOP10_SOFT_MIN_PROB = 69;
+/** Preferred playable floor (lane/value). Top 10 does not hard-reject below this. */
 const TOP10_MIN_ODDS = 1.3;
 const TOP10_MAX_ODDS = 3.5;
 const TOP10_TRIVIAL_LABELS = new Set(['OVER_05', 'UNDER_45']);
 const TOP10_MAX_PER_FAMILY = 3;
 const TOP10_LIMIT = 10;
-/** Product allowlist window: today + next N days (same as Partidos/sync). */
-const TOP10_WINDOW_DAYS = 14;
 
 function tipValueScore(m) {
   const edge = m.valueEdge != null ? Number(m.valueEdge) : null;
@@ -3032,7 +4684,9 @@ function tipOddsForTop10Band(m, probPct) {
 }
 
 /**
- * Top 10 eligibility score: cuota 1.30–3.50, non-trivial, P≥minProb.
+ * Top 10 eligibility score: non-trivial, P≥minProb, cuota ≤3.50.
+ * Min cuota 1.30 is playable-value guidance only — do NOT reject high-P tips
+ * whose model 1/p (or short book) falls below 1.30; that starved quiet/high-P days.
  * tipTier none / display tips OK (Top 10 is UI ranking, not tip_results).
  */
 function tipPlayableScore(m, minProb = TOP10_SOFT_MIN_PROB) {
@@ -3043,7 +4697,8 @@ function tipPlayableScore(m, minProb = TOP10_SOFT_MIN_PROB) {
     return null;
   }
   const odds = tipOddsForTop10Band(m, prob);
-  if (odds == null || !Number.isFinite(odds) || odds < TOP10_MIN_ODDS || odds > TOP10_MAX_ODDS) {
+  // Reject missing / invalid / longshot (>max). Allow shorts below TOP10_MIN_ODDS.
+  if (odds == null || !Number.isFinite(odds) || odds <= 1 || odds > TOP10_MAX_ODDS) {
     return null;
   }
   const isBook = m.oddsSource === 'book' && m.tipOdds != null && Number(m.tipOdds) > 1;
@@ -3083,8 +4738,9 @@ function tipFamilyUi(code) {
 
 /**
  * Top 10 diversity: max 1 per exact label, max 3 per family (pass 1).
- * Pass 2 fills remaining slots with maxPerLabel only (still no inventing).
- * At most one tip per matchId when present.
+ * Pass 2: drop family cap, keep label cap.
+ * Pass 3: fill remaining with one-per-match only (allow duplicate labels) so quiet
+ * days are not starved when several matches share OVER_15 / etc. Still no inventing.
  */
 function selectDiverseTips(sortedTips, limit = 3, maxPerLabel = 1, maxPerFamily = TOP10_MAX_PER_FAMILY) {
   const selected = [];
@@ -3102,7 +4758,7 @@ function selectDiverseTips(sortedTips, limit = 3, maxPerLabel = 1, maxPerFamily 
     return id != null ? Number(id) : null;
   };
 
-  const tryPick = (enforceFamilyCap) => {
+  const tryPick = ({ enforceFamilyCap, enforceLabelCap }) => {
     while (selected.length < limit) {
       let best = null;
       let bestIdx = Infinity;
@@ -3111,7 +4767,8 @@ function selectDiverseTips(sortedTips, limit = 3, maxPerLabel = 1, maxPerFamily 
         const item = items[i];
         if (selected.includes(item)) continue;
         const label = labelOf(item);
-        if (!label || (usedLabels.get(label) || 0) >= maxLabel) continue;
+        if (!label) continue;
+        if (enforceLabelCap && (usedLabels.get(label) || 0) >= maxLabel) continue;
         const mid = matchIdOf(item);
         if (mid != null && usedMatches.has(mid)) continue;
         const fam = tipFamilyUi(label);
@@ -3134,8 +4791,9 @@ function selectDiverseTips(sortedTips, limit = 3, maxPerLabel = 1, maxPerFamily 
     }
   };
 
-  tryPick(true);
-  if (selected.length < limit) tryPick(false);
+  tryPick({ enforceFamilyCap: true, enforceLabelCap: true });
+  if (selected.length < limit) tryPick({ enforceFamilyCap: false, enforceLabelCap: true });
+  if (selected.length < limit) tryPick({ enforceFamilyCap: false, enforceLabelCap: false });
   return selected;
 }
 
@@ -3145,7 +4803,8 @@ function isTop10MatchStatus(status) {
 }
 
 /**
- * Primary + secondary candidates (soft floor). Same match may appear twice until select dedupes.
+ * Primary tip candidates only (soft floor). Never promote secondary into Top 10 chrome —
+ * panel-suggest and card-tip must show the same match primary (suggestedBet).
  * tipTier none / display tips included when tipProbPct ≥ soft floor (Top 10 ≠ Stats ledger).
  * Only scheduled/live (skip finished) so Top 10 stays actionable.
  */
@@ -3173,36 +4832,6 @@ function buildTop10Pool(matches) {
         meta: primaryMeta,
       });
     }
-    const sec = raw.secondaryBet;
-    if (
-      !sec ||
-      isTrivialTop10Label(sec) ||
-      tipFamilyUi(sec) === tipFamilyUi(raw.suggestedBet)
-    ) {
-      continue;
-    }
-    const secView = {
-      ...raw,
-      id: matchId,
-      suggestedBet: sec,
-      tipOdds: raw.secondaryTipOdds != null ? raw.secondaryTipOdds : raw.tipOdds,
-      oddsSource: raw.secondaryOddsSource || raw.oddsSource,
-      confidenceScore:
-        raw.secondaryConfidence != null ? raw.secondaryConfidence : raw.confidenceScore,
-      valueEdge: null,
-    };
-    const secMeta = tipPlayableScore(secView, TOP10_SOFT_MIN_PROB);
-    if (secMeta) {
-      // Prefer primary rank slightly when both exist.
-      secMeta.score -= 0.01;
-      pool.push({
-        m: secView,
-        tipLabel: sec,
-        matchId,
-        isSecondary: true,
-        meta: secMeta,
-      });
-    }
   }
   // Primary pass (P≥75) first, then soft backfill (P≥69); within band: book > est, then score.
   return pool.sort((a, b) => {
@@ -3225,8 +4854,8 @@ function pickTop10Tips(matches, limit = TOP10_LIMIT) {
 let top3LoadSeq = 0;
 
 /**
- * Top 10: multi-day upcoming pool (hoy + TOP10_WINDOW_DAYS) → primary P≥75 + soft ≥69.
- * Independent of Partidos date chip. Not best-bets/playable-only. Stats tip_results unchanged.
+ * Top 10: tips of the selected calendar day only (same date as Partidos).
+ * Fill min(10, N). Primary P≥75 + soft ≥69. Not best-bets/playable-only. Stats tip_results unchanged.
  */
 async function renderTop3() {
   const el = document.getElementById('top3-list');
@@ -3234,15 +4863,15 @@ async function renderTop3() {
   const seq = ++top3LoadSeq;
   el.innerHTML = Array.from({ length: 4 }, () => `<div class="skeleton" aria-hidden="true"></div>`).join('');
   try {
-    // Product window (not date= single day — quiet days underfill Top 10).
-    const data = await api(`/api/v1/matches/today?days=${TOP10_WINDOW_DAYS}`);
+    const date = resolveSelectedDate();
+    const data = await api(`/api/v1/matches/today?date=${encodeURIComponent(date)}`);
     if (seq !== top3LoadSeq) return;
     const matches = data.matches || [];
     const picked = pickTop10Tips(matches, TOP10_LIMIT);
     if (!picked.length) {
-      el.innerHTML = `<div class="empty-board">Sin tips jugables (P≥${TOP10_SOFT_MIN_PROB}% · cuota ${TOP10_MIN_ODDS.toFixed(
-        2
-      )}–${TOP10_MAX_ODDS.toFixed(2)}) en los próximos ${TOP10_WINDOW_DAYS} días.</div>`;
+      el.innerHTML = `<div class="empty-board">${escapeHtml(
+        t('empty.noTips', { p: TOP10_SOFT_MIN_PROB, odds: TOP10_MAX_ODDS.toFixed(2) })
+      )}</div>`;
       return;
     }
     el.innerHTML = picked
@@ -3270,24 +4899,30 @@ async function renderTop3() {
         const rank = i + 1;
         const matchId = Number(item.matchId ?? bet.id ?? bet.matchId);
         const liveStrip = bet.status === 'live' ? liveStripHtml(m) : '';
-        return `
-      <article class="card card--tip card--row card--top3" data-analyze="${matchId}">
-        <div class="card-tip__body">
-          <div class="top3-rank">#${rank}</div>
-          <div class="card-tip__primary">
+        const tipPrimary = hbCensorWrap(
+          `<div class="card-tip__primary">
             <span class="card-tip__bet tip-accent">${escapeHtml(tipLabel)}</span>
             ${
               prob != null
                 ? `<span class="${confClass(prob)} card-tip__conf">${Math.round(Number(prob))}%</span>`
                 : ''
             }
-          </div>
-          ${liveStrip}
-          <div class="top3-metrics">
+          </div>`
+        );
+        const tipMetrics = hbCensorWrap(
+          `<div class="top3-metrics">
             ${prob != null ? `<span class="top3-metrics__item"><em>Prob</em> ${Math.round(Number(prob))}%</span>` : ''}
             ${oddsTxt ? `<span class="top3-metrics__item"><em>Cuota</em> ${escapeHtml(oddsTxt)}</span>` : '<span class="top3-metrics__item muted"><em>Cuota</em> sin book</span>'}
             ${valueTxt ? `<span class="top3-metrics__item top3-metrics__item--value">${escapeHtml(valueTxt)}</span>` : ''}
-          </div>
+          </div>`
+        );
+        return `
+      <article class="card card--tip card--row card--top3" data-analyze="${matchId}">
+        <div class="card-tip__body">
+          <div class="top3-rank">#${rank}</div>
+          ${tipPrimary}
+          ${liveStrip}
+          ${tipMetrics}
           ${crestsRowHtml(home, bet.homeTeam?.logo, away, bet.awayTeam?.logo)}
           <p class="card-tip__match">${escapeHtml(home)} vs ${escapeHtml(away)}</p>
           <p class="card-tip__league muted">${escapeHtml(leagueKey(m))} · ${escapeHtml(
@@ -3528,8 +5163,6 @@ function updateFilterChip() {
   else if (windowMode === 'manana') parts.push('Mañana');
   else if (windowMode === 'date') parts.push(selectedDate);
   else parts.push('Hoy');
-  if (scopeFilter === 'clubs') parts.push('Ligas de clubes');
-  else if (scopeFilter === 'intl') parts.push('Internacionales');
   if (leagueFilterIds.size === 1) parts.push('1 liga');
   else if (leagueFilterIds.size > 1) parts.push(`${leagueFilterIds.size} ligas`);
   el.textContent = parts.join(' · ');
@@ -3711,7 +5344,7 @@ function matchBoardRowHtml(raw) {
   const away = raw.awayTeam?.name || raw.away || '';
   const homeLogo = raw.homeTeam?.logo || raw.homeLogo;
   const awayLogo = raw.awayTeam?.logo || raw.awayLogo;
-  const league = raw.leagueName || raw.league || '';
+  const league = leagueLabelEs(raw);
   const tip = raw.suggestedBet || raw.tip;
   const tipOdds = raw.tipOdds;
   const prob = tipProbPct(raw);
@@ -3967,7 +5600,7 @@ function recentTipRowHtml(r) {
       <span class="perf-row__main">
         <span class="perf-row__match">${escapeHtml(r.homeName || '')} – ${escapeHtml(r.awayName || '')}</span>
         <span class="perf-row__tip tip-accent">${tip}</span>
-        <span class="perf-row__meta muted">${escapeHtml(r.leagueName || '—')} · ${escapeHtml(
+        <span class="perf-row__meta muted">${escapeHtml(leagueLabelEs(r.leagueName || r.league || '—'))} · ${escapeHtml(
           formatMatchDate(r.matchDate)
         )} · ${score}${odds ? ` · ${odds}` : ''}</span>
       </span>
@@ -4022,7 +5655,7 @@ function renderPerformance(perf, { append = false } = {}) {
         !PREMIUM_UNLOCKED && perf?.premiumRequired && !premiumState.premium;
       recent.innerHTML = gated
         ? premiumUpsellHtml('perf-recent')
-        : `<div class="perf-empty muted">Sin tips cerrados aún</div>`;
+        : `<div class="perf-empty muted">${escapeHtml(t('empty.noClosedTips'))}</div>`;
       if (gated) bindPremiumActivate(recent);
       return;
     }
@@ -4075,7 +5708,6 @@ async function loadPerformance() {
     tipPerfCacheKey = null;
     const perf = await fetchTipPerformance(q);
     renderPerformance(perf);
-    setHitBadge(perf);
     cachedTipSummary = perf;
   } catch (err) {
     if (summary) {
@@ -4134,12 +5766,17 @@ function isLegalViewId(id) {
   return id === 'privacidad' || id === 'cookies' || id === 'aviso' || id === 'condiciones';
 }
 
+function isAdminQueryEnabled() {
+  return new URLSearchParams(location.search).get('admin') === '1';
+}
+
 function normalizeViewHash(hash) {
   const raw = (hash || '').replace('#', '');
   const id = raw.split('/')[0];
   if (id === 'mejores' || id === 'hoy' || id === '') return 'partidos';
   if (id === 'aciertos') return 'stats';
   if (id === 'cuotas') return 'bandas';
+  if (id === 'admin') return isAdminQueryEnabled() ? 'admin' : 'partidos';
   if (
     id === 'partidos' ||
     id === 'top3' ||
@@ -4147,6 +5784,7 @@ function normalizeViewHash(hash) {
     id === 'ligas' ||
     id === 'bandas' ||
     id === 'premium' ||
+    id === 'perfil' ||
     id === 'ajustes' ||
     isLegalViewId(id)
   ) {
@@ -4201,7 +5839,7 @@ function setActiveNav(hash, { pushHash = true } = {}) {
   const track = document.getElementById('views-track');
   if (track) track.style.transform = '';
   if (views) views.classList.remove('views--dragging');
-  document.querySelectorAll('.v2-nav__link, .dock__link').forEach((link) => {
+  document.querySelectorAll('.v2-nav__link, .dock__link, .app-tabbar__link').forEach((link) => {
     const target = normalizeViewHash(link.getAttribute('href') || '');
     const href = link.getAttribute('href') || '';
     const active =
@@ -4209,7 +5847,7 @@ function setActiveNav(hash, { pushHash = true } = {}) {
       (view === 'bandas' && (href === '#cuotas' || href === '#bandas')) ||
       (view === 'premium' && false);
     link.classList.toggle('is-active', active);
-    if (link.classList.contains('v2-nav__link')) {
+    if (link.classList.contains('v2-nav__link') || link.classList.contains('app-tabbar__link')) {
       if (active) link.setAttribute('aria-current', 'page');
       else link.removeAttribute('aria-current');
     }
@@ -4227,6 +5865,9 @@ function setActiveNav(hash, { pushHash = true } = {}) {
   if (view === 'ligas') renderLigasView();
   if (view === 'bandas') loadCuotasTarget().catch(() => {});
   if (view === 'ajustes') syncPrivacyToggles();
+  if (view === 'premium') syncPremiumView();
+  if (view === 'perfil') syncPerfilView();
+  if (view === 'admin') loadAdminPanel().catch(() => {});
   requestAnimationFrame(() => syncNavIndicator({ instant: !navIndicatorReady }));
 }
 
@@ -4373,6 +6014,18 @@ function weeklyLegRowHtml(leg, idx) {
   const fam = escapeHtml(leg.marketFamily || '—');
   const homeLogo = leg.homeTeam?.logo || null;
   const awayLogo = leg.awayTeam?.logo || null;
+  const marketCell = hbCensorWrap(
+    `<span class="tip-accent">${escapeHtml(labelBet(leg.suggestedBet, home, away))}</span>
+      <div class="muted weekly-table__when">${fam}</div>`
+  );
+  const oddsCell = hbCensorWrap(
+    leg.tipOdds != null ? Number(leg.tipOdds).toFixed(2) : '—'
+  );
+  const pCasaCell = hbCensorWrap(pCasa);
+  const pModelCell = hbCensorWrap(
+    `<span class="${confClass(Number(leg.prob) * 100)}">${pModel}</span>`
+  );
+  const valorCell = hbCensorWrap(valor);
   return `<tr class="weekly-table__row" data-analyze="${Number(leg.matchId)}" data-league="${Number(
     leg.leagueApiId || 0
   )}" data-family="${escapeHtml(leg.marketFamily || '')}">
@@ -4388,13 +6041,11 @@ function weeklyLegRowHtml(leg, idx) {
       </div>
       <div class="muted weekly-table__when">${escapeHtml(formatMatchDate(leg.matchDate))}</div>
     </td>
-    <td class="tip-accent">${escapeHtml(labelBet(leg.suggestedBet, home, away))}
-      <div class="muted weekly-table__when">${fam}</div>
-    </td>
-    <td>${leg.tipOdds != null ? Number(leg.tipOdds).toFixed(2) : '—'}</td>
-    <td>${pCasa}</td>
-    <td class="${confClass(Number(leg.prob) * 100)}">${pModel}</td>
-    <td>${valor}</td>
+    <td>${marketCell}</td>
+    <td>${oddsCell}</td>
+    <td>${pCasaCell}</td>
+    <td>${pModelCell}</td>
+    <td>${valorCell}</td>
     <td class="muted">${src}</td>
   </tr>`;
 }
@@ -4447,9 +6098,12 @@ function renderWeeklySummary(primary, meta = {}, why = null) {
     <div class="weekly-summary__stats">
       ${weeklyMetricCell(
         'Cuota 10',
-        escapeHtml(Number(primary.combinedOdds).toFixed(2))
+        hbCensorWrap(escapeHtml(Number(primary.combinedOdds).toFixed(2)))
       )}
-      ${weeklyMetricCell('Prob. combinada', `<span class="${probClass}">${pAdj}</span>`)}
+      ${weeklyMetricCell(
+        'Prob. combinada',
+        hbCensorWrap(`<span class="${probClass}">${pAdj}</span>`)
+      )}
       ${weeklyMetricCell('Selecciones', escapeHtml(String(primary.nLegs)))}
     </div>
     <div class="weekly-summary__stats weekly-summary__stats--secondary">
@@ -4470,9 +6124,13 @@ let weeklySeenIds = [];
 const WEEKLY_LEAGUE_LABELS = {
   39: 'Premier League',
   140: 'LaLiga',
+  141: 'LaLiga Hypermotion',
   135: 'Serie A',
   78: 'Bundesliga',
   61: 'Ligue 1',
+  2: 'Champions League',
+  3: 'Europa League',
+  5: 'Liga de Naciones',
 };
 
 const WEEKLY_FAMILY_LABELS = {
@@ -4601,10 +6259,15 @@ function conservativeBlockHtml(combo, meta = {}) {
       <span class="muted">estimación del modelo · mín. 1,20 por selección</span>
     </div>
     <div class="weekly-summary__stats weekly-summary__stats--quad">
-      ${weeklyMetricCell('Cuota', escapeHtml(Number(combo.combinedOdds).toFixed(2)))}
+      ${weeklyMetricCell(
+        'Cuota',
+        hbCensorWrap(escapeHtml(Number(combo.combinedOdds).toFixed(2)))
+      )}
       ${weeklyMetricCell(
         'Prob. combinada',
-        `<span class="${confClass(Number(combo.jointProbAdj) * 100)}">${pAdj}</span>`
+        hbCensorWrap(
+          `<span class="${confClass(Number(combo.jointProbAdj) * 100)}">${pAdj}</span>`
+        )
       )}
       ${weeklyMetricCell('Selecciones', escapeHtml(String(combo.nLegs)))}
       ${weeklyMetricCell('Origen', escapeHtml(weeklyPricingShort(combo.pricing)))}
@@ -4635,9 +6298,17 @@ function conservativeBlockHtml(combo, meta = {}) {
                   )}">${escapeHtml(home)} – ${escapeHtml(away)}</button>
                 </div>
               </td>
-              <td class="tip-accent">${escapeHtml(labelBet(leg.suggestedBet, home, away))}</td>
-              <td>${leg.tipOdds != null ? Number(leg.tipOdds).toFixed(2) : '—'}</td>
-              <td>${leg.prob != null ? `${(Number(leg.prob) * 100).toFixed(0)}%` : '—'}</td>
+              <td>${hbCensorWrap(
+                `<span class="tip-accent">${escapeHtml(
+                  labelBet(leg.suggestedBet, home, away)
+                )}</span>`
+              )}</td>
+              <td>${hbCensorWrap(
+                leg.tipOdds != null ? Number(leg.tipOdds).toFixed(2) : '—'
+              )}</td>
+              <td>${hbCensorWrap(
+                leg.prob != null ? `${(Number(leg.prob) * 100).toFixed(0)}%` : '—'
+              )}</td>
               <td class="muted">${src}</td>
             </tr>`;
           })
@@ -4925,7 +6596,7 @@ function bindCuotasTargetControls() {
 }
 
 async function openPrediction(id) {
-  openPanel(`<div class="muted">Cargando análisis…</div>`);
+  openPanel(`<div class="muted">${escapeHtml(t('empty.loadingAnalysis'))}</div>`);
   try {
     const bundle = await api(`/api/v1/matches/${id}/prediction`);
     const p = bundle.prediction || {};
@@ -4935,7 +6606,11 @@ async function openPrediction(id) {
     panelLiveCtx = { id: Number(id), homeName, awayName };
     const home = escapeHtml(homeName);
     const away = escapeHtml(awayName);
-    const leagueLine = [m.leagueCountry, m.leagueName].filter(Boolean).join(' · ');
+    const leagueLine = formatLeagueLine(
+      m.leagueCountry || m.country || '',
+      m.leagueName || m.league || '',
+      m.leagueApiId ?? m.apiId
+    );
     const tipOdds =
       bundle.tipOdds != null
         ? Number(bundle.tipOdds).toFixed(2)
@@ -4957,137 +6632,228 @@ async function openPrediction(id) {
       bundle.expected?.corners?.match ?? sumRecentAvg(bundle.recentAvgs, 'corners');
     const cardsAvg =
       bundle.expected?.cards?.match ?? sumRecentAvg(bundle.recentAvgs, 'yellows');
-    const shotsAvg =
-      bundle.expected?.shotsOnTarget?.match ??
-      bundle.expected?.shots?.match ??
-      sumRecentAvg(bundle.recentAvgs, 'shotsOnTarget');
     const la = bundle.leagueAvgs || {};
+    // Always 6 fixed General cards (placeholders —) — never filter empties.
     const keyCards = [
-      pctStatCard('Más de 2,5 goles', p.over25_prob),
-      pctStatCard('Más de 1,5 goles', p.over15_prob),
-      pctStatCard('Ambos marcan', p.btts_yes_prob),
-      avgStatCard('Promedio goles', goalsAvg, 5, la.goals),
-      cardsAvg != null ? avgStatCard('Promedio tarjetas', cardsAvg, 6, la.cards) : '',
-      cornersAvg != null ? avgStatCard('Promedio córners', cornersAvg, 12, la.corners) : '',
-      shotsAvg != null
-        ? avgStatCard('Promedio tiros a puerta', shotsAvg, 12, la.shotsOnTarget)
-        : '',
-      p.sot_over85_prob != null
-        ? pctStatCard('Más de 8,5 tiros a puerta', p.sot_over85_prob)
-        : '',
-    ]
-      .filter(Boolean)
-      .join('');
+      pctStatCard(t('panel.over25'), p.over25_prob, la.over25Rate, MP_STAT_ICONS.o25),
+      pctStatCard(t('panel.over15'), p.over15_prob, la.over15Rate, MP_STAT_ICONS.o15),
+      pctStatCard(t('panel.btts'), p.btts_yes_prob, la.bttsRate, MP_STAT_ICONS.btts),
+      avgStatCard(t('panel.avgGoals'), goalsAvg, 5, la.goals, MP_STAT_ICONS.goals),
+      avgStatCard(t('panel.avgCorners'), cornersAvg, 12, la.corners, MP_STAT_ICONS.corners),
+      avgStatCard(t('panel.avgCards'), cardsAvg, 6, la.cards, MP_STAT_ICONS.cards),
+    ].join('');
 
     const tabBtns = [
-      ['general', 'General'],
-      ['goles', 'Goles'],
-      ['tiros', 'Tiros a puerta'],
-      ['corners', 'Córners'],
-      ['tarjetas', 'Tarjetas'],
+      ['general', t('panel.tabGeneral')],
+      ['goles', t('panel.tabGoals')],
+      ['tiros', t('panel.tabShots')],
+      ['tiros-puerta', t('panel.tabSot')],
+      ['corners', t('panel.tabCorners')],
+      ['tarjetas', t('panel.tabCards')],
     ].map(
         ([id, lab], i) =>
           `<button type="button" class="mp-tabs__btn${i === 0 ? ' is-active' : ''}" role="tab" data-mp-tab="${id}" aria-selected="${i === 0 ? 'true' : 'false'}">${lab}</button>`
       )
       .join('');
 
-    const goalsPanel = `
-      ${marketSection(
-        'Goles del partido',
-        [
-          probBar('Más de 1,5 goles', p.over15_prob),
-          probBar('Menos de 1,5 goles', p.under15_prob),
-          probBar('Más de 2,5 goles', p.over25_prob),
-          probBar('Menos de 2,5 goles', p.under25_prob),
-          probBar('Más de 3,5 goles', p.over35_prob),
-          probBar('Menos de 3,5 goles', p.under35_prob),
-          probBar('Ambos marcan — Sí', p.btts_yes_prob),
-          probBar('Ambos marcan — No', p.btts_no_prob),
-        ].join('')
-      )}
-      ${marketSection(
-        `Goles de ${homeName || 'local'}`,
-        [
-          probBar('Marca (0,5+)', p.home_over05_prob),
-          probBar('No marca', p.home_under05_prob),
-          probBar('Más de 1,5', p.home_over15_prob),
-          probBar('Menos de 1,5', p.home_under15_prob),
-          probBar('Más de 2,5', p.home_over25_prob),
-          probBar('Menos de 2,5', p.home_under25_prob),
-        ].join('')
-      )}
-      ${marketSection(
-        `Goles de ${awayName || 'visitante'}`,
-        [
-          probBar('Marca (0,5+)', p.away_over05_prob),
-          probBar('No marca', p.away_under05_prob),
-          probBar('Más de 1,5', p.away_over15_prob),
-          probBar('Menos de 1,5', p.away_under15_prob),
-          probBar('Más de 2,5', p.away_over25_prob),
-          probBar('Menos de 2,5', p.away_under25_prob),
-        ].join('')
-      )}
-      ${scoreGridHtml(bundle.scoreGrid, bundle.topScores, homeName, awayName)}`;
-
-    const shotsPanel = extrasPanel({
-          label: 'Tiros a puerta esperados',
-          unit: 'Tiros a puerta',
+    const goalsXgHome = bundle.xg?.home != null ? Number(bundle.xg.home) : null;
+    const goalsXgAway = bundle.xg?.away != null ? Number(bundle.xg.away) : null;
+    const goalsRows = goalsTrendRows(p);
+    const goalsUnderRows = goalsTrendUnderRows(p);
+    const bttsBlock = bttsPanelHtml(p, { leagueRate: la.bttsRate });
+    const goalsPanel = contentUnlocked()
+      ? `${marketTrendUnlockedHtml({
+          title: t('panel.goalsTitle'),
+          totalLabel: t('panel.goalsExpected'),
           homeName,
           awayName,
-          homeLogo: m.homeTeam?.logo,
-          awayLogo: m.awayTeam?.logo,
-          expected: bundle.expected?.shotsOnTarget || bundle.expected?.shots,
-          ladders: bundle.ladders?.shotsOnTarget || bundle.ladders?.shots,
-          recentAvgs: {
-            home: bundle.recentAvgs?.home?.shotsOnTarget,
-            away: bundle.recentAvgs?.away?.shotsOnTarget,
+          homeCrest: m.homeTeam?.logo,
+          awayCrest: m.awayTeam?.logo,
+          expected: {
+            home: goalsXgHome,
+            away: goalsXgAway,
+            match:
+              goalsXgHome != null && goalsXgAway != null
+                ? Number((goalsXgHome + goalsXgAway).toFixed(2))
+                : null,
           },
-          leagueAverage: bundle.leagueAvgs?.shotsOnTarget,
-          leagueProxy: Boolean(bundle.leagueAvgs?.proxy?.shotsOnTarget),
-          matchLines: [7.5, 8.5, 9.5],
-          teamLines: [2.5, 3.5, 4.5, 5.5],
-          fallbackHtml: `<div class="market-block"><div class="market-block__title">Tiros a puerta</div><div class="muted">Sin datos suficientes para calcular probabilidades de este mercado.</div></div>`,
-        });
-
-    const cornersPanel = extrasPanel({
-          label: 'Córners esperados',
-          unit: 'Córners',
+          beforeTablesHtml: bttsBlock,
+          ladderRows: goalsRows,
+          underRows: goalsUnderRows,
+        })}${scoreGridHtml(bundle.scoreGrid, bundle.topScores, homeName, awayName)}`
+      : `${hbCensorWrap(bttsBlock, { block: true })}${lockedTrendTableHtml({
+          title: t('panel.trendsOf', { title: t('panel.goalsTitle') }),
           homeName,
           awayName,
-          homeLogo: m.homeTeam?.logo,
-          awayLogo: m.awayTeam?.logo,
-          expected: bundle.expected?.corners,
-          ladders: bundle.ladders?.corners,
-          recentAvgs: {
-            home: bundle.recentAvgs?.home?.corners,
-            away: bundle.recentAvgs?.away?.corners,
-          },
-          leagueAverage: bundle.leagueAvgs?.corners,
-          leagueProxy: Boolean(bundle.leagueAvgs?.proxy?.corners),
-          matchLines: [8.5, 9.5, 10.5],
-          teamLines: [3.5, 4.5, 5.5, 6.5],
-          fallbackHtml: `<div class="market-block"><div class="market-block__title">Córners</div><div class="muted">Sin datos suficientes para calcular probabilidades de este mercado.</div></div>`,
-        });
-
-    const cardsPanel = extrasPanel({
-          label: 'Tarjetas (amarillas) esperadas',
-          unit: 'Tarjetas',
+          metrics: goalsRows,
+        })}${lockedTrendTableHtml({
+          title: t('panel.underTrendsOf', { title: t('panel.goalsTitle') }),
           homeName,
           awayName,
-          homeLogo: m.homeTeam?.logo,
-          awayLogo: m.awayTeam?.logo,
-          expected: bundle.expected?.cards,
-          ladders: bundle.ladders?.cards,
-          recentAvgs: {
-            home: bundle.recentAvgs?.home?.yellows,
-            away: bundle.recentAvgs?.away?.yellows,
-          },
-          leagueAverage: bundle.leagueAvgs?.cards,
-          leagueProxy: Boolean(bundle.leagueAvgs?.proxy?.cards),
-          matchLines: [3.5, 4.5],
-          teamLines: [0.5, 1.5, 2.5],
-          fallbackHtml: `<div class="market-block"><div class="market-block__title">Tarjetas</div><div class="muted">Sin datos suficientes para calcular probabilidades de este mercado.</div></div>`,
-        });
+          metrics: goalsUnderRows,
+        })}`;
+
+    const totLines = [14.5, 15.5, 16.5, 17.5, 18.5, 19.5, 20.5, 21.5, 22.5, 23.5, 24.5];
+    const sotLines = [0.5, 1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5, 10.5, 11.5];
+    const cornerLines = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5, 10.5, 11.5];
+    const cardLines = [0.5, 1.5, 2.5, 3.5, 4.5, 5.5];
+    const tot = bundle.ladders?.totalShots || {};
+    const totExp = bundle.expected?.totalShots || null;
+    const totOuOpts = {
+      homeLadder: tot.home,
+      awayLadder: tot.away,
+      matchLadder: tot.match,
+      lambdaHome: totExp?.home,
+      lambdaAway: totExp?.away,
+      lambdaMatch: totExp?.match,
+    };
+    const totRows = buildOverRows(totLines, totOuOpts);
+    const totUnderRows = buildUnderRows(totLines, totOuOpts);
+    const sot = bundle.ladders?.shotsOnTarget || {};
+    const sotExp = bundle.expected?.shotsOnTarget || null;
+    const sotOuOpts = {
+      homeLadder: sot.home,
+      awayLadder: sot.away,
+      matchLadder: sot.match,
+      lambdaHome: sotExp?.home,
+      lambdaAway: sotExp?.away,
+      lambdaMatch: sotExp?.match,
+    };
+    const sotRows = buildOverRows(sotLines, sotOuOpts);
+    const sotUnderRows = buildUnderRows(sotLines, sotOuOpts);
+    const offTargetNote = (() => {
+      const sides = ['home', 'away', 'match'];
+      const parts = [];
+      for (const side of sides) {
+        const totL = totExp?.[side];
+        const sotL = sotExp?.[side];
+        if (totL == null || sotL == null) continue;
+        const off = Math.max(0, Number(totL) - Number(sotL));
+        if (!Number.isFinite(off)) continue;
+        parts.push(off.toFixed(1));
+      }
+      if (parts.length < 3) return '';
+      return escapeHtml(t('panel.offTarget', { h: parts[0], a: parts[1], m: parts[2] }));
+    })();
+    const shotsPanel = contentUnlocked()
+      ? marketTrendUnlockedHtml({
+          title: t('panel.shotsTitle'),
+          totalLabel: t('panel.shotsExpected'),
+          homeName,
+          awayName,
+          homeCrest: m.homeTeam?.logo,
+          awayCrest: m.awayTeam?.logo,
+          expected: totExp,
+          ladderRows: totRows,
+          underRows: totUnderRows,
+          footerNote: offTargetNote,
+        })
+      : `${lockedTrendTableHtml({
+          title: t('panel.trendsOf', { title: t('panel.shotsTitle') }),
+          homeName,
+          awayName,
+          metrics: totRows,
+        })}${lockedTrendTableHtml({
+          title: t('panel.underTrendsOf', { title: t('panel.shotsTitle') }),
+          homeName,
+          awayName,
+          metrics: totUnderRows,
+        })}`;
+    const sotPanel = contentUnlocked()
+      ? marketTrendUnlockedHtml({
+          title: t('panel.sotTitle'),
+          totalLabel: t('panel.sotExpected'),
+          homeName,
+          awayName,
+          homeCrest: m.homeTeam?.logo,
+          awayCrest: m.awayTeam?.logo,
+          expected: sotExp,
+          ladderRows: sotRows,
+          underRows: sotUnderRows,
+        })
+      : `${lockedTrendTableHtml({
+          title: t('panel.trendsOf', { title: t('panel.sotTitle') }),
+          homeName,
+          awayName,
+          metrics: sotRows,
+        })}${lockedTrendTableHtml({
+          title: t('panel.underTrendsOf', { title: t('panel.sotTitle') }),
+          homeName,
+          awayName,
+          metrics: sotUnderRows,
+        })}`;
+
+    const cor = bundle.ladders?.corners || {};
+    const corExp = bundle.expected?.corners || null;
+    const corOuOpts = {
+      homeLadder: cor.home,
+      awayLadder: cor.away,
+      matchLadder: cor.match,
+      lambdaHome: corExp?.home,
+      lambdaAway: corExp?.away,
+      lambdaMatch: corExp?.match,
+    };
+    const cornerRows = buildOverRows(cornerLines, corOuOpts);
+    const cornerUnderRows = buildUnderRows(cornerLines, corOuOpts);
+    const cornersPanel = contentUnlocked()
+      ? marketTrendUnlockedHtml({
+          title: t('panel.cornersTitle'),
+          totalLabel: t('panel.cornersExpected'),
+          homeName,
+          awayName,
+          homeCrest: m.homeTeam?.logo,
+          awayCrest: m.awayTeam?.logo,
+          expected: corExp,
+          ladderRows: cornerRows,
+          underRows: cornerUnderRows,
+        })
+      : `${lockedTrendTableHtml({
+          title: t('panel.trendsOf', { title: t('panel.cornersTitle') }),
+          homeName,
+          awayName,
+          metrics: cornerRows,
+        })}${lockedTrendTableHtml({
+          title: t('panel.underTrendsOf', { title: t('panel.cornersTitle') }),
+          homeName,
+          awayName,
+          metrics: cornerUnderRows,
+        })}`;
+
+    const cardL = bundle.ladders?.cards || {};
+    const cardExp = bundle.expected?.cards || null;
+    const cardOuOpts = {
+      homeLadder: cardL.home,
+      awayLadder: cardL.away,
+      matchLadder: cardL.match,
+      lambdaHome: cardExp?.home,
+      lambdaAway: cardExp?.away,
+      lambdaMatch: cardExp?.match,
+    };
+    const cardRows = buildOverRows(cardLines, cardOuOpts);
+    const cardUnderRows = buildUnderRows(cardLines, cardOuOpts);
+    const cardsPanel = contentUnlocked()
+      ? marketTrendUnlockedHtml({
+          title: t('panel.cardsTitle'),
+          totalLabel: t('panel.cardsExpected'),
+          homeName,
+          awayName,
+          homeCrest: m.homeTeam?.logo,
+          awayCrest: m.awayTeam?.logo,
+          expected: cardExp,
+          ladderRows: cardRows,
+          underRows: cardUnderRows,
+        })
+      : `${lockedTrendTableHtml({
+          title: t('panel.trendsOf', { title: t('panel.cardsTitle') }),
+          homeName,
+          awayName,
+          metrics: cardRows,
+        })}${lockedTrendTableHtml({
+          title: t('panel.underTrendsOf', { title: t('panel.cardsTitle') }),
+          homeName,
+          awayName,
+          metrics: cardUnderRows,
+        })}`;
 
     const liveEvents =
       m.status === 'live' || m.status === 'finished'
@@ -5103,7 +6869,8 @@ async function openPrediction(id) {
           ${mpTeamCol(awayName, m.awayTeam?.logo, 'away', bundle.form?.away)}
           ${liveEvents}
         </div>
-        <div class="panel-suggest">
+        ${hbCensorWrap(
+          `<div class="panel-suggest">
           <div class="panel-suggest__bet">${escapeHtml(
             labelBet(p.suggested_bet, homeName, awayName)
           )}</div>
@@ -5119,7 +6886,9 @@ async function openPrediction(id) {
           <div class="muted panel-suggest__sec">2ª · ${escapeHtml(
             labelBet(p.secondary_bet, homeName, awayName)
           )}</div>
-        </div>
+        </div>`,
+          { block: true }
+        )}
         ${livePanelHtml(bundle.live, homeName, awayName)}
         ${
           bundle.dataQuality === 'low'
@@ -5130,16 +6899,14 @@ async function openPrediction(id) {
         <div class="mp-panels">
           <div class="mp-panel is-active" data-mp-panel="general" role="tabpanel">
             ${winProbBar(p)}
-            ${
-              keyCards
-                ? `<h3 class="mp-section-title">Probabilidades clave</h3><div class="mp-grid">${keyCards}</div>`
-                : ''
-            }
+            <h3 class="mp-section-title">${escapeHtml(t('panel.keyProbs'))}</h3>
+            <div class="mp-grid">${keyCards}</div>
             ${h2hHtml(bundle.h2h, homeName)}
             ${leagueTableHtml(bundle.leagueTable, homeName, awayName)}
           </div>
           <div class="mp-panel" data-mp-panel="goles" role="tabpanel" hidden>${goalsPanel}</div>
           <div class="mp-panel" data-mp-panel="tiros" role="tabpanel" hidden>${shotsPanel}</div>
+          <div class="mp-panel" data-mp-panel="tiros-puerta" role="tabpanel" hidden>${sotPanel}</div>
           <div class="mp-panel" data-mp-panel="corners" role="tabpanel" hidden>${cornersPanel}</div>
           <div class="mp-panel" data-mp-panel="tarjetas" role="tabpanel" hidden>${cardsPanel}</div>
         </div>
@@ -5162,12 +6929,12 @@ async function searchTeam(q) {
   }
   box.classList.remove('hidden');
   box.className = 'search-panel';
-  box.innerHTML = `<div class="search-panel__status">Buscando…</div>`;
+  box.innerHTML = `<div class="search-panel__status">${escapeHtml(t('search.loading'))}</div>`;
   try {
     const data = await api(`/api/v1/teams/search?q=${encodeURIComponent(q.trim())}`);
     const teams = data.teams || [];
     if (!teams.length) {
-      box.innerHTML = `<div class="search-panel__status">Sin resultados.</div>`;
+      box.innerHTML = `<div class="search-panel__status">${escapeHtml(t('search.empty'))}</div>`;
       return;
     }
     box.innerHTML = teams
@@ -5177,7 +6944,9 @@ async function searchTeam(q) {
       ${crestHtml(t.name, t.logo_url || t.logo, 'sm')}
       <span>
         <span class="search-hit__name">${escapeHtml(t.name)}</span>
-        <span class="search-hit__meta">${escapeHtml(t.league_name)}</span>
+        <span class="search-hit__meta">${escapeHtml(
+          formatLeagueLine(t.league_country || t.country || '', t.league_name || '', t.league_api_id)
+        )}</span>
       </span>
       <span class="search-hit__go">Abrir</span>
     </button>`
@@ -5206,10 +6975,8 @@ async function loadTipSummaryFast() {
   try {
     const summary = await api(`/api/v1/tips/summary?${TIPS_PERF_GLOBAL_Q}`);
     cachedTipSummary = summary;
-    setHitBadge(summary);
     return summary;
   } catch (_) {
-    if (!cachedTipSummary) setHitBadge(null);
     return null;
   }
 }
@@ -5448,15 +7215,672 @@ function startLivePoll() {
 document.getElementById('close-panel').addEventListener('click', closePanel);
 document.getElementById('panel-backdrop').addEventListener('click', closePanel);
 
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && document.getElementById('panel').classList.contains('is-open')) {
-    closePanel();
+/** —— Auth modal (UI placeholder until real login/register) —— */
+const AUTH_FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+let authLastFocus = null;
+let authTab = 'login';
+/** @type {{ id: string, username?: string|null, name: string, email: string, phone?: string|null, provider?: string } | null} */
+let authUser = null;
+let premiumUpsellTimer = null;
+let premiumLastFocus = null;
+
+function isAuthModalOpen() {
+  const modal = document.getElementById('auth-modal');
+  return Boolean(modal && !modal.hidden && modal.classList.contains('is-open'));
+}
+
+function setAuthModalNote(msg, isError = false) {
+  const note = document.getElementById('auth-modal-note');
+  if (!note) return;
+  note.textContent = msg || '';
+  note.classList.toggle('auth-modal__note--error', Boolean(isError && msg));
+}
+
+function setAuthTab(tab) {
+  authTab = tab === 'register' ? 'register' : 'login';
+  const title = document.getElementById('auth-modal-title');
+  if (title) title.textContent = authTab === 'register' ? 'Registrarse' : 'Inicio de sesión';
+  setAuthModalNote('');
+
+  document.querySelectorAll('[data-auth-tab]').forEach((el) => {
+    if (el.getAttribute('role') !== 'tab') return;
+    const on = el.getAttribute('data-auth-tab') === authTab;
+    el.classList.toggle('is-active', on);
+    el.setAttribute('aria-selected', on ? 'true' : 'false');
+    el.tabIndex = on ? 0 : -1;
+  });
+
+  document.querySelectorAll('[data-auth-panel]').forEach((panel) => {
+    const on = panel.getAttribute('data-auth-panel') === authTab;
+    panel.hidden = !on;
+  });
+
+  if (isAuthModalOpen()) {
+    const first = document.getElementById(
+      authTab === 'register' ? 'auth-register-username' : 'auth-login-identifier'
+    );
+    first?.focus({ preventScroll: true });
   }
+}
+
+function closeAccountMenu() {
+  const menu = document.getElementById('account-menu');
+  const trigger = document.getElementById('account-btn');
+  if (menu) menu.hidden = true;
+  if (trigger && !isAuthModalOpen()) trigger.setAttribute('aria-expanded', 'false');
+}
+
+async function openAccountMenu() {
+  const menu = document.getElementById('account-menu');
+  const trigger = document.getElementById('account-btn');
+  if (!menu || !authUser) return;
+  try {
+    if (!premiumState.loaded) await loadPremiumState();
+  } catch (_) {
+    /* ignore */
+  }
+  const nameEl = document.getElementById('account-menu-name');
+  const userEl = document.getElementById('account-menu-user');
+  const emailEl = document.getElementById('account-menu-email');
+  const premEl = document.getElementById('account-menu-premium');
+  if (nameEl) nameEl.textContent = authUser.name || 'Cuenta';
+  if (userEl) {
+    userEl.textContent = authUser.username ? `@${authUser.username}` : '';
+    userEl.hidden = !authUser.username;
+  }
+  if (emailEl) {
+    emailEl.textContent = authUser.email || '';
+    emailEl.hidden = !authUser.email;
+  }
+  syncPlanBadge(premEl, Boolean(premiumState.premium));
+  menu.hidden = false;
+  trigger?.setAttribute('aria-expanded', 'true');
+  trigger?.setAttribute('aria-haspopup', 'menu');
+  trigger?.setAttribute('aria-controls', 'account-menu');
+}
+
+function syncAccountButton() {
+  const btn = document.getElementById('account-btn');
+  const initial = document.getElementById('account-initial');
+  if (!btn) return;
+  if (authUser) {
+    const letter = String(authUser.name || authUser.email || '?')
+      .trim()
+      .charAt(0)
+      .toUpperCase();
+    btn.classList.add('account-btn--user');
+    btn.setAttribute('aria-label', `Cuenta de ${authUser.name || authUser.email}`);
+    btn.setAttribute('aria-haspopup', 'menu');
+    btn.setAttribute('aria-controls', 'account-menu');
+    if (initial) {
+      initial.textContent = letter || '?';
+      initial.hidden = false;
+    }
+  } else {
+    btn.classList.remove('account-btn--user');
+    btn.setAttribute('aria-label', 'Cuenta');
+    btn.setAttribute('aria-haspopup', 'dialog');
+    btn.setAttribute('aria-controls', 'auth-modal');
+    if (initial) {
+      initial.textContent = '';
+      initial.hidden = true;
+    }
+    closeAccountMenu();
+  }
+}
+
+function setAuthUser(user) {
+  const prev = authUser;
+  authUser = user || null;
+  syncAccountButton();
+  if (Boolean(prev) !== Boolean(authUser)) {
+    refreshTipsLockedViews();
+  }
+}
+
+async function refreshAuthMe() {
+  try {
+    const data = await api('/api/v1/auth/me');
+    setAuthUser(data.user || null);
+    if (data.user?.premiumSanction) {
+      showSanctionOverlay();
+    }
+    return authUser;
+  } catch (_) {
+    setAuthUser(null);
+    return null;
+  }
+}
+
+function isSanctionModalOpen() {
+  const modal = document.getElementById('sanction-modal');
+  return Boolean(modal && !modal.hidden && modal.classList.contains('is-open'));
+}
+
+function showSanctionOverlay() {
+  const modal = document.getElementById('sanction-modal');
+  if (!modal || isSanctionModalOpen()) return;
+  const title = document.getElementById('sanction-modal-title');
+  const copy = document.getElementById('sanction-modal-copy');
+  const ack = document.getElementById('sanction-modal-ack');
+  if (title) title.textContent = t('sanction.title');
+  if (copy) copy.textContent = t('sanction.copy');
+  if (ack) ack.textContent = t('sanction.ack');
+  modal.hidden = false;
+  modal.classList.add('is-open');
+  document.body.classList.add('auth-open');
+  requestAnimationFrame(() => {
+    ack?.focus({ preventScroll: true });
+  });
+}
+
+function closeSanctionOverlay() {
+  const modal = document.getElementById('sanction-modal');
+  if (!modal || !isSanctionModalOpen()) return;
+  modal.classList.remove('is-open');
+  modal.hidden = true;
+  if (!isAuthModalOpen() && !isPremiumModalOpen() && !isSettingsModalOpen()) {
+    document.body.classList.remove('auth-open');
+  }
+}
+
+async function ackPremiumSanction() {
+  try {
+    await api('/api/v1/auth/premium-sanction/ack', { method: 'POST' });
+  } catch (_) {
+    /* still dismiss locally */
+  }
+  if (authUser) authUser.premiumSanction = false;
+  closeSanctionOverlay();
+}
+
+function openAuthModal(tab = 'login') {
+  if (!hasValidConsent()) return;
+  if (authUser && !document.body.classList.contains('auth-required')) {
+    openAccountMenu();
+    return;
+  }
+  const modal = document.getElementById('auth-modal');
+  const trigger = document.getElementById('account-btn');
+  if (!modal) return;
+  closeAccountMenu();
+  authLastFocus = document.activeElement instanceof HTMLElement ? document.activeElement : trigger;
+  setAuthTab(tab);
+  setAuthModalNote('');
+  modal.hidden = false;
+  modal.classList.add('is-open');
+  document.body.classList.add('auth-open');
+  trigger?.setAttribute('aria-expanded', 'true');
+  trigger?.setAttribute('aria-haspopup', 'dialog');
+  trigger?.setAttribute('aria-controls', 'auth-modal');
+  requestAnimationFrame(() => {
+    const first = document.getElementById(
+      authTab === 'register' ? 'auth-register-username' : 'auth-login-identifier'
+    );
+    (first || document.getElementById('auth-modal-close'))?.focus({ preventScroll: true });
+  });
+}
+
+function closeAuthModal() {
+  if (document.body.classList.contains('auth-required') && !authUser) return;
+  const modal = document.getElementById('auth-modal');
+  const trigger = document.getElementById('account-btn');
+  if (!modal || !isAuthModalOpen()) return;
+  modal.classList.remove('is-open');
+  modal.hidden = true;
+  document.body.classList.remove('auth-open');
+  trigger?.setAttribute('aria-expanded', 'false');
+  syncAccountButton();
+  const restore = authLastFocus && document.contains(authLastFocus) ? authLastFocus : trigger;
+  restore?.focus({ preventScroll: true });
+  authLastFocus = null;
+}
+
+function trapAuthFocus(e) {
+  if (e.key !== 'Tab' || !isAuthModalOpen()) return;
+  const modal = document.getElementById('auth-modal');
+  const card = modal?.querySelector('.auth-modal__card');
+  if (!card) return;
+  const nodes = [...card.querySelectorAll(AUTH_FOCUSABLE)].filter(
+    (el) => el.offsetParent !== null || el === document.activeElement
+  );
+  if (!nodes.length) return;
+  const first = nodes[0];
+  const last = nodes[nodes.length - 1];
+  if (e.shiftKey && document.activeElement === first) {
+    e.preventDefault();
+    last.focus();
+  } else if (!e.shiftKey && document.activeElement === last) {
+    e.preventDefault();
+    first.focus();
+  }
+}
+
+async function handleAuthLogin(e) {
+  e.preventDefault();
+  const form = e.target;
+  const submit = document.getElementById('auth-login-submit');
+  const identifier = form.identifier?.value || form.email?.value || '';
+  const password = form.password?.value || '';
+  setAuthModalNote('');
+  if (submit) submit.disabled = true;
+  try {
+    const data = await api('/api/v1/auth/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ identifier, password }),
+    });
+    setAuthUser(data.user);
+    closeAuthModal();
+    if (data.user?.premiumSanction) showSanctionOverlay();
+    if (bootAwaitingAuth) {
+      finishBootAfterAuth().catch(() => {});
+    } else {
+      loadPremiumState().then(() => refreshTipsLockedViews()).catch(() => {});
+    }
+  } catch (err) {
+    setAuthModalNote(err.message || 'No se pudo iniciar sesión', true);
+  } finally {
+    if (submit) submit.disabled = false;
+  }
+}
+
+function isPremiumModalOpen() {
+  const modal = document.getElementById('premium-modal');
+  return Boolean(modal && !modal.hidden && modal.classList.contains('is-open'));
+}
+
+function setPremiumModalNote(msg) {
+  const note = document.getElementById('premium-modal-note');
+  if (!note) return;
+  note.textContent = msg || '';
+}
+
+async function openPremiumUpsellModal() {
+  if (!premiumState.loaded) await loadPremiumState();
+  if (premiumState.premium) return;
+  const modal = document.getElementById('premium-modal');
+  if (!modal) return;
+  premiumLastFocus =
+    document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : document.getElementById('account-btn');
+  setPremiumModalNote('');
+  const activate = document.getElementById('premium-modal-activate');
+  if (activate) {
+    activate.disabled = !premiumState.stripeConfigured;
+    if (!premiumState.stripeConfigured) {
+      setPremiumModalNote('Pago no configurado todavía. Podrás activarlo más adelante.');
+    }
+  }
+  modal.hidden = false;
+  modal.classList.add('is-open');
+  document.body.classList.add('auth-open');
+  requestAnimationFrame(() => {
+    const focusEl = premiumState.stripeConfigured
+      ? activate
+      : document.getElementById('premium-modal-skip') || document.getElementById('premium-modal-close');
+    focusEl?.focus({ preventScroll: true });
+  });
+}
+
+function closePremiumUpsellModal() {
+  const modal = document.getElementById('premium-modal');
+  if (!modal || !isPremiumModalOpen()) return;
+  modal.classList.remove('is-open');
+  modal.hidden = true;
+  if (!isAuthModalOpen() && !isSanctionModalOpen() && !isSettingsModalOpen()) {
+    document.body.classList.remove('auth-open');
+  }
+  const restore =
+    premiumLastFocus && document.contains(premiumLastFocus)
+      ? premiumLastFocus
+      : document.getElementById('account-btn');
+  restore?.focus({ preventScroll: true });
+  premiumLastFocus = null;
+}
+
+function trapPremiumFocus(e) {
+  if (e.key !== 'Tab' || !isPremiumModalOpen()) return;
+  const modal = document.getElementById('premium-modal');
+  const card = modal?.querySelector('.auth-modal__card');
+  if (!card) return;
+  const nodes = [...card.querySelectorAll(AUTH_FOCUSABLE)].filter(
+    (el) => el.offsetParent !== null || el === document.activeElement
+  );
+  if (!nodes.length) return;
+  const first = nodes[0];
+  const last = nodes[nodes.length - 1];
+  if (e.shiftKey && document.activeElement === first) {
+    e.preventDefault();
+    last.focus();
+  } else if (!e.shiftKey && document.activeElement === last) {
+    e.preventDefault();
+    first.focus();
+  }
+}
+
+function schedulePostRegisterPremiumUpsell() {
+  if (premiumUpsellTimer) clearTimeout(premiumUpsellTimer);
+  premiumUpsellTimer = setTimeout(() => {
+    premiumUpsellTimer = null;
+    openPremiumUpsellModal().catch(() => {});
+  }, 3000);
+}
+
+async function handleAuthRegister(e) {
+  e.preventDefault();
+  const form = e.target;
+  const submit = document.getElementById('auth-register-submit');
+  const payload = {
+    username: form.username?.value || '',
+    name: form.name?.value || '',
+    phone: form.phone?.value || '',
+    email: form.email?.value || '',
+    password: form.password?.value || '',
+    password2: form.password2?.value || '',
+  };
+  setAuthModalNote('');
+  if (payload.password !== payload.password2) {
+    setAuthModalNote('Las contraseñas no coinciden', true);
+    return;
+  }
+  if (submit) submit.disabled = true;
+  try {
+    const data = await api('/api/v1/auth/register', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    setAuthUser(data.user);
+    closeAuthModal();
+    if (bootAwaitingAuth) {
+      finishBootAfterAuth().catch(() => {});
+    } else {
+      loadPremiumState().then(() => refreshTipsLockedViews()).catch(() => {});
+    }
+    schedulePostRegisterPremiumUpsell();
+  } catch (err) {
+    setAuthModalNote(err.message || 'No se pudo crear la cuenta', true);
+  } finally {
+    if (submit) submit.disabled = false;
+  }
+}
+
+function handleAuthGoogle(e) {
+  e.preventDefault();
+  setAuthModalNote('');
+  window.location.href = '/api/v1/auth/google/start';
+}
+
+async function handleAuthLogout() {
+  closeAccountMenu();
+  closeSettingsModal();
+  try {
+    await api('/api/v1/auth/logout', { method: 'POST' });
+  } catch (_) {
+    /* still clear local */
+  }
+  setAuthUser(null);
+  premiumState.premium = false;
+  premiumState.plan = 'free';
+  bootAwaitingAuth = true;
+  openAuthRequiredGate();
+}
+
+function handleAuthQueryFlags() {
+  const params = new URLSearchParams(location.search);
+  const flag = params.get('auth');
+  if (!flag) return;
+  params.delete('auth');
+  const next = `${location.pathname}${params.toString() ? `?${params}` : ''}${location.hash || ''}`;
+  history.replaceState(null, '', next || '/');
+  if (flag === 'ok') {
+    /* Google return — session cookie set; boot continues via refreshAuthMe */
+  } else if (flag === 'google_unconfigured') {
+    showBanner('Google no está configurado en el servidor todavía.', 'error');
+  } else if (flag === 'google_state' || flag === 'google_error') {
+    showBanner(t('toast.googleFail'), 'error');
+  }
+}
+
+function goPremiumFromCensor(e) {
+  if (e) {
+    e.preventDefault();
+    e.stopPropagation();
+  }
+  if (!authUser) {
+    openAuthModal('login');
+    return;
+  }
+  const panel = document.getElementById('panel');
+  if (panel?.classList.contains('is-open')) closePanel();
+  navigateAppHash('#premium');
+}
+
+document.addEventListener(
+  'click',
+  (e) => {
+    const goPrem = e.target.closest?.('[data-go-premium], [data-hb-censor]');
+    if (!goPrem) return;
+    goPremiumFromCensor(e);
+  },
+  true
+);
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  const goPrem = e.target.closest?.('[data-go-premium], [data-hb-censor]');
+  if (!goPrem) return;
+  goPremiumFromCensor(e);
+});
+
+document.getElementById('account-btn')?.addEventListener('click', () => {
+  if (authUser) {
+    const menu = document.getElementById('account-menu');
+    if (menu && !menu.hidden) closeAccountMenu();
+    else openAccountMenu();
+    return;
+  }
+  openAuthModal('login');
+});
+document.getElementById('account-logout')?.addEventListener('click', () => {
+  handleAuthLogout().catch(() => {});
+});
+document.getElementById('account-perfil')?.addEventListener('click', (e) => {
+  e.preventDefault();
+  closeAccountMenu();
+  navigateAppHash('#perfil');
+});
+document.getElementById('account-settings')?.addEventListener('click', () => {
+  closeAccountMenu();
+  openSettingsModal();
+});
+document.getElementById('account-telegram')?.addEventListener('click', (e) => {
+  e.preventDefault();
+  showBanner(t('toast.telegramSoon'), 'info');
+});
+document.getElementById('account-ajustes')?.addEventListener('click', (e) => {
+  e.preventDefault();
+  closeAccountMenu();
+  navigateAppHash('#ajustes');
+});
+async function redeemPerfilPromo() {
+  if (!authUser) {
+    showBanner(t('perfil.promoNeedAuth'), 'error');
+    return;
+  }
+  const input = document.getElementById('perfil-promo-input');
+  const btn = document.getElementById('perfil-promo-btn');
+  const code = String(input?.value || '').trim();
+  if (!code) {
+    showBanner(t('perfil.promoBad'), 'error');
+    return;
+  }
+  if (btn) btn.disabled = true;
+  try {
+    const data = await api('/api/v1/premium/promo', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ code }),
+    });
+    if (input) input.value = '';
+    await loadPremiumState();
+    syncPerfilView();
+    syncPremiumView();
+    refreshTipsLockedViews();
+    let okMsg = t('perfil.promoOk');
+    if (data.kind === 'discount' || data.percentOff) {
+      okMsg = t('perfil.promoOkDiscount', { pct: String(data.percentOff || '') });
+      navigateAppHash('#premium');
+    } else if (data.type === 'free_month') {
+      okMsg = t('perfil.promoOkMonth');
+    } else if (data.days) {
+      okMsg = t('perfil.promoOkDays', { days: String(data.days) });
+    }
+    showBanner(okMsg, 'ok');
+  } catch (err) {
+    const codeErr = err?.code || '';
+    let msg = t('perfil.promoBad');
+    if (codeErr === 'already_used') msg = t('perfil.promoUsed');
+    else if (codeErr === 'expired' || codeErr === 'exhausted') msg = t('perfil.promoExpired');
+    else if (codeErr === 'auth_required' || err?.message?.includes?.('autentic')) {
+      msg = t('perfil.promoNeedAuth');
+    } else if (err?.message) msg = err.message;
+    showBanner(msg, 'error');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+document.getElementById('perfil-promo-btn')?.addEventListener('click', () => {
+  redeemPerfilPromo();
+});
+document.getElementById('perfil-promo-input')?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    redeemPerfilPromo();
+  }
+});
+document.getElementById('perfil-logout')?.addEventListener('click', () => {
+  handleAuthLogout().catch(() => {});
+});
+document.getElementById('perfil-delete')?.addEventListener('click', () => {
+  deleteOwnAccount().catch(() => {});
+});
+document.getElementById('perfil-open-settings')?.addEventListener('click', () => {
+  openSettingsModal();
+});
+document.getElementById('perfil-telegram')?.addEventListener('click', () => {
+  showBanner(t('toast.telegramSoon'), 'info');
+});
+document.getElementById('settings-modal-close')?.addEventListener('click', closeSettingsModal);
+document.querySelectorAll('[data-settings-close]').forEach((el) => {
+  el.addEventListener('click', (e) => {
+    if (el.hasAttribute('data-go-ajustes')) {
+      e.preventDefault();
+      closeSettingsModal();
+      navigateAppHash('#ajustes');
+      return;
+    }
+    closeSettingsModal();
+  });
+});
+document.getElementById('settings-save')?.addEventListener('click', () => {
+  const lang =
+    document.querySelector('[name="settings-lang"]:checked')?.value || 'es';
+  const timezone =
+    document.querySelector('[name="settings-tz"]:checked')?.value || 'Europe/Madrid';
+  saveUiSettings({ lang, theme: 'dark', timezone });
+  refreshUiAfterLangChange();
+  closeSettingsModal();
+  showBanner(t('settings.saved'), 'info');
+});
+document.getElementById('ajustes-close')?.addEventListener('click', () => {
+  navigateAppHash('#partidos');
+});
+document.addEventListener('click', (e) => {
+  const wrap = document.querySelector('.account-wrap');
+  if (!wrap || wrap.contains(e.target)) return;
+  closeAccountMenu();
+});
+document.getElementById('ligas-panel-close')?.addEventListener('click', () => {
+  hideLigasTable({ pushHash: true });
+});
+document.getElementById('ligas-panel-backdrop')?.addEventListener('click', () => {
+  hideLigasTable({ pushHash: true });
+});
+document.getElementById('auth-modal-close')?.addEventListener('click', closeAuthModal);
+document.querySelector('#auth-modal [data-auth-close]')?.addEventListener('click', (e) => {
+  if (document.body.classList.contains('auth-required') && !authUser) {
+    e.preventDefault();
+    e.stopPropagation();
+    return;
+  }
+  closeAuthModal();
+});
+document.querySelectorAll('[data-auth-tab]').forEach((el) => {
+  el.addEventListener('click', () => setAuthTab(el.getAttribute('data-auth-tab') || 'login'));
+});
+document.getElementById('auth-form-login')?.addEventListener('submit', (e) => {
+  handleAuthLogin(e).catch(() => {});
+});
+document.getElementById('auth-form-register')?.addEventListener('submit', (e) => {
+  handleAuthRegister(e).catch(() => {});
+});
+document.getElementById('auth-google')?.addEventListener('click', handleAuthGoogle);
+document.getElementById('auth-telegram')?.addEventListener('click', (e) => {
+  e.preventDefault();
+  showBanner(t('toast.telegramSoon'), 'info');
+});
+
+document.getElementById('premium-modal-close')?.addEventListener('click', closePremiumUpsellModal);
+document.querySelectorAll('[data-premium-close]').forEach((el) => {
+  el.addEventListener('click', closePremiumUpsellModal);
+});
+document.getElementById('premium-modal-activate')?.addEventListener('click', () => {
+  startPremiumCheckout().catch(() => {});
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    if (isSettingsModalOpen()) {
+      e.preventDefault();
+      closeSettingsModal();
+      return;
+    }
+    if (isPremiumModalOpen()) {
+      e.preventDefault();
+      closePremiumUpsellModal();
+      return;
+    }
+    if (isAuthModalOpen()) {
+      e.preventDefault();
+      closeAuthModal();
+      return;
+    }
+    const menu = document.getElementById('account-menu');
+    if (menu && !menu.hidden) {
+      e.preventDefault();
+      closeAccountMenu();
+      return;
+    }
+    if (document.getElementById('ligas-panel')?.classList.contains('is-open')) {
+      e.preventDefault();
+      hideLigasTable({ pushHash: true });
+      return;
+    }
+    if (document.getElementById('panel')?.classList.contains('is-open')) {
+      closePanel();
+    }
+    return;
+  }
+  if (isPremiumModalOpen()) trapPremiumFocus(e);
+  else trapAuthFocus(e);
 });
 
 document
   .querySelectorAll(
-    'a.v2-nav__link, a.dock__link, a.brand, a.premium-chip, a.aciertos-sub__link, a.aciertos-bar__link, a.ajustes-bar__link, a.site-footer__link, a.legal-nav__link'
+    'a.v2-nav__link, a.dock__link, a.app-tabbar__link, a.brand, a.premium-chip, a.aciertos-sub__link, a.aciertos-bar__link, a.ajustes-bar__link, a.site-footer__link, a.legal-nav__link'
   )
   .forEach((link) => {
     link.addEventListener('click', (e) => {
@@ -5495,6 +7919,11 @@ document.querySelectorAll('[data-consent-doc]').forEach((btn) => {
   btn.addEventListener('click', () => {
     openConsentDoc(btn.getAttribute('data-consent-doc') || 'privacidad');
   });
+});
+/* Backdrop must never dismiss the gate — refusal leaves the app locked. */
+document.querySelector('#consent-gate .consent-gate__backdrop')?.addEventListener('click', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
 });
 document.getElementById('btn-manage-cookies')?.addEventListener('click', () => {
   navigateAppHash('#ajustes');
@@ -5702,6 +8131,7 @@ function onSwipeEnd() {
   let idx = currentViewIndex();
   if (idx < 0) return;
   const width = viewsEl.clientWidth || 1;
+  if (!hasValidConsent()) return;
   if (Math.abs(swipeDx) > width * 0.22) {
     if (swipeDx < 0) idx = Math.min(VIEW_HASHES.length - 1, idx + 1);
     else idx = Math.max(0, idx - 1);
@@ -5732,11 +8162,11 @@ window.addEventListener('hashchange', () => {
   const h = location.hash || '#hoy';
   if (!hasValidConsent()) {
     const view = normalizeViewHash(h);
-    if (isLegalViewId(view)) openConsentGate({ docId: view });
-    else openConsentGate();
+    openConsentGate({ docId: isLegalViewId(view) ? view : null });
     return;
   }
   setActiveNav(h, { pushHash: false });
+  reportPageHit();
 });
 
 window.addEventListener('pageshow', (event) => {
@@ -5761,7 +8191,6 @@ if (hasValidConsent()) {
 restoreFiltersIfAllowed();
 syncWindowChips();
 syncLiveChip();
-syncScopeChips();
 syncPrivacyToggles();
 
 bindCuotasTargetControls();
@@ -5788,8 +8217,6 @@ bindCuotasTargetControls();
   document.fonts?.ready?.then?.(snap);
 })();
 
-document.getElementById('hit-badge')?.addEventListener('click', () => navigateAppHash('#stats'));
-
 document.querySelectorAll('.market-tabs__btn').forEach((btn) => {
   btn.addEventListener('click', () => {
     hoyMarketTab = btn.dataset.market || 'top';
@@ -5798,16 +8225,233 @@ document.querySelectorAll('.market-tabs__btn').forEach((btn) => {
   });
 });
 
+const ADMIN_SECRET_KEY = 'hb_admin_sync_secret';
+
+function getStoredAdminSecret() {
+  try {
+    return sessionStorage.getItem(ADMIN_SECRET_KEY) || '';
+  } catch (_) {
+    return '';
+  }
+}
+
+function setStoredAdminSecret(secret) {
+  try {
+    if (secret) sessionStorage.setItem(ADMIN_SECRET_KEY, secret);
+    else sessionStorage.removeItem(ADMIN_SECRET_KEY);
+  } catch (_) {
+    /* ignore */
+  }
+}
+
+function askSyncSecret() {
+  const cached = getStoredAdminSecret();
+  const entered = prompt('Clave de actualización (SYNC_SECRET):', cached || '');
+  if (entered == null) return null;
+  const secret = String(entered).trim();
+  if (secret) setStoredAdminSecret(secret);
+  return secret;
+}
+
+function escapeAdminHtml(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function formatAdminDate(iso) {
+  if (!iso) return '—';
+  const d = String(iso);
+  return d.length >= 16 ? d.slice(0, 16).replace('T', ' ') : d;
+}
+
+async function adminApi(path, { method = 'GET', body, secret } = {}) {
+  const key = secret != null ? secret : askSyncSecret();
+  if (key == null || !key) throw new Error('Clave cancelada');
+  const opts = {
+    method,
+    headers: { 'x-sync-secret': key },
+  };
+  if (body != null) {
+    opts.headers['content-type'] = 'application/json';
+    opts.body = JSON.stringify(body);
+  }
+  return api(path, opts);
+}
+
+function renderAdminUsage(data) {
+  const el = document.getElementById('admin-usage');
+  if (!el) return;
+  if (!data || data.configured === false) {
+    el.innerHTML =
+      '<p><strong>Métricas CF no configuradas</strong></p><p class="muted">Añade secrets <code>CF_ACCOUNT_ID</code> y <code>CF_API_TOKEN</code> en Wrangler.</p>';
+    return;
+  }
+  if (data.error) {
+    el.innerHTML = `<p><strong>Error de métricas</strong></p><p class="muted">${escapeAdminHtml(data.error)}</p>`;
+    return;
+  }
+  el.innerHTML = `
+    <p class="muted">Worker <code>${escapeAdminHtml(data.scriptName || 'houdini-bet')}</code> · hoy UTC ${escapeAdminHtml(data.day || '')}</p>
+    <p><strong>${Number(data.requests) || 0}</strong> consultas</p>
+    <p class="muted">Errores: ${Number(data.errors) || 0}</p>`;
+}
+
+function renderAdminUsers(users) {
+  const body = document.getElementById('admin-users-body');
+  if (!body) return;
+  const list = Array.isArray(users) ? users : [];
+  if (!list.length) {
+    body.innerHTML = '<tr><td colspan="9" class="muted">Sin cuentas</td></tr>';
+    return;
+  }
+  body.innerHTML = list
+    .map((u) => {
+      const id = escapeAdminHtml(u.id);
+      const handle = escapeAdminHtml(u.username || '—');
+      const disabled = Boolean(u.disabled);
+      const status = disabled
+        ? '<span class="admin-badge admin-badge--off">Deshabilitado</span>'
+        : '<span class="admin-badge admin-badge--ok">Activo</span>';
+      const toggleBtn = disabled
+        ? `<button type="button" class="btn" data-admin-enable="${id}">Reactivar</button>`
+        : `<button type="button" class="btn" data-admin-revoke="${id}">Cerrar acceso</button>`;
+      return `<tr data-user-id="${id}">
+        <td>${handle}</td>
+        <td>${escapeAdminHtml(u.name)}</td>
+        <td>${escapeAdminHtml(u.email)}</td>
+        <td>${escapeAdminHtml(u.phone || '—')}</td>
+        <td>${escapeAdminHtml(u.provider || '—')}</td>
+        <td>${escapeAdminHtml(formatAdminDate(u.created_at))}</td>
+        <td>N/A</td>
+        <td>${status}</td>
+        <td><div class="admin-users-table__actions">${toggleBtn}
+          <button type="button" class="btn" data-admin-delete="${id}" data-admin-confirm="${escapeAdminHtml(u.username || u.id)}">Eliminar</button>
+        </div></td>
+      </tr>`;
+    })
+    .join('');
+}
+
+async function loadAdminPanel() {
+  if (!isAdminQueryEnabled()) return;
+  const usageEl = document.getElementById('admin-usage');
+  const body = document.getElementById('admin-users-body');
+  if (usageEl) usageEl.innerHTML = '<p class="muted">Cargando métricas…</p>';
+  if (body) body.innerHTML = '<tr><td colspan="9" class="muted">Cargando…</td></tr>';
+  const secret = askSyncSecret();
+  if (secret == null || !secret) {
+    if (usageEl) usageEl.innerHTML = '<p class="muted">Clave cancelada</p>';
+    if (body) body.innerHTML = '<tr><td colspan="9" class="muted">Clave cancelada</td></tr>';
+    return;
+  }
+  try {
+    const [usage, usersRes] = await Promise.all([
+      adminApi('/api/v1/admin/usage/today', { secret }),
+      adminApi('/api/v1/admin/users', { secret }),
+    ]);
+    renderAdminUsage(usage);
+    renderAdminUsers(usersRes.users || []);
+  } catch (err) {
+    if (usageEl) {
+      usageEl.innerHTML = `<p class="muted">${escapeAdminHtml(err.message || 'Error')}</p>`;
+    }
+    if (body) {
+      body.innerHTML = `<tr><td colspan="9" class="muted">${escapeAdminHtml(err.message || 'Error')}</td></tr>`;
+    }
+    showBanner(err.message || 'Error admin', 'error');
+  }
+}
+
+async function adminRevokeUser(id) {
+  if (!confirm('¿Cerrar acceso a esta cuenta? Se invalidarán sus sesiones.')) return;
+  await adminApi(`/api/v1/admin/users/${encodeURIComponent(id)}/revoke`, { method: 'POST' });
+  showBanner('Acceso cerrado', 'ok');
+  await loadAdminPanel();
+}
+
+async function adminEnableUser(id) {
+  if (!confirm('¿Reactivar esta cuenta?')) return;
+  await adminApi(`/api/v1/admin/users/${encodeURIComponent(id)}/enable`, { method: 'POST' });
+  showBanner('Cuenta reactivada', 'ok');
+  await loadAdminPanel();
+}
+
+async function adminDeleteUser(id, confirmToken) {
+  const token = String(confirmToken || id);
+  if (
+    !confirm(
+      `¿Eliminar permanentemente la cuenta «${token}»?\n\nNo se puede deshacer. En el siguiente paso deberás escribir el usuario (o el id).`
+    )
+  ) {
+    return;
+  }
+  const typed = prompt(`Escribe exactamente el usuario «${token}» (o el id) para confirmar el borrado:`);
+  if (typed == null) {
+    showBanner('Eliminación cancelada', 'error');
+    return;
+  }
+  const raw = String(typed).trim();
+  const norm = (s) => String(s || '').trim().toLowerCase();
+  if (norm(raw) !== norm(token) && raw !== String(id).trim()) {
+    showBanner('Confirmación incorrecta; no se eliminó', 'error');
+    return;
+  }
+  await adminApi(`/api/v1/admin/users/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  showBanner('Cuenta eliminada', 'ok');
+  await loadAdminPanel();
+}
+
 (function initAdminFold() {
   const fold = document.getElementById('admin-fold');
-  if (!fold) return;
-  const params = new URLSearchParams(location.search);
-  if (params.get('admin') === '1') {
+  const adminView = document.getElementById('admin');
+  const adminOn = isAdminQueryEnabled();
+  if (fold && adminOn) {
     fold.classList.remove('hidden');
     fold.open = true;
     fold.style.opacity = '1';
   }
+  if (adminView) {
+    if (adminOn) {
+      adminView.hidden = false;
+      adminView.removeAttribute('hidden');
+      let robots = document.querySelector('meta[name="robots"]');
+      if (!robots) {
+        robots = document.createElement('meta');
+        robots.setAttribute('name', 'robots');
+        document.head.appendChild(robots);
+      }
+      robots.setAttribute('content', 'noindex,nofollow');
+      if ((location.hash || '').replace('#', '').split('/')[0] === 'admin') {
+        setActiveNav('#admin', { pushHash: false });
+      }
+    } else {
+      adminView.hidden = true;
+    }
+  }
 })();
+
+document.getElementById('admin-refresh')?.addEventListener('click', () => {
+  loadAdminPanel().catch((err) => showBanner(err.message || 'Error', 'error'));
+});
+
+document.getElementById('admin-users-body')?.addEventListener('click', (e) => {
+  const t = e.target;
+  if (!(t instanceof HTMLElement)) return;
+  const revoke = t.getAttribute('data-admin-revoke');
+  const enable = t.getAttribute('data-admin-enable');
+  const del = t.getAttribute('data-admin-delete');
+  if (revoke) {
+    adminRevokeUser(revoke).catch((err) => showBanner(err.message || 'Error', 'error'));
+  } else if (enable) {
+    adminEnableUser(enable).catch((err) => showBanner(err.message || 'Error', 'error'));
+  } else if (del) {
+    const confirmTok = t.getAttribute('data-admin-confirm') || del;
+    adminDeleteUser(del, confirmTok).catch((err) => showBanner(err.message || 'Error', 'error'));
+  }
+});
 
 document.getElementById('match-date')?.addEventListener('change', (e) => {
   const v = e.target.value;
@@ -5827,17 +8471,6 @@ document.getElementById('chip-live')?.addEventListener('click', () => {
   applyFilters();
 });
 
-document.querySelectorAll('.browse-chip[data-scope], .tb-chip[data-scope]').forEach((chip) => {
-  chip.addEventListener('click', () => {
-    scopeFilter = chip.dataset.scope || 'all';
-    syncScopeChips();
-    leagueFilterIds.clear();
-    if (scopeFilter === 'clubs' || scopeFilter === 'intl') leaguesPanelOpen = true;
-    persistFiltersIfAllowed();
-    applyFilters();
-  });
-});
-
 document.getElementById('league-toggle')?.addEventListener('click', () => {
   leaguesPanelOpen = !leaguesPanelOpen;
   renderLeagueCategories(cachedMatches);
@@ -5850,6 +8483,18 @@ document.getElementById('ligas-back')?.addEventListener('click', () => {
     .catch((err) => showBanner(err.message || 'Error', 'error'));
 });
 
+window.addEventListener('resize', () => {
+  if (!document.body.classList.contains('has-ligas-selection')) return;
+  if (isLigasDesktopSplit()) {
+    closeLigasMobileOverlay();
+    mountLigasDetailHost();
+    const detail = document.getElementById('ligas-detail');
+    if (detail) detail.hidden = false;
+  } else {
+    openLigasMobileOverlay();
+  }
+});
+
 document.getElementById('ligas-see-matches')?.addEventListener('click', () => {
   const d1Id = Number(ligasActiveD1Id);
   if (!Number.isFinite(d1Id) || d1Id <= 0) {
@@ -5859,7 +8504,7 @@ document.getElementById('ligas-see-matches')?.addEventListener('click', () => {
   leagueFilterIds.clear();
   leagueFilterIds.add(d1Id);
   scopeFilter = 'all';
-  syncScopeChips();
+  leaguesPanelOpen = true;
   persistFiltersIfAllowed();
   setActiveNav('#partidos');
   applyFilters();
@@ -5914,10 +8559,6 @@ const refreshBtnLabel = () => {
     </svg>
     <span>Calendario</span>`;
 };
-
-function askSyncSecret() {
-  return prompt('Clave de actualización (SYNC_SECRET):', 'change-me-houdini');
-}
 
 document.getElementById('btn-sync').addEventListener('click', async () => {
   const secret = askSyncSecret();
@@ -6094,21 +8735,74 @@ function dismissBootSplash() {
   window.setTimeout(finish, 450);
 }
 
-startLivePoll();
-trackEvent('session_start');
+let bootAwaitingAuth = false;
 
-(async function bootApp() {
+function openAuthRequiredGate() {
+  document.body.classList.add('auth-required');
+  const closeBtn = document.getElementById('auth-modal-close');
+  if (closeBtn) closeBtn.hidden = true;
+  openAuthModal('login');
+}
+
+function closeAuthRequiredGate() {
+  document.body.classList.remove('auth-required');
+  const closeBtn = document.getElementById('auth-modal-close');
+  if (closeBtn) closeBtn.hidden = false;
+  closeAuthModal();
+}
+
+function startAppAfterConsent() {
+  if (!hasValidConsent() || appBootStarted) return;
+  appBootStarted = true;
+  startLivePoll();
+  trackEvent('session_start');
+  reportPageHit();
+  bootApp().catch(() => {});
+}
+
+async function finishBootAfterAuth() {
+  bootAwaitingAuth = false;
+  closeAuthRequiredGate();
   const splashLabel = document.querySelector('.boot-splash__label');
-  if (splashLabel) splashLabel.textContent = 'Cargando partidos y datos…';
   try {
-    await waitForBootAssets();
     await handlePremiumReturn();
     await loadPremiumState();
+    applyUiSettings();
     syncPremiumView();
+    syncPerfilView();
+    if (authUser?.premiumSanction) showSanctionOverlay();
     await load();
     if (splashLabel) splashLabel.textContent = 'Listo';
     await waitForFirstPaint();
     dismissBootSplash();
+  } catch (err) {
+    showBanner(err.message || 'Error al cargar', 'error');
+    dismissBootSplash();
+  }
+}
+
+document.getElementById('sanction-modal-ack')?.addEventListener('click', () => {
+  ackPremiumSanction().catch(() => {});
+});
+
+applyUiSettings();
+
+async function bootApp() {
+  const splashLabel = document.querySelector('.boot-splash__label');
+  if (splashLabel) splashLabel.textContent = 'Cargando partidos y datos…';
+  try {
+    await waitForBootAssets();
+    applyUiSettings();
+    handleAuthQueryFlags();
+    await refreshAuthMe();
+    if (!authUser) {
+      bootAwaitingAuth = true;
+      dismissBootSplash();
+      openAuthRequiredGate();
+      return;
+    }
+    /* Google OAuth return (?auth=ok) lands here with session already set */
+    await finishBootAfterAuth();
   } catch (err) {
     showBanner(err.message || 'Error al cargar', 'error');
     const el = document.getElementById('matches');
@@ -6117,4 +8811,11 @@ trackEvent('session_start');
     }
     dismissBootSplash();
   }
-})();
+}
+
+if (hasValidConsent()) {
+  startAppAfterConsent();
+} else {
+  // Splash stays hidden under consent lock; dismiss so gate is the only surface.
+  dismissBootSplash();
+}

@@ -189,7 +189,8 @@ check('tip candidates and stored probabilities still use strict models',
 check('display ladders are packed from degraded-capable models',
   SRC.includes('corners: packDisplayLadder(cornersDisplay)') &&
     SRC.includes('cards: packDisplayLadder(cardsDisplay)') &&
-    SRC.includes('shotsOnTarget: packDisplayLadder(shotsOnTargetDisplay)'));
+    SRC.includes('shotsOnTarget: packDisplayLadder(shotsOnTargetDisplay)') &&
+    SRC.includes('totalShots: packDisplayLadder(shotsDisplay)'));
 
 console.log(`\n${passed}/${passed + failed} checks passed`);
 process.exit(failed ? 1 : 0);

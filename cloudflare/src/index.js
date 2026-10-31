@@ -34,6 +34,36 @@ import { runBacktestSuite } from './services/backtestService.js';
 import { backfillRatings } from './services/ratingsService.js';
 import { buildLiveBlock } from './services/liveModel.js';
 import * as premiumService from './services/premiumService.js';
+import * as authService from './services/authService.js';
+import * as cfUsageService from './services/cfUsageService.js';
+import * as pageHitsService from './services/pageHitsService.js';
+
+/** Failed admin secret attempts (isolate memory). */
+const adminSecretFails = new Map();
+const ADMIN_FAIL_WINDOW_MS = 15 * 60 * 1000;
+const ADMIN_FAIL_MAX = 30;
+
+function checkAdminSecret(request, env) {
+  const secret = env.SYNC_SECRET || 'change-me-houdini';
+  const header = request.headers.get('x-sync-secret');
+  const ip = clientIp(request);
+  const now = Date.now();
+  let entry = adminSecretFails.get(ip);
+  if (entry && now - entry.start > ADMIN_FAIL_WINDOW_MS) {
+    adminSecretFails.delete(ip);
+    entry = null;
+  }
+  if (entry && entry.count > ADMIN_FAIL_MAX) {
+    return { ok: false, status: 429, error: 'Demasiados intentos. Prueba más tarde.' };
+  }
+  if (!header || header !== secret) {
+    if (!entry) entry = { start: now, count: 0 };
+    entry.count += 1;
+    adminSecretFails.set(ip, entry);
+    return { ok: false, status: 401, error: 'No autorizado. Header x-sync-secret requerido.' };
+  }
+  return { ok: true };
+}
 
 const STALE_MS = 12 * 60 * 60 * 1000;
 const SYNC_LOCK_MS = 5 * 60 * 1000;
@@ -91,24 +121,68 @@ function tipTierFromStored(suggestedBet, confidenceScore, tipOdds, storedTier = 
 }
 
 function json(data, status = 200, extraHeaders = null) {
-  const headers = {
+  const headers = new Headers({
     'content-type': 'application/json; charset=utf-8',
     'access-control-allow-origin': '*',
     'access-control-allow-headers': 'content-type, x-sync-secret',
-    'access-control-allow-methods': 'GET, POST, OPTIONS',
-  };
-  if (extraHeaders) Object.assign(headers, extraHeaders);
+    'access-control-allow-methods': 'GET, POST, DELETE, OPTIONS',
+  });
+  if (extraHeaders) {
+    for (const [k, v] of Object.entries(extraHeaders)) {
+      if (k.toLowerCase() === 'set-cookie') {
+        const list = Array.isArray(v) ? v : [v];
+        for (const c of list) {
+          if (c) headers.append('set-cookie', c);
+        }
+      } else if (v != null) {
+        headers.set(k, String(v));
+      }
+    }
+  }
   return new Response(JSON.stringify(data), {
     status,
     headers,
   });
 }
 
-/** Resolve the premium session once per request (no cookie = free). */
-async function premiumSessionOf(request, db) {
+function clientIp(request) {
+  return (
+    request.headers.get('cf-connecting-ip') ||
+    request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
+    'unknown'
+  );
+}
+
+/** Resolve premium from hb_prem cookie and/or linked auth user. */
+async function premiumSessionOf(request, db, userId = null) {
   const cookieValue = premiumService.sessionCookieFromHeader(request.headers.get('cookie'));
-  if (!cookieValue) return { premium: false, session: null };
-  return premiumService.resolvePremiumSession(db, cookieValue);
+  let fromCookie = { premium: false, session: null };
+  if (cookieValue) {
+    fromCookie = await premiumService.resolvePremiumSession(db, cookieValue);
+  }
+  let uid = userId;
+  if (!uid) {
+    const authCookie = authService.authCookieFromHeader(request.headers.get('cookie'));
+    const { user } = await authService.resolveAuthSession(db, authCookie);
+    uid = user?.id || null;
+  }
+  if (uid && cookieValue && fromCookie.session) {
+    await premiumService.attachPremiumSessionToUser(db, cookieValue, uid).catch(() => {});
+  }
+  if (fromCookie.premium) return fromCookie;
+  if (uid) {
+    const row = await premiumService.findPremiumForUser(db, uid);
+    if (row && premiumService.isPremiumActive(row)) {
+      return { premium: true, session: row };
+    }
+  }
+  return fromCookie.session ? fromCookie : { premium: false, session: null };
+}
+
+async function authUserOf(request, db) {
+  const cookieValue = authService.authCookieFromHeader(request.headers.get('cookie'));
+  const { user } = await authService.resolveAuthSession(db, cookieValue);
+  return user || null;
 }
 
 function premiumRequiredResponse() {
@@ -759,7 +833,7 @@ async function handleApi(request, env, ctx) {
       });
     }
     // Defense: Mejores / best-bets stay playable-only (Stats tip_results lane).
-    // Top 10 UI builds client-side from /matches/today?days=14 with soft backfill — not this list.
+    // Top 10 UI builds client-side from /matches/today?date= (selected day) with soft backfill — not this list.
     bets = bets
       .filter((b) => !b.tipTier || b.tipTier === 'playable')
       .slice(0, limit);
@@ -856,34 +930,237 @@ async function handleApi(request, env, ctx) {
     // Full performance (ROI + recent tips) is public until login/premium ships.
     return json(payload);
   }
+  // —— Auth (email + Google) ——
+  if (method === 'POST' && path === '/api/v1/auth/register') {
+    let body = {};
+    try {
+      body = await request.json();
+    } catch (_) {
+      return json({ error: 'JSON inválido' }, 400);
+    }
+    const userV = authService.validateUsername(body.username);
+    if (!userV.ok) return json({ error: userV.error }, 400);
+    const nameV = authService.validateName(body.name);
+    if (!nameV.ok) return json({ error: nameV.error }, 400);
+    const phoneV = authService.validatePhone(body.phone, { required: true });
+    if (!phoneV.ok) return json({ error: phoneV.error }, 400);
+    const emailV = authService.validateEmail(body.email);
+    if (!emailV.ok) return json({ error: emailV.error }, 400);
+    const passV = authService.validatePassword(body.password);
+    if (!passV.ok) return json({ error: passV.error }, 400);
+    const confirm = body.password2 ?? body.passwordConfirm;
+    if (confirm == null || String(body.password) !== String(confirm)) {
+      return json({ error: 'Las contraseñas no coinciden' }, 400);
+    }
+    const takenUser = await authService.findUserByUsername(db, userV.username);
+    if (takenUser) return json({ error: 'Ese ID ya está en uso' }, 409);
+    const existing = await authService.findUserByEmail(db, emailV.email);
+    if (existing) return json({ error: 'No se pudo crear la cuenta' }, 409);
+    try {
+      const user = await authService.createUserPassword(db, {
+        username: userV.username,
+        name: nameV.name,
+        phone: phoneV.phone,
+        email: emailV.email,
+        password: passV.password,
+      });
+      const session = await authService.createAuthSession(db, user.id, {
+        ip: clientIp(request),
+      });
+      const premCookie = premiumService.sessionCookieFromHeader(request.headers.get('cookie'));
+      if (premCookie) {
+        await premiumService.attachPremiumSessionToUser(db, premCookie, user.id).catch(() => {});
+      }
+      return json(
+        { user: authService.publicUser(user) },
+        201,
+        { 'set-cookie': authService.authCookieHeader(session.cookieValue) }
+      );
+    } catch (err) {
+      const msg = String(err?.message || '');
+      if (/UNIQUE|constraint/i.test(msg)) {
+        return json({ error: 'Ese ID ya está en uso' }, 409);
+      }
+      return json({ error: err.message || 'Error al registrar' }, 500);
+    }
+  }
+
+  if (method === 'POST' && path === '/api/v1/auth/login') {
+    let body = {};
+    try {
+      body = await request.json();
+    } catch (_) {
+      return json({ error: 'JSON inválido' }, 400);
+    }
+    const identifier = String(body.identifier ?? body.email ?? '').trim();
+    const passV = authService.validatePassword(body.password || 'x');
+    const rate = authService.checkLoginRateLimit(`${clientIp(request)}:${identifier || 'x'}`);
+    if (!rate.ok) return json({ error: rate.error }, 429);
+    const generic = 'Usuario o contraseña incorrectos';
+    if (!identifier || !passV.ok) return json({ error: generic }, 401);
+    const user = await authService.findUserByLoginIdentifier(db, identifier);
+    if (!user || !user.password_hash) return json({ error: generic }, 401);
+    if (Number(user.disabled) === 1) return json({ error: generic }, 401);
+    const ok = await authService.verifyPassword(passV.password, user.password_hash);
+    if (!ok) return json({ error: generic }, 401);
+    const session = await authService.createAuthSession(db, user.id, {
+      ip: clientIp(request),
+    });
+    const premCookie = premiumService.sessionCookieFromHeader(request.headers.get('cookie'));
+    if (premCookie) {
+      await premiumService.attachPremiumSessionToUser(db, premCookie, user.id).catch(() => {});
+    }
+    return json(
+      { user: authService.publicUser(user) },
+      200,
+      { 'set-cookie': authService.authCookieHeader(session.cookieValue) }
+    );
+  }
+
+  if (method === 'GET' && path === '/api/v1/auth/me') {
+    const cookieValue = authService.authCookieFromHeader(request.headers.get('cookie'));
+    const { user } = await authService.resolveAuthSession(db, cookieValue);
+    if (!user) return json({ user: null });
+    return json({ user: authService.publicUser(user) });
+  }
+
+  if (method === 'POST' && path === '/api/v1/auth/premium-sanction/ack') {
+    const user = await authUserOf(request, db);
+    if (!user) return json({ error: 'No autenticado' }, 401);
+    await db.run(`UPDATE users SET premium_sanction_at = NULL WHERE id = ?1`, String(user.id));
+    return json({ ok: true });
+  }
+
+  if (method === 'POST' && path === '/api/v1/auth/logout') {
+    const cookieValue = authService.authCookieFromHeader(request.headers.get('cookie'));
+    await authService.revokeAuthSession(db, cookieValue);
+    return json({ ok: true }, 200, { 'set-cookie': authService.clearAuthCookieHeader() });
+  }
+
+  if (method === 'GET' && path === '/api/v1/auth/google/start') {
+    if (!authService.googleConfigured(env)) {
+      return json({ error: 'Google no configurado' }, 503);
+    }
+    if (!env.AUTH_SECRET) {
+      return json({ error: 'AUTH_SECRET no configurado' }, 503);
+    }
+    const state = await authService.createOAuthState(env);
+    const url = authService.googleAuthUrl(env, request, state);
+    return new Response(null, {
+      status: 302,
+      headers: {
+        Location: url,
+        'set-cookie': authService.oauthStateCookieHeader(state),
+      },
+    });
+  }
+
+  if (method === 'GET' && path === '/api/v1/auth/google/callback') {
+    const url = new URL(request.url);
+    const errQ = url.searchParams.get('error');
+    if (errQ) {
+      return Response.redirect(`${authService.publicOrigin(request, env)}/?auth=google_error`, 302);
+    }
+    if (!authService.googleConfigured(env) || !env.AUTH_SECRET) {
+      return Response.redirect(`${authService.publicOrigin(request, env)}/?auth=google_unconfigured`, 302);
+    }
+    const code = url.searchParams.get('code');
+    const state = url.searchParams.get('state');
+    const cookieState = authService.oauthStateFromHeader(request.headers.get('cookie'));
+    const stateOk =
+      state &&
+      cookieState &&
+      state === cookieState &&
+      (await authService.verifyOAuthState(env, state));
+    if (!code || !stateOk) {
+      return Response.redirect(`${authService.publicOrigin(request, env)}/?auth=google_state`, 302);
+    }
+    try {
+      const profile = await authService.exchangeGoogleCode(env, request, code);
+      const user = await authService.upsertGoogleUser(db, profile);
+      if (Number(user.disabled) === 1) {
+        return Response.redirect(`${authService.publicOrigin(request, env)}/?auth=google_error`, 302);
+      }
+      const session = await authService.createAuthSession(db, user.id, {
+        ip: clientIp(request),
+      });
+      const premCookie = premiumService.sessionCookieFromHeader(request.headers.get('cookie'));
+      if (premCookie) {
+        await premiumService.attachPremiumSessionToUser(db, premCookie, user.id).catch(() => {});
+      }
+      const headers = new Headers({
+        Location: `${authService.publicOrigin(request, env)}/?auth=ok`,
+      });
+      headers.append('set-cookie', authService.authCookieHeader(session.cookieValue));
+      headers.append('set-cookie', authService.clearOauthStateCookieHeader());
+      return new Response(null, { status: 302, headers });
+    } catch (_) {
+      return Response.redirect(`${authService.publicOrigin(request, env)}/?auth=google_error`, 302);
+    }
+  }
+
+  if (method === 'POST' && path === '/api/v1/auth/delete') {
+    const user = await authUserOf(request, db);
+    if (!user) return json({ error: 'No autenticado' }, 401);
+    try {
+      await authService.deleteUser(db, user.id);
+    } catch (err) {
+      return json({ error: err?.message || 'No se pudo eliminar la cuenta' }, 500);
+    }
+    return json(
+      { ok: true },
+      200,
+      { 'set-cookie': authService.clearAuthCookieHeader() }
+    );
+  }
+
   if (method === 'GET' && path === '/api/v1/premium/status') {
-    const { premium, session } = await premiumSessionOf(request, db);
+    const user = await authUserOf(request, db);
+    const { premium, session } = await premiumSessionOf(request, db, user?.id || null);
+    const meta = premiumService.premiumMetaFromRow(session);
+    const pending = user?.id
+      ? await premiumService.getPendingPromoDiscount(db, user.id)
+      : { percent: null, code: null };
     return json({
       premium,
       premiumUntil: premium && session ? session.premium_until : null,
+      premiumStartedAt: meta.premiumStartedAt,
+      plan: meta.plan,
+      premiumDaysLeft: meta.premiumDaysLeft,
       stripeConfigured: premiumService.stripeConfigured(env),
+      pendingPromoPercent: pending.percent,
+      pendingPromoCode: pending.code,
     });
   }
 
   if (method === 'POST' && path === '/api/v1/premium/session') {
+    const user = await authUserOf(request, db);
     const cookieValue = premiumService.sessionCookieFromHeader(request.headers.get('cookie'));
     let { premium, session } = await premiumService.resolvePremiumSession(db, cookieValue);
     let setCookie = null;
     if (!session || !cookieValue) {
-      const created = await premiumService.createPremiumSession(db);
+      const created = await premiumService.createPremiumSession(db, {
+        userId: user?.id || null,
+      });
       const cookie = premiumService.sessionCookieHeader(created.cookieValue);
       setCookie = cookie.toSetCookieString();
-      session = { id: created.id, premium_until: null, active: 1 };
+      session = { id: created.id, premium_until: null, active: 1, user_id: user?.id || null };
       premium = false;
+    } else if (user?.id) {
+      await premiumService.attachPremiumSessionToUser(db, cookieValue, user.id).catch(() => {});
     }
+    const pending = user?.id
+      ? await premiumService.getPendingPromoDiscount(db, user.id)
+      : { percent: null, code: null };
     let checkoutUrl = null;
+    let appliedPercentOff = null;
     if (premiumService.stripeConfigured(env)) {
-      const checkout = await premiumService.createStripeCheckout(
-        env,
-        String(session.id),
-        { origin: new URL(request.url).origin }
-      );
+      const checkout = await premiumService.createStripeCheckout(env, String(session.id), {
+        origin: new URL(request.url).origin,
+        percentOff: pending.percent || null,
+      });
       checkoutUrl = checkout.url || null;
+      appliedPercentOff = checkout.percentOff || null;
     }
     return json(
       {
@@ -891,6 +1168,8 @@ async function handleApi(request, env, ctx) {
         premiumUntil: premium ? session.premium_until : null,
         stripeConfigured: premiumService.stripeConfigured(env),
         checkoutUrl,
+        pendingPromoPercent: pending.percent,
+        appliedPercentOff,
       },
       200,
       setCookie ? { 'set-cookie': setCookie } : null
@@ -918,12 +1197,170 @@ async function handleApi(request, env, ctx) {
     return json({ ok: true, ...applied });
   }
 
-  if (method === 'POST' && path === '/api/v1/admin/premium/grant') {
-    const secret = env.SYNC_SECRET || 'change-me-houdini';
-    const header = request.headers.get('x-sync-secret');
-    if (!header || header !== secret) {
-      return json({ error: 'No autorizado. Header x-sync-secret requerido.' }, 401);
+  if (method === 'POST' && path === '/api/v1/premium/promo') {
+    const user = await authUserOf(request, db);
+    if (!user?.id) return json({ error: 'No autenticado', errorCode: 'auth_required' }, 401);
+    let body = {};
+    try {
+      body = await request.json();
+    } catch (_) {
+      body = {};
     }
+    const result = await premiumService.redeemPromoCode(db, user.id, body.code);
+    if (!result.ok) {
+      const status =
+        result.error === 'auth_required'
+          ? 401
+          : result.error === 'already_used'
+            ? 409
+            : 400;
+      return json(
+        { ok: false, error: result.message || 'Código no válido', errorCode: result.error },
+        status
+      );
+    }
+    return json({
+      ok: true,
+      premiumUntil: result.premiumUntil,
+      days: result.days,
+      code: result.code,
+      type: result.type,
+      kind: result.kind,
+      percentOff: result.percentOff ?? null,
+    });
+  }
+
+  if (method === 'POST' && path === '/api/v1/telemetry/hit') {
+    let body = {};
+    try {
+      body = await request.json();
+    } catch (_) {
+      body = {};
+    }
+    const ip = clientIp(request);
+    const country =
+      request.headers.get('cf-ipcountry') ||
+      (request.cf && request.cf.country) ||
+      '';
+    const ua = request.headers.get('user-agent') || '';
+    const host = request.headers.get('host') || url.host || '';
+    const hitPath = body.path || url.searchParams.get('path') || '/';
+    const referrerHost = pageHitsService.referrerHostOf(
+      body.referrer || request.headers.get('referer') || ''
+    );
+    const work = pageHitsService.recordHit(db, {
+      ip,
+      path: hitPath,
+      country,
+      ua,
+      host,
+      referrerHost,
+    });
+    if (ctx && typeof ctx.waitUntil === 'function') {
+      ctx.waitUntil(work.catch(() => {}));
+      return json({ ok: true }, 202);
+    }
+    const result = await work;
+    return json({ ok: true, ...result });
+  }
+
+  if (method === 'GET' && path === '/api/v1/admin/visits/recent') {
+    const gate = checkAdminSecret(request, env);
+    if (!gate.ok) return json({ error: gate.error }, gate.status);
+    const limit = url.searchParams.get('limit');
+    const [uniqueIpsToday, hits] = await Promise.all([
+      pageHitsService.countUniqueIpsToday(db),
+      pageHitsService.listRecent(db, { limit }),
+    ]);
+    return json({ uniqueIpsToday, hits });
+  }
+
+  if (method === 'GET' && path === '/api/v1/admin/usage/today') {
+    const gate = checkAdminSecret(request, env);
+    if (!gate.ok) return json({ error: gate.error }, gate.status);
+    const { start, end } = cfUsageService.todayUtcWindow();
+    const day = start.slice(0, 10);
+    const [usage, loginsToday] = await Promise.all([
+      cfUsageService.fetchWorkerUsageToday(env),
+      authService.countLoginsToday(db, { startIso: start, endIso: end }),
+    ]);
+    return json({
+      ...usage,
+      day: usage.day || day,
+      loginsToday,
+    });
+  }
+
+  if (method === 'GET' && path === '/api/v1/admin/usage/daily') {
+    const gate = checkAdminSecret(request, env);
+    if (!gate.ok) return json({ error: gate.error }, gate.status);
+    const from = url.searchParams.get('from') || undefined;
+    const to = url.searchParams.get('to') || undefined;
+    const daily = await cfUsageService.fetchWorkerUsageDaily(env, { from, to });
+    return json(daily);
+  }
+
+  if (method === 'GET' && path === '/api/v1/admin/usage/visits') {
+    const gate = checkAdminSecret(request, env);
+    if (!gate.ok) return json({ error: gate.error }, gate.status);
+    const day = url.searchParams.get('day') || undefined;
+    const visits = await cfUsageService.fetchWebAnalyticsVisits(env, { day });
+    return json(visits);
+  }
+
+  if (method === 'GET' && path === '/api/v1/admin/users') {
+    const gate = checkAdminSecret(request, env);
+    if (!gate.ok) return json({ error: gate.error }, gate.status);
+    const users = await authService.listUsersAdmin(db);
+    return json({ users });
+  }
+
+  {
+    const revokeMatch = path.match(/^\/api\/v1\/admin\/users\/([^/]+)\/revoke$/);
+    if (method === 'POST' && revokeMatch) {
+      const gate = checkAdminSecret(request, env);
+      if (!gate.ok) return json({ error: gate.error }, gate.status);
+      const id = decodeURIComponent(revokeMatch[1]);
+      const existing = await authService.findUserById(db, id);
+      if (!existing) return json({ error: 'Usuario no encontrado' }, 404);
+      const user = await authService.setUserDisabled(db, id, true);
+      return json({ ok: true, user: authService.adminUserRow(user) });
+    }
+  }
+
+  {
+    const enableMatch = path.match(/^\/api\/v1\/admin\/users\/([^/]+)\/enable$/);
+    if (method === 'POST' && enableMatch) {
+      const gate = checkAdminSecret(request, env);
+      if (!gate.ok) return json({ error: gate.error }, gate.status);
+      const id = decodeURIComponent(enableMatch[1]);
+      const existing = await authService.findUserById(db, id);
+      if (!existing) return json({ error: 'Usuario no encontrado' }, 404);
+      const user = await authService.setUserDisabled(db, id, false);
+      return json({ ok: true, user: authService.adminUserRow(user) });
+    }
+  }
+
+  {
+    const deleteMatch = path.match(/^\/api\/v1\/admin\/users\/([^/]+)$/);
+    if (method === 'DELETE' && deleteMatch) {
+      const gate = checkAdminSecret(request, env);
+      if (!gate.ok) return json({ error: gate.error }, gate.status);
+      const id = decodeURIComponent(deleteMatch[1]);
+      const existing = await authService.findUserById(db, id);
+      if (!existing) return json({ error: 'Usuario no encontrado' }, 404);
+      try {
+        await authService.deleteUser(db, id);
+      } catch (err) {
+        return json({ error: err?.message || 'Error al eliminar usuario' }, 500);
+      }
+      return json({ ok: true, id });
+    }
+  }
+
+  if (method === 'POST' && path === '/api/v1/admin/premium/grant') {
+    const gate = checkAdminSecret(request, env);
+    if (!gate.ok) return json({ error: gate.error }, gate.status);
     let body = {};
     try {
       body = await request.json();
@@ -931,6 +1368,15 @@ async function handleApi(request, env, ctx) {
       body = {};
     }
     const days = Math.max(1, Math.min(365, Number(body.days) || 30));
+    if (body.userId) {
+      const granted = await premiumService.grantPremiumForUser(db, String(body.userId), { days });
+      return json({
+        ok: true,
+        userId: String(body.userId),
+        id: granted.id,
+        premiumUntil: granted.premiumUntil,
+      });
+    }
     if (body.id) {
       const until = await premiumService.grantPremium(db, String(body.id), { days });
       return json({ ok: true, id: String(body.id), premiumUntil: until });
@@ -944,6 +1390,75 @@ async function handleApi(request, env, ctx) {
       cookieValue: created.cookieValue,
       note: 'Entregar este cookieValue como hb_prem al beneficiario (promo/reembolso).',
     });
+  }
+
+  if (method === 'POST' && path === '/api/v1/admin/premium/revoke') {
+    const gate = checkAdminSecret(request, env);
+    if (!gate.ok) return json({ error: gate.error }, gate.status);
+    let body = {};
+    try {
+      body = await request.json();
+    } catch (_) {
+      body = {};
+    }
+    const userId = body.userId ? String(body.userId) : '';
+    if (!userId) return json({ error: 'userId requerido' }, 400);
+    const existing = await authService.findUserById(db, userId);
+    if (!existing) return json({ error: 'Usuario no encontrado' }, 404);
+    const result = await premiumService.revokePremiumForUser(db, userId, {
+      sanction: Boolean(body.sanction),
+    });
+    return json({ ok: true, ...result });
+  }
+
+  if (method === 'GET' && path === '/api/v1/admin/promo') {
+    const gate = checkAdminSecret(request, env);
+    if (!gate.ok) return json({ error: gate.error }, gate.status);
+    const codes = await premiumService.listPromoCodes(db);
+    return json({ ok: true, codes });
+  }
+
+  if (method === 'POST' && path === '/api/v1/admin/promo') {
+    const gate = checkAdminSecret(request, env);
+    if (!gate.ok) return json({ error: gate.error }, gate.status);
+    let body = {};
+    try {
+      body = await request.json();
+    } catch (_) {
+      body = {};
+    }
+    const created = await premiumService.createPromoCode(db, {
+      code: body.code,
+      type: body.type,
+      days: body.days,
+      maxRedemptions: body.maxRedemptions,
+      expiresAt: body.expiresAt || null,
+    });
+    if (!created.ok) {
+      return json(
+        { ok: false, error: created.message || 'No se pudo crear', errorCode: created.error },
+        created.error === 'exists' ? 409 : 400
+      );
+    }
+    return json(created);
+  }
+
+  const adminPromoDelete = path.match(/^\/api\/v1\/admin\/promo\/([^/]+)$/);
+  if (
+    adminPromoDelete &&
+    (method === 'DELETE' || (method === 'POST' && url.searchParams.get('action') === 'delete'))
+  ) {
+    const gate = checkAdminSecret(request, env);
+    if (!gate.ok) return json({ error: gate.error }, gate.status);
+    const code = decodeURIComponent(adminPromoDelete[1] || '');
+    const result = await premiumService.deletePromoCode(db, code);
+    if (!result.ok) {
+      return json(
+        { ok: false, error: result.message || 'No se pudo eliminar', errorCode: result.error },
+        result.error === 'not_found' ? 404 : 400
+      );
+    }
+    return json(result);
   }
 
   if (method === 'POST' && path === '/api/v1/matches/refresh-live') {
@@ -1160,6 +1675,21 @@ async function handleApi(request, env, ctx) {
       ...result,
       note:
         'Partidos finished con kickoff futuro → scheduled; goles/events/fotmob limpios; tip_results borrados.',
+    });
+  }
+
+  if (method === 'POST' && path === '/api/v1/admin/tips/sync-predictions') {
+    const secret = env.SYNC_SECRET || 'change-me-houdini';
+    const header = request.headers.get('x-sync-secret');
+    if (!header || header !== secret) {
+      return json({ error: 'No autorizado. Header x-sync-secret requerido.' }, 401);
+    }
+    const repaired = await store.repairPredictionsToLockedTips(db, 500);
+    return json({
+      ok: true,
+      repaired,
+      note:
+        'predictions.suggested_bet alineado con tip_results (live/finished). Stats no cambia; el panel muestra el tip asentado.',
     });
   }
 

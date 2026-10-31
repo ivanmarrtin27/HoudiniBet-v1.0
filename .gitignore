@@ -16,3 +16,7 @@ dist/
 .cursor/
 .opencode/
 skills-lock.json
+
+# Local admin QR (no secret, but keep private)
+admin-qr/
+

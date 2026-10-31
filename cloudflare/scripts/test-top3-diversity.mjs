@@ -42,7 +42,6 @@ const api = new Function(
    const TOP10_TRIVIAL_LABELS = new Set(['OVER_05', 'UNDER_45']);
    const TOP10_MAX_PER_FAMILY = 3;
    const TOP10_LIMIT = 10;
-   const TOP10_WINDOW_DAYS = 14;
    function tipProbPct(raw) {
      const conf = raw?.confidenceScore != null ? Number(raw.confidenceScore) : null;
      return conf != null && conf > 0 ? conf : null;
@@ -194,16 +193,27 @@ check('buildTop10Pool exists', src.includes('function buildTop10Pool('));
 check('pickTop10Tips exists', src.includes('function pickTop10Tips('));
 check('soft min prob is 69', src.includes('const TOP10_SOFT_MIN_PROB = 69'));
 check('primary min prob is 75', src.includes('const TOP10_MIN_PROB = 75'));
-check('Top 10 window is 14 days', src.includes('const TOP10_WINDOW_DAYS = 14'));
+check('Top 10 has no multi-day window constant', !src.includes('TOP10_WINDOW_DAYS'));
 check(
-  'Top 10 builds from multi-day upcoming pool, not single-date / playable-only best-bets',
-  src.includes('days=${TOP10_WINDOW_DAYS}') &&
+  'Top 10 builds from selected calendar day (?date=), not days= / best-bets',
+  src.includes('resolveSelectedDate()') &&
     src.includes('pickTop10Tips(matches') &&
-    !/renderTop3[\s\S]*?matches\/today\?date=/.test(src.slice(src.indexOf('async function renderTop3'))) &&
-    !/renderTop3[\s\S]*?best-bets\?date=/.test(src.slice(src.indexOf('async function renderTop3')))
+    /async function renderTop3[\s\S]*?matches\/today\?date=/.test(
+      src.slice(src.indexOf('async function renderTop3'), src.indexOf('async function renderTop3') + 900)
+    ) &&
+    !/async function renderTop3[\s\S]*?days=\$\{/.test(
+      src.slice(src.indexOf('async function renderTop3'), src.indexOf('async function renderTop3') + 900)
+    ) &&
+    !/async function renderTop3[\s\S]*?best-bets\?date=/.test(
+      src.slice(src.indexOf('async function renderTop3'), src.indexOf('async function renderTop3') + 900)
+    )
 );
 check('model-implied odds helper for null tipOdds', src.includes('function tipOddsForTop10Band('));
-check('secondary tip meta wired in client pool', src.includes('secondaryTipOdds'));
+check(
+  'Top 10 pool uses primary tip only (no secondary promotion)',
+  src.includes('Primary tip candidates only') &&
+    !/function buildTop10Pool\([\s\S]*?isSecondary:\s*true[\s\S]*?function pickTop10Tips/.test(src)
+);
 
 /** 15 mixed-prob candidates → diversity returns 10 (primary preferred via sort order). */
 const mixedProb15 = [
@@ -255,16 +265,23 @@ check(
   ) != null
 );
 check(
-  'odds below band still rejected even with high P',
+  'high-P short odds (<1.30) still eligible for Top 10',
   tipPlayableScore(
     { suggestedBet: 'DC_1X', tipOdds: 1.1, oddsSource: 'model', confidenceScore: 90 },
+    69
+  ) != null
+);
+check(
+  'longshot odds above max still rejected',
+  tipPlayableScore(
+    { suggestedBet: 'AWAY_WIN', tipOdds: 4.2, oddsSource: 'model', confidenceScore: 70 },
     69
   ) == null
 );
 check('finished matches excluded from Top 10 status', isTop10MatchStatus('finished') === false);
 check('scheduled matches allowed', isTop10MatchStatus('scheduled') === true);
 
-// P 69–76 → model 1/p stays inside 1.30–3.50; P≥77 alone would fall under 1.30.
+// Soft floor P≥69; high-P 1/p <1.30 must still fill (no min-odds starve).
 const nullOddsPool = Array.from({ length: 12 }, (_, i) => ({
   id: 1000 + i,
   status: 'scheduled',
@@ -293,11 +310,173 @@ check(
   filledFromNullOdds.length === 10
 );
 check(
-  'high P with null tipOdds fails min band via 1/p (<1.30)',
+  'high P with null tipOdds stays eligible via 1/p (<1.30)',
   tipPlayableScore(
     { suggestedBet: 'OVER_25', tipOdds: null, oddsSource: 'model', confidenceScore: 80 },
     69
-  ) == null
+  ) != null
+);
+
+/** Live regression shape: 2026-10-30 — 4 matches, only 2 with P≥69 (one short model odds). */
+const day30LiveShape = [
+  {
+    id: 27084,
+    status: 'scheduled',
+    suggestedBet: 'AWAY_WIN',
+    secondaryBet: 'UNDER_25',
+    tipOdds: 1.959,
+    oddsSource: 'model',
+    confidenceScore: 44.04,
+    secondaryTipOdds: 2.185,
+    secondaryOddsSource: 'model',
+    secondaryConfidence: 45.77,
+  },
+  {
+    id: 27065,
+    status: 'scheduled',
+    suggestedBet: 'OVER_25',
+    secondaryBet: 'BTTS_YES',
+    tipOdds: 1.265,
+    oddsSource: 'model',
+    confidenceScore: 79.05,
+    secondaryTipOdds: 1.291,
+    secondaryOddsSource: 'model',
+    secondaryConfidence: 77.44,
+  },
+  {
+    id: 26996,
+    status: 'scheduled',
+    suggestedBet: 'BTTS_YES',
+    secondaryBet: 'HOME_WIN',
+    tipOdds: 1.768,
+    oddsSource: 'model',
+    confidenceScore: 0,
+    secondaryTipOdds: 2.366,
+    secondaryOddsSource: 'model',
+    secondaryConfidence: 42.27,
+  },
+  {
+    id: 27085,
+    status: 'scheduled',
+    suggestedBet: 'DNB_HOME',
+    secondaryBet: 'BTTS_YES',
+    tipOdds: 1.688,
+    oddsSource: 'model',
+    confidenceScore: 75.84,
+    secondaryTipOdds: 1.723,
+    secondaryOddsSource: 'model',
+    secondaryConfidence: 58.04,
+  },
+];
+const day30Picked = pickTop10Tips(day30LiveShape, 10);
+check(
+  '2026-10-30 short-odds shape: high-P OVER_25 + DNB_HOME → 2 tips (2 below soft floor)',
+  day30Picked.length === 2 &&
+    day30Picked.some((x) => x.matchId === 27065 && x.tipLabel === 'OVER_25') &&
+    day30Picked.some((x) => x.matchId === 27085 && x.tipLabel === 'DNB_HOME')
+);
+check(
+  'Top 10 never surfaces secondary even when secondary P/family is diversifying',
+  day30Picked.every((x) => x.tipLabel !== 'BTTS_YES' && x.tipLabel !== 'UNDER_25' && x.tipLabel !== 'HOME_WIN') &&
+    !day30Picked.some((x) => x.isSecondary)
+);
+
+/** Diversity trap: 3× ou primary already in, match secondary corners must NOT replace primary SOT. */
+const diversityTrap = [
+  {
+    id: 1,
+    status: 'scheduled',
+    suggestedBet: 'OVER_15',
+    tipOdds: 1.28,
+    oddsSource: 'model',
+    confidenceScore: 80,
+    secondaryBet: 'CORNERS_UNDER_105',
+    secondaryTipOdds: 1.35,
+    secondaryOddsSource: 'model',
+    secondaryConfidence: 82,
+  },
+  {
+    id: 2,
+    status: 'scheduled',
+    suggestedBet: 'OVER_25',
+    tipOdds: 1.3,
+    oddsSource: 'model',
+    confidenceScore: 79,
+    secondaryBet: null,
+  },
+  {
+    id: 3,
+    status: 'scheduled',
+    suggestedBet: 'UNDER_25',
+    tipOdds: 1.32,
+    oddsSource: 'model',
+    confidenceScore: 78,
+    secondaryBet: null,
+  },
+  {
+    id: 4,
+    status: 'scheduled',
+    suggestedBet: 'SOT_UNDER_95',
+    tipOdds: 1.4,
+    oddsSource: 'model',
+    confidenceScore: 76,
+    secondaryBet: 'CORNERS_UNDER_105',
+    secondaryTipOdds: 1.22,
+    secondaryOddsSource: 'model',
+    secondaryConfidence: 88,
+  },
+];
+const trapPicked = pickTop10Tips(diversityTrap, 10);
+check(
+  'match primary SOT stays in Top 10 (not replaced by secondary corners)',
+  trapPicked.some((x) => x.matchId === 4 && x.tipLabel === 'SOT_UNDER_95') &&
+    !trapPicked.some((x) => x.tipLabel === 'CORNERS_UNDER_105')
+);
+
+/** Same-label day: two OVER_15 on different matches must still fill both (pass 3). */
+const sameLabelDay = [
+  {
+    id: 1,
+    status: 'scheduled',
+    suggestedBet: 'OVER_15',
+    tipOdds: 1.27,
+    oddsSource: 'model',
+    confidenceScore: 78.6,
+    secondaryBet: null,
+  },
+  {
+    id: 2,
+    status: 'scheduled',
+    suggestedBet: 'OVER_15',
+    tipOdds: 1.3,
+    oddsSource: 'model',
+    confidenceScore: 77.2,
+    secondaryBet: null,
+  },
+  {
+    id: 3,
+    status: 'scheduled',
+    suggestedBet: 'DC_X2',
+    tipOdds: 1.31,
+    oddsSource: 'model',
+    confidenceScore: 76.4,
+    secondaryBet: null,
+  },
+  {
+    id: 4,
+    status: 'scheduled',
+    suggestedBet: 'OVER_25',
+    tipOdds: 1.27,
+    oddsSource: 'model',
+    confidenceScore: 79,
+    secondaryBet: null,
+  },
+];
+const sameLabelPicked = pickTop10Tips(sameLabelDay, 10);
+check(
+  'quiet day with duplicate OVER_15 fills all 4 matches (label cap softens on fill)',
+  sameLabelPicked.length === 4 &&
+    new Set(sameLabelPicked.map((x) => x.matchId)).size === 4
 );
 check(
   'finished-only day cannot fill Top 10',

@@ -1226,12 +1226,37 @@ async function enrichStatsFromFotmob(db, limit = 8, lookbackDays = 60) {
     lookbackDays
   );
   if (!rows.length) return { updated: 0, errors: [] };
+  // Prefer finished games involving teams that play in the upcoming window
+  // so λ for Tiros/SOT stay current jornada a jornada.
+  let priorityTeamIds = new Set();
+  try {
+    const upcoming = await store.getUpcoming(db, WINDOW_DAYS, null);
+    for (const m of upcoming || []) {
+      const hid = m.homeTeam?.id ?? m.home_team_id;
+      const aid = m.awayTeam?.id ?? m.away_team_id;
+      if (hid != null) priorityTeamIds.add(Number(hid));
+      if (aid != null) priorityTeamIds.add(Number(aid));
+    }
+  } catch (_) {
+    priorityTeamIds = new Set();
+  }
+  const rankedRows = [...rows].sort((a, b) => {
+    const aPri =
+      priorityTeamIds.has(Number(a.home_team_id)) || priorityTeamIds.has(Number(a.away_team_id))
+        ? 1
+        : 0;
+    const bPri =
+      priorityTeamIds.has(Number(b.home_team_id)) || priorityTeamIds.has(Number(b.away_team_id))
+        ? 1
+        : 0;
+    return bPri - aPri;
+  });
   const errors = [];
   const fixtures = [];
   const todayMs = Date.parse(`${new Date().toISOString().slice(0, 10)}T00:00:00Z`);
   const offsets = [
     ...new Set(
-      rows.map((row) => {
+      rankedRows.map((row) => {
         const rowMs = Date.parse(`${String(row.match_date).slice(0, 10)}T00:00:00Z`);
         return Math.round((rowMs - todayMs) / 86400000);
       })
@@ -1243,7 +1268,7 @@ async function enrichStatsFromFotmob(db, limit = 8, lookbackDays = 60) {
     errors.push(...(snapshot.errors || []));
   }
   let updated = 0;
-  for (const match of rows) {
+  for (const match of rankedRows) {
     if (updated >= limit) break;
     const best = findBestFixtureMatch(
       fixtures.map((fx) => ({
@@ -1502,7 +1527,7 @@ export async function runDailySync(env, db) {
   // Segunda División (LaLiga2) — FotMob (no hay feed FD)
   const segunda = await enrichSegundaFromFotmob(db);
   let segundaSynced = segunda.saved || 0;
-  const fotmobStats = await enrichStatsFromFotmob(db, 8, 60);
+  const fotmobStats = await enrichStatsFromFotmob(db, 12, 60);
 
   const hasKey = Boolean(env.API_FOOTBALL_KEY && String(env.API_FOOTBALL_KEY).trim());
   // AF odds/stats van en cron/endpoint aparte (cupo subrequests)
@@ -1555,11 +1580,18 @@ export async function runDailySync(env, db) {
   let tipsBackfilled = 0;
   let tipOddsBackfilled = 0;
   let tipsSettled = 0;
+  let tipsRecovered = 0;
   let calibration = null;
   try {
+    tipsRecovered = await store.recoverPrematureVoidTips(db, 80);
     tipsBackfilled = await store.backfillPendingTips(db);
     tipOddsBackfilled = await store.backfillTipOddsBands(db);
     tipsSettled = await store.settlePendingTips(db);
+    try {
+      await store.repairPredictionsToLockedTips(db, 200);
+    } catch (_) {
+      /* panel/Stats label sync best-effort */
+    }
     calibration = await fitTipCalibration(db);
     try {
       await store.settlePendingCombos(db, 40);
@@ -1594,6 +1626,7 @@ export async function runDailySync(env, db) {
     tipsBackfilled,
     tipOddsBackfilled,
     tipsSettled,
+    tipsRecovered,
     ratingsMaint,
     calibrationUpdatedAt: calibration?.updatedAt || null,
     calibrationDecided: calibration?.decided ?? null,
@@ -1818,14 +1851,9 @@ export async function ensureMatchEventsFresh(env, db, matchId) {
  * The one-day lookback closes matches that crossed midnight without an active client.
  */
 export async function runLiveStatusRefresh(env, db, { force = false } = {}) {
-  // Rows stuck as "live" long after kickoff pollute the live state and keep
-  // their tips pending forever. Close them before the cooldown check.
+  // Close stale-live AFTER feeds (below). Closing first used to void tips before
+  // scores arrived; tips now stay pending until settlePendingTips sees goals.
   let staleLive = { closed: 0, voided: 0 };
-  try {
-    staleLive = await store.closeStaleLiveMatches(db, 4);
-  } catch (err) {
-    staleLive = { closed: 0, voided: 0, error: err.message || String(err) };
-  }
   const lastAt = await store.getMeta(db, 'last_live_refresh_at');
   const lastMs = lastAt ? Date.parse(lastAt) : NaN;
   if (!force && lastAt && !Number.isNaN(lastMs) && Date.now() - lastMs < LIVE_REFRESH_COOLDOWN_MS) {
@@ -2089,16 +2117,30 @@ export async function runLiveStatusRefresh(env, db, { force = false } = {}) {
     errors.push({ source: 'fotmob-stats', error: err.message || String(err) });
   }
 
+  // After feeds: close rows still stuck as live (tips stay pending — no void).
+  try {
+    staleLive = await store.closeStaleLiveMatches(db, 4);
+  } catch (err) {
+    staleLive = { closed: 0, voided: 0, error: err.message || String(err) };
+  }
+
   const now = new Date().toISOString();
   await store.setMeta(db, 'last_live_refresh_at', now);
   let tipsSettled = 0;
   let tipsBackfilled = 0;
+  let tipsRecovered = 0;
   let calibrationUpdatedAt = null;
   let ratingsMaint = null;
   try {
+    tipsRecovered = await store.recoverPrematureVoidTips(db, 80);
     tipsBackfilled = await store.backfillPendingTips(db);
     await store.backfillTipOddsBands(db);
     tipsSettled = await store.settlePendingTips(db);
+    try {
+      await store.repairPredictionsToLockedTips(db, 200);
+    } catch (_) {
+      /* panel/Stats label sync best-effort */
+    }
     if (tipsSettled > 0) {
       const calib = await fitTipCalibration(db);
       calibrationUpdatedAt = calib?.updatedAt || null;
@@ -2121,6 +2163,7 @@ export async function runLiveStatusRefresh(env, db, { force = false } = {}) {
     afEnabled: hasKey,
     tipsBackfilled,
     tipsSettled,
+    tipsRecovered,
     calibrationUpdatedAt,
     ratingsMaint,
     stuckScheduled: stuckScheduled.length,

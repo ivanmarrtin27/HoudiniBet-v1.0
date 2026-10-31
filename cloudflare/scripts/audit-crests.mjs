@@ -21,7 +21,7 @@ const asJson = args.includes('--json');
 const leagueArg = args.find((a) => /^\d+$/.test(a));
 const leagueIds = leagueArg
   ? [Number(leagueArg)]
-  : [39, 140, 135, 78, 61];
+  : [39, 140, 141, 135, 78, 61];
 
 mkdirSync(outDir, { recursive: true });
 

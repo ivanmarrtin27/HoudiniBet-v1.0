@@ -1,4 +1,4 @@
-/** One-shot: simulate Top 10 pick against production ?days=14 vs ?date= today. */
+/** One-shot: simulate Top 10 pick against production selected calendar day. */
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -34,6 +34,15 @@ function extractFunction(name) {
   throw new Error(`${name} not closed`);
 }
 
+if (src.includes('TOP10_WINDOW_DAYS')) {
+  console.error('FAIL: TOP10_WINDOW_DAYS still present (expected day-only)');
+  process.exit(2);
+}
+if (!/async function renderTop3[\s\S]{0,900}matches\/today\?date=/.test(src)) {
+  console.error('FAIL: renderTop3 must fetch ?date=');
+  process.exit(2);
+}
+
 const api = new Function(
   `const TOP10_MIN_PROB = 75;
    const TOP10_SOFT_MIN_PROB = 69;
@@ -60,27 +69,22 @@ const api = new Function(
 const base = process.env.API_BASE_URL || 'https://houdini-bet.ivanmarrtin2703.workers.dev';
 const todayYmd = new Date().toISOString().slice(0, 10);
 
-const [r14, rDay] = await Promise.all([
-  fetch(`${base}/api/v1/matches/today?days=14`),
-  fetch(`${base}/api/v1/matches/today?date=${todayYmd}`),
-]);
-const d14 = await r14.json();
+const rDay = await fetch(`${base}/api/v1/matches/today?date=${todayYmd}`);
 const dDay = await rDay.json();
-const matches14 = d14.matches || [];
 const matchesDay = dDay.matches || [];
-const pool = api.buildTop10Pool(matches14);
-const picked = api.pickTop10Tips(matches14, 10);
+const pool = api.buildTop10Pool(matchesDay);
 const pickedDay = api.pickTop10Tips(matchesDay, 10);
+const ok = pickedDay.length <= 10 && pickedDay.length <= matchesDay.length;
 
 console.log(
   JSON.stringify(
     {
       todayYmd,
-      days14: {
-        matchCount: matches14.length,
+      dateOnly: {
+        matchCount: matchesDay.length,
         pool: pool.length,
-        picked: picked.length,
-        tips: picked.map((x) => ({
+        picked: pickedDay.length,
+        tips: pickedDay.map((x) => ({
           id: x.matchId,
           tip: x.tipLabel,
           p: x.meta.prob,
@@ -88,14 +92,10 @@ console.log(
           date: x.m?.matchDate,
         })),
       },
-      dateOnly: {
-        matchCount: matchesDay.length,
-        picked: pickedDay.length,
-      },
-      ok: picked.length === 10,
+      ok,
     },
     null,
     2
   )
 );
-process.exit(picked.length === 10 ? 0 : 2);
+process.exit(ok ? 0 : 2);

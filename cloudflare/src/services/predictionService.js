@@ -724,9 +724,9 @@ function cornersModel(homeStats, awayStats, league, { degraded = false } = {}) {
     cornersUnder: under95,
     cornersOver105: 1 - under105,
     cornersUnder105: under105,
-    ladderHome: poissonOverLadder(lambdaHome, rangeLines(2.5, 7.5)),
-    ladderAway: poissonOverLadder(lambdaAway, rangeLines(2.5, 7.5)),
-    ladderMatch: poissonOverLadder(total, rangeLines(7.5, 12.5)),
+    ladderHome: poissonOverLadder(lambdaHome, rangeLines(1.5, 11.5)),
+    ladderAway: poissonOverLadder(lambdaAway, rangeLines(1.5, 11.5)),
+    ladderMatch: poissonOverLadder(total, rangeLines(1.5, 11.5)),
     ...(strict ? {} : { degraded: true, samples: { home: homeSamples, away: awaySamples } }),
   };
 }
@@ -785,29 +785,49 @@ function cardsModel(homeStats, awayStats, league, { degraded = false } = {}) {
     cardsUnder35: under35,
     cardsOver45: 1 - under45,
     cardsUnder45: under45,
-    ladderHome: poissonOverLadder(lambdaHome, rangeLines(0.5, 3.5)),
-    ladderAway: poissonOverLadder(lambdaAway, rangeLines(0.5, 3.5)),
-    ladderMatch: poissonOverLadder(total, rangeLines(2.5, 6.5)),
+    ladderHome: poissonOverLadder(lambdaHome, rangeLines(0.5, 5.5)),
+    ladderAway: poissonOverLadder(lambdaAway, rangeLines(0.5, 5.5)),
+    ladderMatch: poissonOverLadder(total, rangeLines(0.5, 5.5)),
     ...(strict ? {} : { degraded: true, samples: { home: homeSamples, away: awaySamples } }),
   };
 }
 
-function totalShotsModel(homeStats, awayStats, league) {
-  if (!hasShotSamples(homeStats) || !hasShotSamples(awayStats)) return null;
+function totalShotsModel(homeStats, awayStats, league, { degraded = false } = {}) {
+  const strict = hasShotSamples(homeStats) && hasShotSamples(awayStats);
+  const homeSamples = countStatSamples(homeStats, 'shots_for');
+  const awaySamples = countStatSamples(awayStats, 'shots_for');
+  if (!strict && !degraded) return null;
   const homeShotsFor = weightedAvg(homeStats, 'shots_for');
   const awayShotsFor = weightedAvg(awayStats, 'shots_for');
   const homeShotsAgainst = weightedAvg(homeStats, 'shots_against');
   const awayShotsAgainst = weightedAvg(awayStats, 'shots_against');
   if (
+    strict &&
     [homeShotsFor, awayShotsFor, homeShotsAgainst, awayShotsAgainst].some((v) => v == null)
   ) {
     return null;
   }
-  const homeAtt = strength(homeShotsFor, league.avgShotsFor);
-  const homeDef = strength(homeShotsAgainst, league.avgShotsAgainst);
-  const awayAtt = strength(awayShotsFor, league.avgShotsFor);
-  const awayDef = strength(awayShotsAgainst, league.avgShotsAgainst);
   const leagueAvg = league.avgShotsFor || 12;
+  const homeAtt = strict
+    ? strength(homeShotsFor, league.avgShotsFor)
+    : shrinkStrength(homeShotsFor, league.avgShotsFor, homeSamples);
+  const homeDef = strict
+    ? strength(homeShotsAgainst, league.avgShotsAgainst)
+    : shrinkStrength(
+        homeShotsAgainst,
+        league.avgShotsAgainst,
+        countStatSamples(homeStats, 'shots_against')
+      );
+  const awayAtt = strict
+    ? strength(awayShotsFor, league.avgShotsFor)
+    : shrinkStrength(awayShotsFor, league.avgShotsFor, awaySamples);
+  const awayDef = strict
+    ? strength(awayShotsAgainst, league.avgShotsAgainst)
+    : shrinkStrength(
+        awayShotsAgainst,
+        league.avgShotsAgainst,
+        countStatSamples(awayStats, 'shots_against')
+      );
   const lambdaHome = homeAtt * awayDef * leagueAvg;
   const lambdaAway = awayAtt * homeDef * leagueAvg;
   const total = lambdaHome + lambdaAway;
@@ -824,9 +844,11 @@ function totalShotsModel(homeStats, awayStats, league) {
     shotsUnder225: under225,
     shotsOver255: 1 - under255,
     shotsUnder255: under255,
-    ladderHome: poissonOverLadder(lambdaHome, rangeLines(5.5, 15.5)),
-    ladderAway: poissonOverLadder(lambdaAway, rangeLines(5.5, 15.5)),
-    ladderMatch: poissonOverLadder(total, rangeLines(18.5, 32.5)),
+    // Same L H/A/Match for UI Tiros tab (client Poisson fills gaps).
+    ladderHome: poissonOverLadder(lambdaHome, rangeLines(14.5, 24.5)),
+    ladderAway: poissonOverLadder(lambdaAway, rangeLines(14.5, 24.5)),
+    ladderMatch: poissonOverLadder(total, rangeLines(14.5, 24.5)),
+    ...(strict ? {} : { degraded: true, samples: { home: homeSamples, away: awaySamples } }),
   };
 }
 
@@ -880,9 +902,9 @@ function shotsOnTargetModel(homeStats, awayStats, league, { degraded = false } =
     lambdaAway,
     lambdaMatch: total,
     ...probabilities,
-    ladderHome: poissonOverLadder(lambdaHome, rangeLines(1.5, 6.5)),
-    ladderAway: poissonOverLadder(lambdaAway, rangeLines(1.5, 6.5)),
-    ladderMatch: poissonOverLadder(total, rangeLines(5.5, 12.5)),
+    ladderHome: poissonOverLadder(lambdaHome, rangeLines(0.5, 11.5)),
+    ladderAway: poissonOverLadder(lambdaAway, rangeLines(0.5, 11.5)),
+    ladderMatch: poissonOverLadder(total, rangeLines(0.5, 11.5)),
     ...(strict ? {} : { degraded: true, samples: { home: homeSamples, away: awaySamples } }),
   };
 }
@@ -963,6 +985,7 @@ export async function predictMatch(db, matchId) {
   const homeStats = await store.lastNForTeam(db, match.homeTeam.id, 10);
   const awayStats = await store.lastNForTeam(db, match.awayTeam.id, 10);
   const league = await store.leagueGoalAverages(db, match.leagueId);
+  const marketRates = await store.leagueMarketRates(db, match.leagueId);
 
   let homeXg;
   let awayXg;
@@ -1024,6 +1047,8 @@ export async function predictMatch(db, matchId) {
   const cardsDisplay = cards || cardsModel(homeStats, awayStats, league, { degraded: true });
   const shotsOnTargetDisplay =
     shotsOnTarget || shotsOnTargetModel(homeStats, awayStats, league, { degraded: true });
+  const shotsDisplay =
+    shots || totalShotsModel(homeStats, awayStats, league, { degraded: true });
 
   // Tip pool = core + O/U 1.5/3.5; extras compete on book edge for primary too.
   let candidates = allGoalCandidatesFromMarkets(m);
@@ -1061,29 +1086,73 @@ export async function predictMatch(db, matchId) {
   const calibratedExtras = applyCalibrationToCandidates(extraCands, calib);
   const sampleSize = Math.min(nHome, nAway);
   const dailyTipContext = await store.getDailyTipDiversityContext(db, match.matchDate, matchId);
-  const { primary, secondary, tipTier, displayPrimary } = pickBets(calibrated, value, calib, {
+  let { primary, secondary, tipTier, displayPrimary } = pickBets(calibrated, value, calib, {
     hasBook,
     sampleSize,
     extraCandidates: calibratedExtras,
     dailyTipContext,
   });
 
-  const hasPlayablePrimary = tipTier === 'playable' && primary?.label;
+  // Lock Stats tip after kickoff / settle so panel never drifts from tip_results.
+  const existingTip = await store.getTipResultByMatchId(db, matchId);
+  const tipMarketLocked = store.isTipMarketLocked(existingTip, match.status);
+  if (tipMarketLocked && existingTip?.suggested_bet) {
+    const lockedLabel = String(existingTip.suggested_bet);
+    const lockedCand = [...calibrated, ...calibratedExtras].find((c) => c?.label === lockedLabel);
+    let lockedProb =
+      lockedCand?.prob != null && Number.isFinite(Number(lockedCand.prob))
+        ? Number(lockedCand.prob)
+        : null;
+    if (lockedProb == null && existingTip.model_prob != null && Number(existingTip.model_prob) > 0) {
+      lockedProb = Number(existingTip.model_prob);
+    }
+    if (
+      lockedProb == null &&
+      existingTip.confidence_score != null &&
+      Number(existingTip.confidence_score) > 0
+    ) {
+      const conf = Number(existingTip.confidence_score);
+      lockedProb = conf > 1 ? conf / 100 : conf;
+    }
+    primary = {
+      label: lockedLabel,
+      prob: lockedProb ?? 0.75,
+      rawProb: lockedCand?.rawProb ?? lockedProb ?? 0.75,
+    };
+    tipTier = 'playable';
+  }
+
+  let hasPlayablePrimary = tipTier === 'playable' && primary?.label;
   // predictions.suggested_bet is NOT NULL — use playable label or display fallback.
   // tipTier 'none' + displayPrimary must NOT enter tip_results (Stats).
-  const suggestedLabel =
-    (hasPlayablePrimary && primary.label) ||
-    displayPrimary?.label ||
-    secondary?.label ||
-    calibrated.find((c) => c?.label && !isTrivialTipLabel(c.label))?.label ||
-    calibrated[0]?.label ||
-    'HOME_WIN';
+  // When tipMarketLocked, always the tip_results market (official Stats tip).
+  const suggestedLabel = tipMarketLocked
+    ? String(existingTip.suggested_bet)
+    : (hasPlayablePrimary && primary.label) ||
+      displayPrimary?.label ||
+      secondary?.label ||
+      calibrated.find((c) => c?.label && !isTrivialTipLabel(c.label))?.label ||
+      calibrated[0]?.label ||
+      'HOME_WIN';
+  if (tipMarketLocked) hasPlayablePrimary = true;
 
   let tipResolved = hasPlayablePrimary
     ? resolveTipOdds(primary.label, null, oddsRow)
     : { tipOdds: null, oddsBand: null, oddsSource: 'model' };
+  // Prefer stored tip odds when market is locked (pre-kickoff book snapshot).
+  if (
+    tipMarketLocked &&
+    existingTip?.tip_odds != null &&
+    Number(existingTip.tip_odds) > 1
+  ) {
+    tipResolved = {
+      tipOdds: Number(existingTip.tip_odds),
+      oddsBand: existingTip.odds_band || tipResolved.oddsBand,
+      oddsSource: existingTip.odds_source || tipResolved.oddsSource || 'model',
+    };
+  }
   // Book-first: do not store model-implied as tip_odds when we want honesty in bands.
-  if (hasPlayablePrimary && tipResolved.oddsSource !== 'book') {
+  if (hasPlayablePrimary && !tipMarketLocked && tipResolved.oddsSource !== 'book') {
     tipResolved = {
       tipOdds: tipResolved.tipOdds,
       oddsBand: tipResolved.oddsBand,
@@ -1107,14 +1176,18 @@ export async function predictMatch(db, matchId) {
     confidence = Number((confidence * 0.9).toFixed(2));
     dataQuality = 'low';
   }
-  // Prefer book tips in Mejores ranking
+  // Prefer book tips in Mejores ranking (skip when tip market is locked to Stats).
   if (
+    !tipMarketLocked &&
     hasPlayablePrimary &&
     tipResolved.oddsSource === 'book' &&
     value.value_edge != null &&
     value.value_edge > 0
   ) {
     confidence = Number(Math.min(92, confidence + value.value_edge * 40).toFixed(2));
+  }
+  if (tipMarketLocked && existingTip?.confidence_score != null) {
+    confidence = Number(existingTip.confidence_score);
   }
 
   const payload = {
@@ -1196,8 +1269,16 @@ export async function predictMatch(db, matchId) {
     secondary_bet: secondary ? secondary.label : null,
     confidence_score: Number(confidence.toFixed(2)),
     tip_tier: tipTier,
-    value_edge: hasPlayablePrimary ? value.value_edge : null,
-    value_market: hasPlayablePrimary ? value.value_market : null,
+    value_edge: tipMarketLocked
+      ? existingTip?.value_edge ?? null
+      : hasPlayablePrimary
+        ? value.value_edge
+        : null,
+    value_market: tipMarketLocked
+      ? existingTip?.value_market ?? null
+      : hasPlayablePrimary
+        ? value.value_market
+        : null,
   };
 
   await store.upsertPrediction(db, payload);
@@ -1216,14 +1297,18 @@ export async function predictMatch(db, matchId) {
       : primary.prob
     : null;
 
-  // After stats epoch wipe, do not re-ledger finished matches (keeps Stats clean).
-  // Hit-rate policy: only playable primaries enter tip_results (no fallback dilution).
+  // After stats epoch wipe, do not re-ledger finished matches from before the epoch.
+  // Matches on/after the wipe day may still enter tip_results (playable only).
+  // Never rewrite tip_results market once locked (live/finished or settled).
   const statsEpoch = await store.getMeta(db, 'stats_reset_at');
+  const matchDay =
+    match.match_date != null ? String(match.match_date).slice(0, 10) : null;
   const skipFinishedLedger =
     match.status === 'finished' &&
     statsEpoch &&
-    /^\d{4}-\d{2}-\d{2}$/.test(String(statsEpoch));
-  if (!skipFinishedLedger && hasPlayablePrimary) {
+    /^\d{4}-\d{2}-\d{2}$/.test(String(statsEpoch)) &&
+    (!matchDay || matchDay < String(statsEpoch));
+  if (!skipFinishedLedger && hasPlayablePrimary && !tipMarketLocked) {
     await store.upsertTipResult(db, {
       match_id: matchId,
       suggested_bet: payload.suggested_bet,
@@ -1249,13 +1334,14 @@ export async function predictMatch(db, matchId) {
   const expected = {
     shots: packLadderSide(shotsOnTargetDisplay),
     shotsOnTarget: packLadderSide(shotsOnTargetDisplay),
-    totalShots: packLadderSide(shots),
+    totalShots: packLadderSide(shotsDisplay),
     corners: packLadderSide(cornersDisplay),
     cards: packLadderSide(cardsDisplay),
   };
   const ladders = {
     shots: packDisplayLadder(shotsOnTargetDisplay),
     shotsOnTarget: packDisplayLadder(shotsOnTargetDisplay),
+    totalShots: packDisplayLadder(shotsDisplay),
     corners: packDisplayLadder(cornersDisplay),
     cards: packDisplayLadder(cardsDisplay),
   };
@@ -1289,6 +1375,9 @@ export async function predictMatch(db, matchId) {
       cards: Number(((league.avgYellowsFor || 2) * 2).toFixed(2)),
       shots: Number(((league.avgShotsFor || 12) * 2).toFixed(2)),
       shotsOnTarget: Number(((league.avgShotsOnTargetFor || 4.5) * 2).toFixed(2)),
+      over15Rate: marketRates?.over15Rate ?? null,
+      over25Rate: marketRates?.over25Rate ?? null,
+      bttsRate: marketRates?.bttsRate ?? null,
       proxy: league.proxy || null,
     },
     dataQuality,

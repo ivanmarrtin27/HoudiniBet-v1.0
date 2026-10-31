@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="es" aria-busy="true">
   <head>
     <meta charset="UTF-8" />
@@ -7,7 +7,8 @@
         try {
           var raw = localStorage.getItem('houdini_consent_v1');
           var c = raw ? JSON.parse(raw) : null;
-          if (!c || c.version !== 2 || !c.ageConfirmed) {
+          var okChoice = c && (c.choice === 'all' || c.choice === 'necessary' || c.choice === 'custom');
+          if (!c || c.version !== 2 || !c.ageConfirmed || !okChoice) {
             document.documentElement.classList.add('consent-needed');
           }
         } catch (e) {
@@ -26,23 +27,23 @@
     <meta property="og:title" content="Houdini Bet" />
     <meta property="og:description" content="Predicciones de fútbol (Poisson) — tips 1X2, O/U, BTTS y value." />
     <meta property="og:url" content="https://houdini-bet.pages.dev/" />
-    <meta property="og:image" content="https://houdini-bet.pages.dev/brand/og-share.png?v=hb39" />
+    <meta property="og:image" content="https://houdini-bet.pages.dev/brand/og-share.png?v=hb61" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
     <meta property="og:locale" content="es_ES" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="Houdini Bet" />
     <meta name="twitter:description" content="Predicciones de fútbol (Poisson) en Cloudflare Workers + D1." />
-    <meta name="twitter:image" content="https://houdini-bet.pages.dev/brand/og-share.png?v=hb39" />
+    <meta name="twitter:image" content="https://houdini-bet.pages.dev/brand/og-share.png?v=hb61" />
     <link rel="canonical" href="https://houdini-bet.pages.dev/" />
     <title>Houdini Bet</title>
     <link rel="manifest" href="/manifest.webmanifest" />
-    <link rel="icon" href="/favicon-32.png?v=hb39" type="image/png" sizes="32x32" />
-    <link rel="icon" href="/favicon-48.png?v=hb39" type="image/png" sizes="48x48" />
-    <link rel="icon" href="/icon-192.png?v=hb39" type="image/png" sizes="192x192" />
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=hb39" />
+    <link rel="icon" href="/icons/favicon-32.png?v=hb61" type="image/png" sizes="32x32" />
+    <link rel="icon" href="/icons/favicon-48.png?v=hb61" type="image/png" sizes="48x48" />
+    <link rel="icon" href="/icons/icon-192.png?v=hb61" type="image/png" sizes="192x192" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png?v=hb61" />
     <link rel="preload" href="/brand/houdini-bet-logo.png?v=bm19" as="image" type="image/png" />
-    <link rel="stylesheet" href="/styles.css?v=hb41" />
+    <link rel="stylesheet" href="/styles.css?v=hb86" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -86,11 +87,41 @@
           />
         </a>
         <nav class="v2-nav" aria-label="Secciones">
-          <a class="v2-nav__link is-active" href="#partidos" data-view="partidos">Partidos</a>
-          <a class="v2-nav__link" href="#top3" data-view="top3">Top 10</a>
-          <a class="v2-nav__link" href="#stats" data-view="stats">Stats</a>
-          <a class="v2-nav__link" href="#cuotas" data-view="bandas">Semanal</a>
-          <a class="v2-nav__link" href="#ligas" data-view="ligas">Ligas</a>
+          <a class="v2-nav__link is-active" href="#partidos" data-view="partidos">
+            <svg class="nav-ico" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+              <circle cx="12" cy="12" r="8.25" fill="none" stroke="currentColor" stroke-width="1.75" />
+              <path d="M12 3.75v16.5M3.75 12h16.5M6.2 6.2c2.2 1.6 4.6 2.4 5.8 2.55 1.2-.15 3.6-.95 5.8-2.55M6.2 17.8c2.2-1.6 4.6-2.4 5.8-2.55 1.2.15 3.6.95 5.8 2.55" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" />
+            </svg>
+            <span data-i18n="nav.partidos">Partidos</span>
+          </a>
+          <a class="v2-nav__link" href="#top3" data-view="top3">
+            <svg class="nav-ico" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+              <path d="M7.5 5.5h9v3.2c0 2.55-1.95 4.55-4.5 4.55S7.5 11.25 7.5 8.7V5.5z" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round" />
+              <path d="M7.5 7H5.2A1.7 1.7 0 0 1 3.5 5.3V5h4M16.5 7h2.3A1.7 1.7 0 0 0 20.5 5.3V5h-4" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" />
+              <path d="M10 13.25h4V15c0 .8-.7 1.5-1.5 1.5h-1c-.8 0-1.5-.7-1.5-1.5v-1.75zM9.5 19.5h5" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <span data-i18n="nav.top10">Top 10</span>
+          </a>
+          <a class="v2-nav__link" href="#stats" data-view="stats">
+            <svg class="nav-ico" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+              <path d="M5 19V10.5M12 19V5M19 19v-6.5" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" />
+            </svg>
+            <span data-i18n="nav.stats">Stats</span>
+          </a>
+          <a class="v2-nav__link" href="#cuotas" data-view="bandas">
+            <svg class="nav-ico" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+              <rect x="4.25" y="5.5" width="15.5" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.75" />
+              <path d="M8 3.75v3.5M16 3.75v3.5M4.25 10.25h15.5" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" />
+            </svg>
+            <span data-i18n="nav.semanal">Semanal</span>
+          </a>
+          <a class="v2-nav__link" href="#ligas" data-view="ligas">
+            <svg class="nav-ico" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+              <path d="M12 3.5 18.5 6.2v5.1c0 4.05-2.55 7.05-6.5 8.7-3.95-1.65-6.5-4.65-6.5-8.7V6.2L12 3.5z" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round" />
+              <path d="M9.2 12.1 11 13.8l3.8-4" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <span data-i18n="nav.ligas">Ligas</span>
+          </a>
           <span class="v2-nav__indicator" aria-hidden="true"></span>
         </nav>
         <div class="v2-header__search">
@@ -103,37 +134,82 @@
                     <path d="M16.2 16.2L20 20" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" />
                   </svg>
                 </span>
-                <label class="visually-hidden" for="team-search">Buscar equipo</label>
+                <label class="visually-hidden" for="team-search" data-i18n="search.placeholder">Buscar equipo</label>
                 <input
                   id="team-search"
                   type="search"
                   placeholder="Buscar equipo"
+                  data-i18n-placeholder="search.placeholder"
                   autocomplete="off"
                   enterkeyhint="search"
                 />
               </div>
-              <div id="search-results" class="search-panel hidden" role="listbox" aria-label="Resultados"></div>
+              <div id="search-results" class="search-panel hidden" role="listbox" data-i18n-aria="search.results" aria-label="Resultados"></div>
             </div>
           </div>
         </div>
         <div class="v2-header__right">
           <span id="mode-badge" class="mode-badge hidden"></span>
-          <button
-            type="button"
-            id="hit-badge"
-            class="hit-badge"
-            title="Ver aciertos"
-            aria-label="Ver aciertos"
-          >
-            <span class="hit-badge__value">—</span>
-            <span class="hit-badge__hint">Aciertos</span>
-          </button>
           <a class="premium-chip" href="#premium" data-view="premium">Premium</a>
+          <div class="account-wrap">
+            <button
+              type="button"
+              id="account-btn"
+              class="account-btn"
+              aria-label="Cuenta"
+              aria-haspopup="dialog"
+              aria-expanded="false"
+              aria-controls="auth-modal"
+            >
+              <svg class="account-btn__icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
+                <circle cx="12" cy="8.5" r="3.25" fill="none" stroke="currentColor" stroke-width="1.75" />
+                <path
+                  d="M5.5 18.25c1.35-2.55 3.55-3.9 6.5-3.9s5.15 1.35 6.5 3.9"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.75"
+                  stroke-linecap="round"
+                />
+              </svg>
+              <span class="account-btn__initial" id="account-initial" hidden></span>
+            </button>
+            <div id="account-menu" class="account-menu" hidden role="menu" aria-label="Cuenta">
+              <div class="account-menu__profile">
+                <p class="account-menu__name" id="account-menu-name"></p>
+                <p class="account-menu__user" id="account-menu-user"></p>
+                <p class="account-menu__email" id="account-menu-email"></p>
+                <p class="plan-badge" id="account-menu-premium"></p>
+              </div>
+              <a class="account-menu__item" role="menuitem" id="account-perfil" href="#perfil">Perfil</a>
+              <button type="button" class="account-menu__item" role="menuitem" id="account-settings">
+                Ajustes
+              </button>
+              <button type="button" class="account-menu__item account-menu__item--soon account-menu__item--icon" role="menuitem" id="account-telegram" disabled>
+                <svg class="telegram-mark" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+                  <path fill="#26A5E4" d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.897-.962 6.502-1.359 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.781-.417-1.21.258-1.911.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.788.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/>
+                </svg>
+                Telegram <span class="account-menu__soon">Pronto</span>
+              </button>
+              <a class="account-menu__item" role="menuitem" id="account-ayuda" href="mailto:ivanmarrtin2703@gmail.com?subject=Houdini%20Bet%20ayuda">
+                Ayuda
+              </a>
+              <a class="account-menu__item" role="menuitem" id="account-coop" href="https://github.com/ivanmarrtin27" target="_blank" rel="noopener noreferrer">
+                Cooperación
+              </a>
+              <a class="account-menu__item" role="menuitem" id="account-ajustes" href="#ajustes">
+                Privacidad
+              </a>
+              <button type="button" class="account-menu__item" role="menuitem" id="account-logout">
+                Cerrar sesión
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     </header>
 
-    <div id="global-banner" class="banner hidden" role="status" aria-live="polite"></div>
+    <div id="global-banner" class="banner hidden" role="status" aria-live="polite" hidden></div>
+    <div id="hb-toast" class="hb-toast" aria-live="polite" aria-relevant="additions"></div>
 
     <main class="v2-main shell" id="views" data-view="partidos">
       <div class="views-track" id="views-track">
@@ -158,37 +234,11 @@
                   </button>
                 </div>
                 <div class="browse-chips browse-chips--dates" role="group" aria-label="Atajos de fecha">
-                  <button type="button" class="browse-chip" id="yesterdayBtn" data-copy="yesterday" aria-pressed="false">Ayer</button>
-                  <button type="button" class="browse-chip is-active" id="todayBtn" data-copy="today" aria-pressed="true">Hoy</button>
-                  <button type="button" class="browse-chip" id="tomorrowBtn" data-copy="tomorrow" aria-pressed="false">Mañana</button>
+                  <button type="button" class="browse-chip" id="yesterdayBtn" data-copy="yesterday" data-i18n="date.yesterday" aria-pressed="false">Ayer</button>
+                  <button type="button" class="browse-chip is-active" id="todayBtn" data-copy="today" data-i18n="date.today" aria-pressed="true">Hoy</button>
+                  <button type="button" class="browse-chip" id="tomorrowBtn" data-copy="tomorrow" data-i18n="date.tomorrow" aria-pressed="false">Mañana</button>
                 </div>
                 <div class="browse-chips browse-chips--status match-status-filters" id="matchStatusFilters" role="group" aria-label="Estado del partido"></div>
-                <div class="browse-chips browse-chips--scope" role="group" aria-label="Tipo de competición">
-                  <button
-                    type="button"
-                    class="browse-chip is-active"
-                    data-scope="all"
-                    title="Todas las competiciones del día"
-                  >
-                    Todas
-                  </button>
-                  <button
-                    type="button"
-                    class="browse-chip"
-                    data-scope="clubs"
-                    title="Solo ligas domésticas de clubes (LaLiga, Premier, Serie A…)"
-                  >
-                    Ligas de clubes
-                  </button>
-                  <button
-                    type="button"
-                    class="browse-chip"
-                    data-scope="intl"
-                    title="Competiciones internacionales (Champions, Europa League, Nations League…)"
-                  >
-                    Internacionales
-                  </button>
-                </div>
               </div>
               <div id="matches" class="matches-league-list" role="list"></div>
               <span id="today-label" class="visually-hidden"></span>
@@ -198,26 +248,22 @@
             </div>
             <div class="browse-col browse-col--panel" id="browsePanel" aria-label="Análisis">
               <div id="browsePanelBody" class="browse-panel-body">
-                <div class="browse-panel-empty muted">Selecciona un partido para ver el análisis</div>
+                <div class="browse-panel-empty muted" data-i18n="panel.emptySelect">Selecciona un partido para ver el análisis</div>
               </div>
             </div>
           </div>
         </section>
 
-        <section id="top3" class="view view--top3" aria-label="Top 10">
+        <section id="top3" class="view view--top3" aria-label="Top 10 predicciones">
           <header class="aciertos-bar">
-            <h2 class="aciertos-bar__title">Top 10 · P≥69% + cuota</h2>
+            <h2 class="aciertos-bar__title" data-i18n="view.top10">Top 10 predicciones</h2>
           </header>
-          <p class="muted top3-lead">
-            Mejores tips de la ventana (hoy + 14 días): P≥69%, cuota 1.30–3.50 (book o modelo 1/p).
-          </p>
           <div id="top3-list" class="sheet sheet--top3" role="list"></div>
         </section>
 
         <section id="stats" class="view view--aciertos" aria-label="Stats">
           <header class="aciertos-bar">
-            <h2 class="aciertos-bar__title">Stats</h2>
-            <a class="aciertos-bar__link" href="#cuotas">Semanal ←</a>
+            <h2 class="aciertos-bar__title" data-i18n="view.stats">Stats</h2>
           </header>
           <div id="perf-summary" class="perf-summary"></div>
           <div id="perf-recent" class="perf-recent"></div>
@@ -225,20 +271,19 @@
 
         <section id="ligas" class="view view--ligas" aria-label="Ligas">
           <header class="aciertos-bar">
-            <h2 class="aciertos-bar__title">Ligas</h2>
-            <a class="aciertos-bar__link" href="#partidos">← Partidos</a>
+            <h2 class="aciertos-bar__title" data-i18n="view.ligas">Ligas</h2>
           </header>
           <div class="browse-split ligas-split">
             <div class="browse-col browse-col--list" id="ligasListScreen">
               <div id="ligas-explorer" class="ligas-explorer">
                 <div id="ligas-list" class="ligas-list" role="region" aria-label="Competiciones por país"></div>
-                <p class="muted privacy-lead ligas-explorer__hint">
-                  Elige un país y una liga. En escritorio la tabla aparece a la derecha; en móvil, a pantalla completa.
+                <p class="muted privacy-lead ligas-explorer__hint" data-i18n="ligas.hint">
+                  Elige un país y una liga. En escritorio la tabla aparece a la derecha; en móvil se abre desde la derecha.
                 </p>
               </div>
             </div>
             <div class="browse-col browse-col--panel" id="ligasBrowsePanel" aria-label="Clasificación de liga">
-              <div id="ligas-panel-empty" class="browse-panel-empty muted">
+              <div id="ligas-panel-empty" class="browse-panel-empty muted" data-i18n="ligas.emptySelect">
                 Selecciona una liga para ver la clasificación
               </div>
               <div id="ligas-detail" class="ligas-detail" hidden>
@@ -252,7 +297,7 @@
                   </div>
                 </header>
                 <div class="ligas-detail__actions">
-                  <button type="button" class="tb-chip" id="ligas-see-matches">Ver partidos de esta liga</button>
+                  <button type="button" class="tb-chip" id="ligas-see-matches" data-i18n="ligas.seeMatches">Ver partidos de esta liga</button>
                 </div>
                 <div id="ligas-table" class="ligas-table" role="region" aria-label="Clasificación"></div>
               </div>
@@ -265,25 +310,24 @@
 
         <section id="bandas" class="view" aria-label="Combinada semanal">
           <header class="aciertos-bar">
-            <h2 class="aciertos-bar__title">Semanal</h2>
-            <a class="aciertos-bar__link" href="#stats">← Stats</a>
+            <h2 class="aciertos-bar__title" data-i18n="view.semanal">Semanal</h2>
           </header>
           <div id="weekly-sources" class="weekly-sources muted" aria-live="polite" hidden></div>
           <div class="cuotas-target cuotas-target--weekly" id="cuotas-target">
             <div class="weekly-filters" id="weekly-filters">
               <label class="weekly-filters__item"
-                >Jornada
+                ><span data-i18n="weekly.window">Jornada</span>
                 <select id="weekly-filter-window" aria-label="Ventana temporal">
-                  <option value="weekend">Fin de semana</option>
-                  <option value="this_week">Esta semana</option>
-                  <option value="next7">Próximos 7 días</option>
-                  <option value="next14" selected>Próximos 14 días</option>
+                  <option value="weekend" data-i18n="weekly.weekend">Fin de semana</option>
+                  <option value="this_week" data-i18n="weekly.thisWeek">Esta semana</option>
+                  <option value="next7" data-i18n="weekly.next7">Próximos 7 días</option>
+                  <option value="next14" selected data-i18n="weekly.next14">Próximos 14 días</option>
                 </select>
               </label>
               <label class="weekly-filters__item"
-                >Liga
+                ><span data-i18n="weekly.league">Liga</span>
                 <select id="weekly-filter-league" aria-label="Filtrar por liga">
-                  <option value="">Todas</option>
+                  <option value="" data-i18n="weekly.allLeagues">Todas</option>
                   <option value="39">Premier League</option>
                   <option value="140">LaLiga</option>
                   <option value="135">Serie A</option>
@@ -321,38 +365,131 @@
         </section>
 
       </div>
-        <section id="premium" class="view" aria-label="Premium">
-          <h2>Premium</h2>
-          <div class="premium-grid">
-            <article class="premium-card">
-              <h3 class="premium-card__name">Ahora</h3>
-              <p class="premium-card__price">Gratis</p>
+        <section id="premium" class="view view--premium" aria-label="Premium">
+          <header class="premium-hero premium-hero--compact">
+            <p class="premium-hero__eyebrow">Houdini Premium</p>
+            <h2 class="premium-hero__title">Todos los datos del partido</h2>
+            <p class="premium-hero__lead" data-premium-status>
+              Plan gratuito — desbloquea tip y estadísticas avanzadas
+            </p>
+          </header>
+          <div class="premium-grid premium-grid--plans">
+            <article class="premium-card premium-card--week">
+              <h3 class="premium-card__name">Weekly</h3>
+              <p class="premium-card__price" data-premium-price="weekly"><strong>9,99 €</strong> <span>/ semana</span></p>
               <ul>
-                <li>Tips y valor sin límite</li>
-                <li>Stats, ROI y combinadas</li>
-                <li>1X2 · Más/Menos · BTTS · extras</li>
+                <li>Tip + mercados</li>
+                <li>Top 10 y Semanal</li>
               </ul>
+              <button type="button" class="primary premium-cta" data-premium-activate data-premium-plan="weekly">
+                Suscribirse
+              </button>
             </article>
-            <article class="premium-card premium-card--pro">
-              <h3 class="premium-card__name">Premium</h3>
-              <p class="premium-card__price">Pronto</p>
+            <article class="premium-card premium-card--month">
+              <span class="premium-card__popular">Most popular</span>
+              <h3 class="premium-card__name">Monthly</h3>
+              <p class="premium-card__price" data-premium-price="monthly"><strong>19,90 €</strong> <span>/ mes</span></p>
               <ul>
-                <li>Alertas</li>
-                <li>Funciones extra</li>
-                <li>Apoyo al proyecto</li>
+                <li>Todo Weekly</li>
+                <li>Mejor precio / día</li>
               </ul>
-              <button type="button" class="primary premium-cta" id="premium-cta" data-premium-activate disabled>
-                Pronto
+              <button type="button" class="primary premium-cta" data-premium-activate data-premium-plan="monthly">
+                Suscribirse
               </button>
             </article>
           </div>
-          <p class="premium-note">Todas las funciones están abiertas por ahora. Premium (pago) llegará más adelante.</p>
+          <ul class="premium-features premium-features--short">
+            <li>Goles · Tiros · Córners · Tarjetas</li>
+            <li>Tips Top 10 y combinadas semanales</li>
+          </ul>
+          <p class="premium-note">Pago seguro. Sin Stripe verás «Pago no configurado».</p>
+        </section>
+
+        <section id="perfil" class="view view--perfil" aria-label="Perfil">
+          <header class="perfil-bar">
+            <h2 class="perfil-bar__title">Perfil</h2>
+            <a class="perfil-bar__link" href="#partidos">← Partidos</a>
+          </header>
+          <div class="perfil-card">
+            <div class="perfil-avatar" id="perfil-avatar" aria-hidden="true">?</div>
+            <div class="perfil-id">
+              <p class="perfil-name" id="perfil-name">—</p>
+              <p class="perfil-user" id="perfil-user"></p>
+              <p class="perfil-email" id="perfil-email"></p>
+            </div>
+            <div class="perfil-plan">
+              <span class="plan-badge" id="perfil-plan-badge">Gratuito</span>
+              <p class="perfil-plan__meta" id="perfil-plan-meta"></p>
+              <a class="btn primary perfil-plan__upgrade" href="#premium" id="perfil-upgrade">Mejorar a Premium</a>
+            </div>
+            <div class="perfil-promo">
+              <label class="perfil-promo__label" for="perfil-promo-input" data-i18n="perfil.promoLabel">Código promocional</label>
+              <div class="perfil-promo__row">
+                <input id="perfil-promo-input" type="text" placeholder="Código" data-i18n-placeholder="perfil.promoPlaceholder" autocomplete="off" spellcheck="false" maxlength="32" />
+                <button type="button" class="btn" id="perfil-promo-btn" data-i18n="perfil.promoApply">Aplicar</button>
+              </div>
+            </div>
+            <nav class="perfil-links" aria-label="Cuenta">
+              <button type="button" class="perfil-links__item" id="perfil-open-settings">Ajustes</button>
+              <a class="perfil-links__item" href="#ajustes">Privacidad</a>
+              <a class="perfil-links__item" href="mailto:ivanmarrtin2703@gmail.com?subject=Houdini%20Bet%20ayuda">Ayuda</a>
+              <button type="button" class="perfil-links__item perfil-links__item--soon perfil-links__item--icon" id="perfil-telegram" disabled>
+                <span class="perfil-links__label">
+                  <svg class="telegram-mark" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+                    <path fill="#26A5E4" d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.897-.962 6.502-1.359 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.781-.417-1.21.258-1.911.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.788.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/>
+                  </svg>
+                  Telegram
+                </span>
+                <span class="account-menu__soon">Pronto</span>
+              </button>
+            </nav>
+            <div class="perfil-actions">
+              <button type="button" class="btn perfil-actions__logout" id="perfil-logout">Cerrar sesión</button>
+              <button type="button" class="btn perfil-actions__delete" id="perfil-delete">Eliminar cuenta</button>
+            </div>
+          </div>
+        </section>
+
+        <section id="admin" class="view view--admin" aria-label="Panel admin" hidden>
+          <header class="ajustes-bar">
+            <h2 class="ajustes-bar__title">Panel admin</h2>
+            <a class="ajustes-bar__link" href="#partidos">← Partidos</a>
+          </header>
+          <p class="admin-panel__hint muted">Solo con <code>?admin=1</code>. Clave SYNC_SECRET en esta pestaña.</p>
+          <div class="admin-panel__metrics" id="admin-usage" aria-live="polite">
+            <p class="muted">Cargando métricas…</p>
+          </div>
+          <div class="admin-panel__toolbar">
+            <button type="button" class="btn primary" id="admin-refresh">Actualizar</button>
+          </div>
+          <div class="admin-panel__table-wrap">
+            <table class="admin-users-table" id="admin-users-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Nombre</th>
+                  <th>Email</th>
+                  <th>Teléfono</th>
+                  <th>Provider</th>
+                  <th>Alta</th>
+                  <th>Premium</th>
+                  <th>Estado</th>
+                  <th>Acciones</th>
+                </tr>
+              </thead>
+              <tbody id="admin-users-body">
+                <tr>
+                  <td colspan="9" class="muted">Sin datos</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </section>
 
         <section id="ajustes" class="view view--ajustes" aria-label="Ajustes de privacidad">
           <header class="ajustes-bar">
             <h2 class="ajustes-bar__title">Ajustes</h2>
-            <a class="ajustes-bar__link" href="#partidos">← Partidos</a>
+            <button type="button" class="ajustes-bar__close" id="ajustes-close" aria-label="Cerrar">✕</button>
           </header>
           <p class="privacy-lead">
             Los tips son informativos. Usamos datos de partidos y cuotas para calcular predicciones.
@@ -431,28 +568,31 @@
             <a class="ajustes-bar__link" href="#ajustes">← Ajustes</a>
           </header>
           <div class="legal-body legal-prose" data-legal="privacidad">
-            <p class="legal-meta">Última actualización: 26 oct 2026</p>
+            <p class="legal-meta">Última actualización: 28 oct 2026</p>
             <p>
               Houdini Bet es una app de <strong>tips informativos</strong> de fútbol (modelo Poisson) alojada en
-              Cloudflare (Worker + D1). <strong>Aún no hay cuentas de usuario</strong> ni perfiles personales.
+              Cloudflare (Worker + D1). Puedes crear una <strong>cuenta opcional</strong> (email o Google).
               No vendemos datos personales con fines publicitarios.
             </p>
             <h3>Responsable</h3>
             <p>
               Iván Martín Molina. Contacto para ejercer derechos:
-              <a href="https://github.com/ivanmarrtin2703" rel="noopener noreferrer" target="_blank">@ivanmarrtin2703</a>
-              ·
-              <a href="https://ivanmartin.pages.dev/" rel="noopener noreferrer" target="_blank">ivanmartin.pages.dev</a>.
+              <a href="https://github.com/ivanmarrtin27" rel="noopener noreferrer" target="_blank">@ivanmarrtin27</a>.
             </p>
             <h3>Qué tratamos</h3>
             <ul>
+              <li>
+                <strong>Cuenta (si te registras):</strong> nombre, email, teléfono (registro email) y, si usas
+                Google, identificador de cuenta Google y nombre/email del perfil. Contraseña almacenada solo como
+                hash (nunca en claro).
+              </li>
               <li>
                 <strong>En este dispositivo (<code>localStorage</code>):</strong> consentimiento, confirmación de
                 mayoría de edad y, si las activas, preferencias (analytics stub, búsqueda, filtros).
               </li>
               <li>
-                <strong>En el servidor (D1):</strong> calendario de partidos, tips y estadísticas agregadas del
-                producto. Sin perfil personal.
+                <strong>En el servidor (D1):</strong> calendario de partidos, tips, estadísticas agregadas y datos
+                de cuenta/sesión descritos arriba.
               </li>
               <li>
                 <strong>Infra Cloudflare:</strong> Worker, D1 y CDN. Pueden generarse logs técnicos habituales de
@@ -463,6 +603,10 @@
             <ul>
               <li><strong>Consentimiento</strong> — opciones opcionales (analytics stub, guardar búsqueda, recordar filtros).</li>
               <li>
+                <strong>Ejecución de contrato / cuenta</strong> — registro, login y sesión
+                (<code>hb_auth</code>) para identificar tu cuenta.
+              </li>
+              <li>
                 <strong>Necesidad técnica / interés legítimo</strong> — shell de la app, service worker, y cookie
                 técnica <code>hb_prem</code> cuando el esqueleto Premium esté activo.
               </li>
@@ -472,20 +616,20 @@
               Puedes solicitar acceso, rectificación, borrado, oposición, limitación y portabilidad contactando por
               los canales anteriores. Lo que solo vive en tu dispositivo se borra con
               <strong>Ajustes → Borrar datos de este dispositivo</strong> o limpiando los datos del sitio en el
-              navegador.
+              navegador. Para borrar la cuenta en servidor, contacta por los mismos canales.
             </p>
             <h3>Conservación</h3>
             <p>
               Preferencias locales mientras las mantengas o hasta que las borres. Datos de producto en D1 según la
-              operación del tipster (partidos y tips agregados, no cuentas).
+              operación del tipster. Datos de cuenta mientras la mantengas activa; sesiones
+              <code>hb_auth</code> caducan (aprox. 30 días) o al cerrar sesión.
             </p>
             <h3>Encargados y terceros</h3>
             <ul>
               <li><strong>Cloudflare</strong> — alojamiento, Worker, D1 y entrega de assets.</li>
               <li>
-                <strong>Google Fonts</strong> — al cargar la tipografía se solicita
-                <code>fonts.googleapis.com</code> / <code>fonts.gstatic.com</code> (no es una cookie propia de
-                Houdini).
+                <strong>Google</strong> — tipografía (Fonts) y, si eliges «Continuar con Google», proveedor de
+                identidad (OAuth). Google trata datos según su propia política.
               </li>
             </ul>
             <h3>PWA y service worker</h3>
@@ -504,7 +648,7 @@
             <a class="ajustes-bar__link" href="#ajustes">← Ajustes</a>
           </header>
           <div class="legal-body legal-prose" data-legal="cookies">
-            <p class="legal-meta">Última actualización: 26 oct 2026</p>
+            <p class="legal-meta">Última actualización: 28 oct 2026</p>
             <h3>Necesarias</h3>
             <ul>
               <li>
@@ -514,6 +658,14 @@
               <li>
                 <strong>Consentimiento (<code>localStorage</code>)</strong> — registro de versión, elección y
                 confirmación de mayoría de edad.
+              </li>
+              <li>
+                <strong><code>hb_auth</code></strong> — cookie HttpOnly de sesión de cuenta (login email o Google).
+                Necesaria para mantenerte identificado; no es publicidad.
+              </li>
+              <li>
+                <strong><code>hb_oauth_state</code></strong> — cookie corta durante el flujo «Continuar con Google»
+                (protección CSRF).
               </li>
               <li>
                 <strong><code>hb_prem</code></strong> — cookie técnica de sesión guest para el esqueleto Premium
@@ -569,15 +721,22 @@
             <a class="ajustes-bar__link" href="#ajustes">← Ajustes</a>
           </header>
           <div class="legal-body legal-prose" data-legal="condiciones">
-            <p class="legal-meta">Última actualización: 26 oct 2026</p>
+            <p class="legal-meta">Última actualización: 28 oct 2026</p>
             <p>
               Houdini Bet ofrece tips informativos de fútbol basados en un modelo Poisson. No es consejo de apuesta,
-              servicio de broker ni garantía de resultados.
+              servicio de broker ni garantía de resultados. La cuenta es opcional.
+            </p>
+            <h3>Cuenta</h3>
+            <p>
+              Si te registras, eres responsable de la veracidad de los datos y de custodiar tu contraseña. El acceso
+              con Google está sujeto también a las condiciones de Google. Puedes cerrar sesión desde el icono de
+              cuenta.
             </p>
             <h3>Uso aceptable</h3>
             <ul>
               <li>No abuses de la API ni de la interfaz (p. ej. saturación deliberada).</li>
               <li>No hagas scraping agresivo ni redistribuyas el servicio como tipster oficial de terceros.</li>
+              <li>No crees cuentas automatizadas ni abuses del registro.</li>
             </ul>
             <h3>Propiedad</h3>
             <p>
@@ -598,9 +757,7 @@
             </p>
             <h3>Contacto</h3>
             <p>
-              <a href="https://github.com/ivanmarrtin2703" rel="noopener noreferrer" target="_blank">@ivanmarrtin2703</a>
-              ·
-              <a href="https://ivanmartin.pages.dev/" rel="noopener noreferrer" target="_blank">ivanmartin.pages.dev</a>
+              <a href="https://github.com/ivanmarrtin27" rel="noopener noreferrer" target="_blank">@ivanmarrtin27</a>
             </p>
           </div>
         </section>
@@ -608,19 +765,313 @@
 
     <footer class="site-footer">
       <div class="site-footer__inner">
-        <span class="site-footer__brand">Houdini Bet</span>
-        <span class="site-footer__dot" aria-hidden="true"></span>
-        <a class="site-footer__link" href="#privacidad" data-view="privacidad">Privacidad</a>
-        <span class="site-footer__dot" aria-hidden="true"></span>
-        <a class="site-footer__link" href="#cookies" data-view="cookies">Cookies</a>
-        <span class="site-footer__dot" aria-hidden="true"></span>
-        <a class="site-footer__link" href="#aviso" data-view="aviso">Aviso</a>
-        <span class="site-footer__dot" aria-hidden="true"></span>
-        <a class="site-footer__link" href="#condiciones" data-view="condiciones">Condiciones</a>
-        <span class="site-footer__dot" aria-hidden="true"></span>
-        <a class="site-footer__link" href="#ajustes" data-view="ajustes">Gestionar</a>
+        <p class="site-footer__brand">© 2026 Houdini Bet</p>
+        <nav class="site-footer__nav" aria-label="Legal">
+          <a class="site-footer__link" href="#privacidad" data-view="privacidad">Privacidad</a>
+          <a class="site-footer__link" href="#cookies" data-view="cookies">Cookies</a>
+          <a class="site-footer__link" href="#aviso" data-view="aviso">Aviso</a>
+          <a class="site-footer__link" href="#condiciones" data-view="condiciones">Condiciones</a>
+          <a class="site-footer__link site-footer__manage" href="#ajustes" data-view="ajustes">Gestionar</a>
+        </nav>
       </div>
     </footer>
+
+    <div
+      id="auth-modal"
+      class="auth-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="auth-modal-title"
+      hidden
+    >
+      <div class="auth-modal__backdrop" data-auth-close tabindex="-1" aria-hidden="true"></div>
+      <div class="auth-modal__card" role="document">
+        <button type="button" class="auth-modal__close" id="auth-modal-close" aria-label="Cerrar">
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+            <path d="M7 7l10 10M17 7 7 17" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" />
+          </svg>
+        </button>
+        <h2 id="auth-modal-title" class="auth-modal__title" data-i18n="auth.title">Cuenta</h2>
+        <div class="auth-modal__tabs" role="tablist" aria-label="Acceso">
+          <button
+            type="button"
+            class="auth-modal__tab is-active"
+            id="auth-tab-login"
+            role="tab"
+            aria-selected="true"
+            aria-controls="auth-panel-login"
+            data-auth-tab="login"
+            data-i18n="auth.tabLogin"
+          >
+            Inicio de sesión
+          </button>
+          <button
+            type="button"
+            class="auth-modal__tab"
+            id="auth-tab-register"
+            role="tab"
+            aria-selected="false"
+            aria-controls="auth-panel-register"
+            data-auth-tab="register"
+            data-i18n="auth.tabRegister"
+          >
+            Registrarse
+          </button>
+        </div>
+
+        <button
+          type="button"
+          class="auth-google"
+          id="auth-google"
+          data-auth="google"
+        >
+          <svg class="auth-google__mark" viewBox="0 0 48 48" width="18" height="18" aria-hidden="true" focusable="false">
+            <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+            <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+            <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+            <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+          </svg>
+          <span data-i18n="auth.google">Continuar con Google</span>
+        </button>
+        <button
+          type="button"
+          class="auth-telegram"
+          id="auth-telegram"
+          disabled
+          aria-disabled="true"
+          title="Pronto"
+        >
+          <svg class="auth-telegram__mark telegram-mark" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+            <path fill="#26A5E4" d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.897-.962 6.502-1.359 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.781-.417-1.21.258-1.911.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.788.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/>
+          </svg>
+          <span data-i18n="auth.telegram">Continuar con Telegram</span>
+          <span class="auth-telegram__soon" data-i18n="auth.soon">Pronto</span>
+        </button>
+        <div class="auth-modal__divider" role="separator" aria-label="o">
+          <span data-i18n="auth.or">o</span>
+        </div>
+
+        <div
+          id="auth-panel-login"
+          class="auth-modal__panel"
+          role="tabpanel"
+          aria-labelledby="auth-tab-login"
+          data-auth-panel="login"
+        >
+          <form id="auth-form-login" class="auth-form" method="post" action="/api/v1/auth/login" novalidate>
+            <label class="auth-field" for="auth-login-identifier">
+              <span class="auth-field__label" data-i18n="auth.userOrEmail">Usuario o email</span>
+              <input
+                id="auth-login-identifier"
+                name="identifier"
+                type="text"
+                autocomplete="username"
+                autocapitalize="none"
+                spellcheck="false"
+                inputmode="text"
+                placeholder="tu_id o tu@email.com"
+                required
+              />
+            </label>
+            <label class="auth-field" for="auth-login-password">
+              <span class="auth-field__label" data-i18n="auth.password">Contraseña</span>
+              <input
+                id="auth-login-password"
+                name="password"
+                type="password"
+                autocomplete="current-password"
+                placeholder="••••••••"
+                required
+                minlength="8"
+              />
+            </label>
+            <button type="submit" class="primary auth-form__submit" id="auth-login-submit" data-i18n="auth.loginSubmit">
+              Entrar
+            </button>
+          </form>
+          <p class="auth-modal__switch">
+            <span data-i18n="auth.noAccount">¿No tienes cuenta?</span>
+            <button type="button" class="auth-modal__link" data-auth-tab="register" data-i18n="auth.registerLink">Regístrate</button>
+          </p>
+        </div>
+
+        <div
+          id="auth-panel-register"
+          class="auth-modal__panel"
+          role="tabpanel"
+          aria-labelledby="auth-tab-register"
+          data-auth-panel="register"
+          hidden
+        >
+          <form id="auth-form-register" class="auth-form" method="post" action="/api/v1/auth/register" novalidate>
+            <label class="auth-field" for="auth-register-username">
+              <span class="auth-field__label" data-i18n="auth.username">ID de usuario</span>
+              <input
+                id="auth-register-username"
+                name="username"
+                type="text"
+                autocomplete="username"
+                autocapitalize="none"
+                spellcheck="false"
+                inputmode="text"
+                placeholder="usuario"
+                title="Máximo 20 caracteres: letras, números o _"
+                required
+                minlength="3"
+                maxlength="20"
+                pattern="[a-zA-Z0-9_]{3,20}"
+              />
+            </label>
+            <label class="auth-field" for="auth-register-name">
+              <span class="auth-field__label" data-i18n="auth.name">Nombre</span>
+              <input
+                id="auth-register-name"
+                name="name"
+                type="text"
+                autocomplete="name"
+                inputmode="text"
+                placeholder="Tu nombre"
+                required
+              />
+            </label>
+            <label class="auth-field" for="auth-register-email">
+              <span class="auth-field__label" data-i18n="auth.email">Email</span>
+              <input
+                id="auth-register-email"
+                name="email"
+                type="email"
+                autocomplete="email"
+                inputmode="email"
+                placeholder="tu@email.com"
+                required
+              />
+            </label>
+            <label class="auth-field" for="auth-register-phone">
+              <span class="auth-field__label" data-i18n="auth.phone">Teléfono</span>
+              <input
+                id="auth-register-phone"
+                name="phone"
+                type="tel"
+                autocomplete="tel"
+                inputmode="tel"
+                placeholder="+34 600 000 000"
+                required
+              />
+            </label>
+            <label class="auth-field" for="auth-register-password">
+              <span class="auth-field__label" data-i18n="auth.password">Contraseña</span>
+              <input
+                id="auth-register-password"
+                name="password"
+                type="password"
+                autocomplete="new-password"
+                placeholder="Mínimo 8 caracteres"
+                required
+                minlength="8"
+              />
+            </label>
+            <label class="auth-field" for="auth-register-password2">
+              <span class="auth-field__label" data-i18n="auth.confirmPassword">Confirmar contraseña</span>
+              <input
+                id="auth-register-password2"
+                name="password2"
+                type="password"
+                autocomplete="new-password"
+                placeholder="Repite la contraseña"
+                required
+                minlength="8"
+              />
+            </label>
+            <button type="submit" class="primary auth-form__submit" id="auth-register-submit" data-i18n="auth.registerSubmit">
+              Crear cuenta
+            </button>
+          </form>
+          <p class="auth-modal__switch">
+            <span data-i18n="auth.hasAccount">¿Ya tienes cuenta?</span>
+            <button type="button" class="auth-modal__link" data-auth-tab="login" data-i18n="auth.loginLink">Inicia sesión</button>
+          </p>
+        </div>
+
+        <p class="auth-modal__note" id="auth-modal-note" role="status" aria-live="polite"></p>
+      </div>
+    </div>
+
+    <div
+      id="settings-modal"
+      class="auth-modal settings-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="settings-modal-title"
+      hidden
+    >
+      <div class="auth-modal__backdrop" data-settings-close tabindex="-1" aria-hidden="true"></div>
+      <div class="auth-modal__card" role="document">
+        <button type="button" class="auth-modal__close" id="settings-modal-close" aria-label="Cerrar">
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+            <path d="M7 7l10 10M17 7 7 17" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" />
+          </svg>
+        </button>
+        <h2 id="settings-modal-title" class="auth-modal__title">Ajustes</h2>
+        <fieldset class="settings-fieldset">
+          <legend data-i18n="settings.lang">Idioma</legend>
+          <label class="settings-option">
+            <input type="radio" name="settings-lang" value="es" checked />
+            <span>Español</span>
+          </label>
+          <label class="settings-option">
+            <input type="radio" name="settings-lang" value="en" />
+            <span>English</span>
+          </label>
+        </fieldset>
+        <fieldset class="settings-fieldset">
+          <legend data-i18n="settings.tz">Zona horaria</legend>
+          <label class="settings-option">
+            <input type="radio" name="settings-tz" value="Europe/Madrid" checked />
+            <span>Europe/Madrid</span>
+          </label>
+          <label class="settings-option">
+            <input type="radio" name="settings-tz" value="device" />
+            <span data-i18n="settings.tzDevice">Dispositivo</span>
+          </label>
+        </fieldset>
+        <p class="settings-modal__hint muted" data-i18n-html="settings.privacyHint">
+          Privacidad y cookies en
+          <a href="#ajustes" data-settings-close data-go-ajustes>Ajustes de privacidad</a>.
+        </p>
+        <button type="button" class="primary auth-form__submit" id="settings-save" data-i18n="settings.save">Guardar</button>
+      </div>
+    </div>
+
+    <div
+      id="premium-modal"
+      class="auth-modal premium-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="premium-modal-title"
+      hidden
+    >
+      <div class="auth-modal__backdrop" data-premium-close tabindex="-1" aria-hidden="true"></div>
+      <div class="auth-modal__card" role="document">
+        <button type="button" class="auth-modal__close" id="premium-modal-close" aria-label="Cerrar">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path d="M18 6L6 18M6 6l12 12" />
+          </svg>
+        </button>
+        <h2 id="premium-modal-title" class="auth-modal__title" data-i18n="premiumModal.title">Pasa a Premium</h2>
+        <p class="premium-modal__lead" data-i18n="premiumModal.lead">
+          Desbloquea tips semanales y el acceso completo a Houdini Bet. Puedes activarlo ahora o más tarde.
+        </p>
+        <p class="premium-modal__note" id="premium-modal-note" role="status" aria-live="polite"></p>
+        <div class="premium-modal__actions">
+          <button type="button" class="primary auth-form__submit" id="premium-modal-activate" data-i18n="premiumModal.activate">
+            Activar Premium
+          </button>
+          <button type="button" class="auth-modal__link premium-modal__skip" id="premium-modal-skip" data-premium-close data-i18n="premiumModal.skip">
+            Ahora no
+          </button>
+        </div>
+      </div>
+    </div>
 
     <div
       id="consent-gate"
@@ -641,40 +1092,40 @@
             alt=""
             decoding="async"
           />
-          <h2 id="consent-title" class="consent-gate__title">Cookies y privacidad</h2>
-          <p class="consent-gate__lead">
+          <h2 id="consent-title" class="consent-gate__title" data-i18n="consent.title">Cookies y privacidad</h2>
+          <p class="consent-gate__lead" data-i18n="consent.lead">
             Usamos almacenamiento local para que la app funcione. Las opciones opcionales (analytics stub,
             búsqueda y filtros) solo se activan si las aceptas.
           </p>
           <p class="consent-gate__links">
-            <button type="button" class="consent-gate__text-btn" data-consent-doc="privacidad">Privacidad</button>
+            <button type="button" class="consent-gate__text-btn" data-consent-doc="privacidad" data-i18n="consent.privacy">Privacidad</button>
             <span aria-hidden="true">·</span>
-            <button type="button" class="consent-gate__text-btn" data-consent-doc="cookies">Cookies</button>
+            <button type="button" class="consent-gate__text-btn" data-consent-doc="cookies" data-i18n="consent.cookies">Cookies</button>
             <span aria-hidden="true">·</span>
-            <button type="button" class="consent-gate__text-btn" data-consent-doc="aviso">Aviso</button>
+            <button type="button" class="consent-gate__text-btn" data-consent-doc="aviso" data-i18n="consent.notice">Aviso</button>
             <span aria-hidden="true">·</span>
-            <button type="button" class="consent-gate__text-btn" data-consent-doc="condiciones">Condiciones</button>
+            <button type="button" class="consent-gate__text-btn" data-consent-doc="condiciones" data-i18n="consent.terms">Condiciones</button>
           </p>
           <label class="consent-age">
             <input type="checkbox" id="consent-age" />
-            <span>Confirmo que soy mayor de 18 años</span>
+            <span data-i18n="consent.age">Confirmo que soy mayor de 18 años</span>
           </label>
           <div class="consent-gate__actions">
-            <button type="button" class="btn primary consent-gate__btn" id="consent-accept-all" disabled>
+            <button type="button" class="btn primary consent-gate__btn" id="consent-accept-all" disabled data-i18n="consent.acceptAll">
               Aceptar todo
             </button>
-            <button type="button" class="btn consent-gate__btn" id="consent-necessary" disabled>
+            <button type="button" class="btn consent-gate__btn" id="consent-necessary" disabled data-i18n="consent.necessary">
               Solo necesarias
             </button>
-            <button type="button" class="btn consent-gate__btn" id="consent-customize" disabled>
+            <button type="button" class="btn consent-gate__btn" id="consent-customize" disabled data-i18n="consent.customize">
               Personalizar
             </button>
           </div>
         </div>
         <div class="consent-gate__card consent-gate__custom" id="consent-custom" hidden>
-          <button type="button" class="consent-gate__back" id="consent-custom-back">← Volver</button>
-          <h2 class="consent-gate__title" id="consent-custom-title">Personalizar</h2>
-          <p class="consent-gate__lead consent-gate__lead--left">
+          <button type="button" class="consent-gate__back" id="consent-custom-back" data-i18n="consent.back">← Volver</button>
+          <h2 class="consent-gate__title" id="consent-custom-title" data-i18n="consent.customize">Personalizar</h2>
+          <p class="consent-gate__lead consent-gate__lead--left" data-i18n="consent.customLead">
             Elige qué guardar en este dispositivo. Necesitas confirmar la mayoría de edad para guardar.
           </p>
           <div class="privacy-toggles privacy-toggles--gate" role="group" aria-label="Preferencias opcionales">
@@ -718,6 +1169,44 @@
       </div>
     </div>
 
+    <nav class="app-tabbar" aria-label="Secciones">
+      <a class="app-tabbar__link is-active" href="#partidos" data-view="partidos">
+        <svg class="nav-ico" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false">
+          <circle cx="12" cy="12" r="8.25" fill="none" stroke="currentColor" stroke-width="1.75" />
+          <path d="M12 3.75v16.5M3.75 12h16.5M6.2 6.2c2.2 1.6 4.6 2.4 5.8 2.55 1.2-.15 3.6-.95 5.8-2.55M6.2 17.8c2.2-1.6 4.6-2.4 5.8-2.55 1.2.15 3.6.95 5.8 2.55" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" />
+        </svg>
+        <span data-i18n="nav.partidos">Partidos</span>
+      </a>
+      <a class="app-tabbar__link" href="#top3" data-view="top3">
+        <svg class="nav-ico" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false">
+          <path d="M7.5 5.5h9v3.2c0 2.55-1.95 4.55-4.5 4.55S7.5 11.25 7.5 8.7V5.5z" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round" />
+          <path d="M7.5 7H5.2A1.7 1.7 0 0 1 3.5 5.3V5h4M16.5 7h2.3A1.7 1.7 0 0 0 20.5 5.3V5h-4" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" />
+          <path d="M10 13.25h4V15c0 .8-.7 1.5-1.5 1.5h-1c-.8 0-1.5-.7-1.5-1.5v-1.75zM9.5 19.5h5" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+        <span data-i18n="nav.top10">Top 10</span>
+      </a>
+      <a class="app-tabbar__link" href="#stats" data-view="stats">
+        <svg class="nav-ico" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false">
+          <path d="M5 19V10.5M12 19V5M19 19v-6.5" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" />
+        </svg>
+        <span data-i18n="nav.stats">Stats</span>
+      </a>
+      <a class="app-tabbar__link" href="#cuotas" data-view="bandas">
+        <svg class="nav-ico" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false">
+          <rect x="4.25" y="5.5" width="15.5" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.75" />
+          <path d="M8 3.75v3.5M16 3.75v3.5M4.25 10.25h15.5" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" />
+        </svg>
+        <span data-i18n="nav.semanal">Semanal</span>
+      </a>
+      <a class="app-tabbar__link" href="#ligas" data-view="ligas">
+        <svg class="nav-ico" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false">
+          <path d="M12 3.5 18.5 6.2v5.1c0 4.05-2.55 7.05-6.5 8.7-3.95-1.65-6.5-4.65-6.5-8.7V6.2L12 3.5z" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round" />
+          <path d="M9.2 12.1 11 13.8l3.8-4" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+        <span data-i18n="nav.ligas">Ligas</span>
+      </a>
+    </nav>
+
     <div id="panel-backdrop" class="panel-backdrop" aria-hidden="true"></div>
     <aside id="panel" class="panel" aria-label="Análisis del partido" aria-hidden="true">
       <div class="panel-header">
@@ -731,6 +1220,39 @@
       <div id="panel-body"></div>
     </aside>
 
-    <script src="/app.js?v=hb45"></script>
+    <div id="ligas-panel-backdrop" class="panel-backdrop" aria-hidden="true"></div>
+    <aside id="ligas-panel" class="panel panel--ligas" aria-label="Clasificación de liga" aria-hidden="true">
+      <div class="panel-header">
+        <p class="panel-header__title" id="ligas-panel-title">Liga</p>
+        <button id="ligas-panel-close" type="button" class="panel-header__close" aria-label="Cerrar clasificación">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M7 7l10 10M17 7 7 17"></path>
+          </svg>
+        </button>
+      </div>
+      <div id="ligas-panel-body" class="ligas-panel-body"></div>
+    </aside>
+
+    <div
+      id="sanction-modal"
+      class="auth-modal sanction-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="sanction-modal-title"
+      hidden
+    >
+      <div class="auth-modal__backdrop" tabindex="-1" aria-hidden="true"></div>
+      <div class="auth-modal__card" role="document">
+        <h2 id="sanction-modal-title" class="auth-modal__title" data-i18n="sanction.title">Premium</h2>
+        <p class="sanction-modal__copy" id="sanction-modal-copy" data-i18n="sanction.copy">
+          Premium retirado por incumplimiento de las normas.
+        </p>
+        <button type="button" class="primary auth-form__submit" id="sanction-modal-ack" data-i18n="sanction.ack">
+          Entendido
+        </button>
+      </div>
+    </div>
+
+    <script src="/app.js?v=hb86"></script>
   </body>
 </html>
